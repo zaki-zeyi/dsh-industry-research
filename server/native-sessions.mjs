@@ -5,7 +5,7 @@ import { newId } from './store.mjs';
 import { executionPrompt, parseReport } from './report.mjs';
 import { uploadPrompt } from './upload-prompt.mjs';
 import { agentDeliverySchema } from './agent-delivery.mjs';
-import { cloudPrompt, waitCloudDelivery } from './cloud-research.mjs';
+import { cloudPrompt, waitCloudDelivery, RESEARCH_TIMEOUT_MS } from './cloud-research.mjs';
 import { ServiceError } from './service.mjs';
 
 // The host owns model credentials, tools, message history and Agent lifetime.
@@ -32,7 +32,7 @@ export class NativeSessions {
     this.store.saveTerminal(meta); this.bySession.set(sessionId, id); return meta;
   }
   async send(id, text) {
-    const meta = this.get(id); meta.activity = 'working'; meta.lastTurnReason = null; meta.lastTurnErrorCode = null; meta.lastSubmittedAt = new Date().toISOString(); this.store.saveTerminal(meta);
+    const meta = this.get(id); meta.activity = 'working'; meta.lastTurnReason = null; meta.lastTurnErrorCode = null; meta.lastTurnCompletedAt = null; meta.lastSubmittedAt = new Date().toISOString(); this.store.saveTerminal(meta);
     try {
       await this.host.sessionController.prompt({ sessionId: meta.sessionId, requestId: newId(), mode: 'queue', content: [{ type: 'text', text }], clientTimeZone: 'Asia/Shanghai' }, new AbortController().signal);
     } catch (cause) { meta.activity = 'waiting_input'; this.store.saveTerminal(meta); throw Object.assign(new ServiceError(503, '宿主会话未接受指令，请检查 DSH 模型配置后重试'), { cause }); }
@@ -79,7 +79,7 @@ export class NativeSessions {
 
 export class NativeResearcher {
   transport = 'dsh-native';
-  constructor(sessions, { timeoutMs = 600000, legacy } = {}) { this.sessions = sessions; this.timeoutMs = timeoutMs; this.legacy = legacy; }
+  constructor(sessions, { timeoutMs = RESEARCH_TIMEOUT_MS, legacy } = {}) { this.sessions = sessions; this.timeoutMs = timeoutMs; this.legacy = legacy; }
   async run(task, { signal, terminal, session, checkpoint }) {
     if (!task.nativeSession && this.legacy) return this.legacy.run(task, { signal, terminal, session, checkpoint });
     const meta = await this.sessions.create(task); terminal(meta.id); session(meta.sessionId);

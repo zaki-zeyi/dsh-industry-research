@@ -1,3 +1,4 @@
+import { RESEARCH_TIMEOUT_MS } from './cloud-research.mjs';
 import { industryInputSchema, library, mergeCompanyDelivery } from './industry.mjs';
 import { EventEmitter } from 'node:events';
 import { z } from 'zod';
@@ -160,6 +161,14 @@ export class ResearchService {
     if (t.cloudOnly) {
       const meta = this.store.terminal(terminalId); if (!meta || delivery.requestId !== meta.deliveryRequestId) return;
       try { this.rememberCloudFolder(t, delivery); mergeCompanyDelivery(this.store, t, delivery); } catch { return; }
+      // A legacy 10-minute timeout may have rejected a valid receipt containing
+      // source timestamps. Recover only a completed, matching delivery within
+      // the new 30-minute limit, never a cancelled or genuinely overdue run.
+      const run = t.runs.at(-1), elapsed = Date.parse(meta.lastTurnCompletedAt) - Date.parse(run?.startedAt);
+      if (t.status === 'failed' && /超时|超过 30 分钟/.test(t.error ?? '') && meta.activity === 'waiting_input' && meta.lastTurnReason === 'completed' && elapsed >= 0 && elapsed <= RESEARCH_TIMEOUT_MS && delivery.status === 'published' && delivery.folderToken && (!t.industry || t.industry.companies.every(name => delivery.companies?.some(c => c.name === name)))) {
+        t.status = 'ready'; t.error = null; run.status = 'completed'; run.endedAt = meta.lastTurnCompletedAt;
+        this.event(id, 'system', '已核对原会话有效交付，完成时间未超过 30 分钟，恢复完成状态；未重新调研。');
+      }
       this.store.save(t); if (t.status !== 'ready') return;
     }
     if (t.publication.status === 'not_requested' || t.publication.requestId && delivery.requestId !== t.publication.requestId) return;

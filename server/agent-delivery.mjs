@@ -9,7 +9,7 @@ const feishuUrl = (value, auth = false) => {
       (auth ? /^(accounts|open)\./.test(u.hostname) : /^\/(docx|docs|wiki)\/[A-Za-z0-9_-]+\/?$/.test(u.pathname));
   } catch { return false; }
 };
-export const companyReceiptSchema = z.object({ name: z.string().trim().min(1).max(120), url: z.string().max(2000).refine(v => feishuUrl(v), '必须是飞书文档链接'), dimensions: z.array(z.string().min(1).max(120)).max(60), conflicts: z.number().int().min(0).max(100000).default(0), added: z.number().int().min(0).max(100000).default(0) }).strict();
+export const companyReceiptSchema = z.object({ name: z.string().trim().min(1).max(120), url: z.string().max(2000).refine(v => feishuUrl(v), '必须是飞书文档链接'), updatedAt: z.string().datetime({ offset: true }).transform(v => new Date(v).toISOString()).optional(), dimensions: z.array(z.string().min(1).max(120)).max(60), conflicts: z.number().int().min(0).max(100000).default(0), added: z.number().int().min(0).max(100000).default(0) }).strict();
 const industryReceipt = { libraryFolderToken: folderTokenSchema.optional(), manifestUrl: z.string().max(2000).refine(v => feishuUrl(v)).optional(), companies: z.array(companyReceiptSchema).max(60).optional() };
 export const agentDeliverySchema = z.discriminatedUnion('status', [
   z.object({ folderToken: folderTokenSchema.optional(), requestId: z.string().uuid().optional(), status: z.literal('publishing') }),

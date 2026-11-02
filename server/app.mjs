@@ -1,3 +1,4 @@
+import { libraryReadError } from './library-errors.mjs';
 import { refreshLibrary, preferences, preferencesSchema, library, companyTaskInput } from './industry.mjs';
 import express from 'express';
 import { resolve, dirname } from 'node:path';
@@ -5,7 +6,7 @@ import { existsSync, realpathSync, readFileSync, statSync } from 'node:fs';
 import { z } from 'zod';
 import { ServiceError } from './service.mjs';
 
-export function createApp(service, { dist = resolve('dist'), health = {} } = {}) {
+export function createApp(service, { dist = resolve('dist'), health = {}, libraryRun } = {}) {
   const app = express(); app.disable('x-powered-by');
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer');
@@ -19,7 +20,7 @@ export function createApp(service, { dist = resolve('dist'), health = {} } = {})
   app.use(express.json({ limit: '32kb' }));
   app.get('/api/industry/preferences', (_req, res) => res.json(preferences(service.store)));
   app.put('/api/industry/preferences', (req, res, next) => { try { res.json(service.store.saveSetting('industry-preferences', preferencesSchema.parse(req.body))); } catch (e) { next(e); } });
-  app.get('/api/industry/library', async (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); const root = service.feishuSettings(), app = service.binding?.applicationSnapshot?.(); res.json(req.query.refresh === 'true' ? await refreshLibrary(service.store, root, app) : library(service.store, root, app)); } catch { next(new ServiceError(502, '读取飞书资料库索引失败；本地已同步记录保留，请检查授权后重试')); } });
+  app.get('/api/industry/library', async (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); const root = service.feishuSettings(), app = service.binding?.applicationSnapshot?.(); res.json(req.query.refresh === 'true' ? await refreshLibrary(service.store, root, app, libraryRun, { command: service.binding?.command }) : library(service.store, root, app)); } catch (e) { next(libraryReadError(e)); } });
   app.post('/api/industry/tasks', async (req, res, next) => { try { const key = req.headers['idempotency-key']; if (key) z.string().min(1).max(100).parse(key); res.status(202).json(await service.createAuthorized(companyTaskInput(req.body), key)); } catch (e) { next(e); } });
   app.get('/api/ai-settings', (_req, res) => { if (!service.aiSettings) return res.status(503).json({ error: 'AI 配置尚未启用' }); res.setHeader('Cache-Control', 'no-store'); res.json(service.aiSettings.get()); });
   app.put('/api/ai-settings', (req, res) => { if (!service.aiSettings) return res.status(503).json({ error: 'AI 配置尚未启用' }); try { const input = z.object({ agent: z.enum(['codex', 'dsh']) }).strict().parse(req.body); res.json(service.aiSettings.save(input)); } catch (error) { res.status(400).json({ error: error instanceof z.ZodError ? 'AI 配置字段无效' : error.message }); } });
@@ -96,7 +97,7 @@ export function createApp(service, { dist = resolve('dist'), health = {} } = {})
   if (existsSync(dist)) { app.use(express.static(dist)); app.get('*', (_req, res) => res.sendFile(resolve(dist, 'index.html'))); }
   app.use((err, _req, res, _next) => {
     const status = err instanceof z.ZodError ? 400 : err.status ?? 500;
-    res.status(status).json({ error: err instanceof z.ZodError ? err.issues.map(i => i.message).join('；') : status === 500 ? '服务内部异常，请稍后重试' : err.message });
+    res.status(status).json({ ...(err.code?.startsWith('LIBRARY_') || ['LARK_CLI_UNAVAILABLE', 'FEISHU_AUTH_REQUIRED', 'FEISHU_DOCUMENT_DENIED'].includes(err.code) ? { code: err.code } : {}), error: err instanceof z.ZodError ? err.issues.map(i => i.message).join('；') : status === 500 ? '服务内部异常，请稍后重试' : err.message });
   });
   return app;
 }
