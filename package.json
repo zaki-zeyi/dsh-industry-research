@@ -1,0 +1,53 @@
+{
+  "name": "dsh-industry-research",
+  "version": "0.1.0",
+  "description": "行研工作台：适用于 DeepSeek Harness 桌面版和网页版的 公司全量信息库与宿主原生会话调研插件",
+  "type": "module",
+  "main": "./plugin/index.mjs",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "exports": {
+    ".": "./plugin/index.mjs",
+    "./client": "./plugin/client.js",
+    "./package.json": "./package.json",
+    "./plugin/cordis.patch.yml": "./plugin/cordis.patch.yml"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./plugin/cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    }
+  },
+  "dependencies": {
+    "express": "4.22.3",
+    "ws": "8.22.0",
+    "zod": "4.6.7",
+    "node-pty": "1.1.0",
+    "@larksuiteoapi/node-sdk": "1.76.0"
+  },
+  "bundledDependencies": [
+    "express",
+    "ws",
+    "zod",
+    "node-pty",
+    "@larksuiteoapi/node-sdk"
+  ],
+  "files": [
+    "plugin",
+    "server",
+    "dist",
+    "scripts",
+    "docs",
+    "README.md"
+  ]
+}
