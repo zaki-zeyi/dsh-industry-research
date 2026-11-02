@@ -1,10 +1,11 @@
 # dsh-industry-research · 行研工作台
 
-基于飞书《行研平台prd轻量化》修订版 128 实现的 DeepSeek Harness 插件。复用本机既有调研工作台的宿主适配与授权代码，在独立命名空间内提供公司全量信息库。
+基于飞书《行研平台prd轻量化》修订版 169 实现的 DeepSeek Harness 插件。复用本机既有调研工作台的宿主适配与授权代码，在独立命名空间内提供公司全量信息库。
 
 - 默认 17 家公司、5 个维度、16 个信源，支持全网查询与自定义；新增维度和信源持久保存。
 - 编辑任务 Prompt，绑定飞书后启动 DSH 标准模式原生会话；所有任务共享插件工作区。
 - 飞书根目录下建立「全量信息库」，一家公司一份文档。向 Agent 提供已有文档链接，要求先读后增量更新、去重，逐条引用来源和日期，保留并标注冲突。
+- 单次调研超过 30 分钟仍未完成则失败，保留已完成文档和会话记录。
 - 公司文档卡片与历史 AI 任务分开展示，支持搜索、继续对话、失败重试；部分完成时保留已交付公司。
 - 已知「公司索引」飞书文档支持刷新公司清单，不要求枚举云盘目录。SQLite 只镜像文档链接、维度和交付统计等元信息。
 
@@ -31,9 +32,9 @@ npm run plugin:pack
 
 运行 `npm run plugin:pack` 后生成：
 
-- `artifacts/dsh-industry-research-0.1.0-desktop.zip`
-- `artifacts/dsh-industry-research-0.1.0.tgz`
-- `artifacts/dsh-industry-research-0.1.0/` 可直接安装目录
+- `artifacts/dsh-industry-research-0.1.1-desktop.zip`
+- `artifacts/dsh-industry-research-0.1.1.tgz`
+- `artifacts/dsh-industry-research-0.1.1/` 可直接安装目录
 
 在 DSH 桌面版「添加插件」中填写上述解压目录的绝对路径，按宿主提示启用或重新加载。Windows 和 macOS 使用同一个 ZIP；网页版可以使用 DSH CLI 安装 tgz。详见 [安装说明](docs/plugin-install.md)。
 
@@ -49,4 +50,4 @@ https://github.com/zaki-zeyi/dsh-industry-research
 
 自动测试验证配置持久化、宿主会话、交付回执、索引、错误恢复与界面交互。真实扫码授权、企业审批、付费信源可访问性和实际调研内容质量需要真实环境验收。Agent 声称完成时须交付每家公司的真实文档链接；平台校验回执结构及链接稳定性，不逐条审计远端事实。增量去重和文档内高亮由 Agent 执行。
 
-[PRD 快照](docs/prd-lightweight-128.md) · [架构](docs/architecture.md) · [验收记录](docs/acceptance-report.md)
+[PRD 快照](docs/prd-lightweight-169.md) · [架构](docs/architecture.md) · [验收记录](docs/acceptance-report.md)

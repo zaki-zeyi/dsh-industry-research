@@ -2,6 +2,10 @@ import { companyReceiptSchema } from './agent-delivery.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
+import { homedir } from 'node:os';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { LibraryRefreshError, libraryReadError } from './library-errors.mjs';
 import { createHash } from 'node:crypto';
 import { DEFAULT_COMPANIES, DEFAULT_DIMENSIONS, DEFAULT_SOURCES } from './industry-defaults.mjs';
 export { DEFAULT_COMPANIES, DEFAULT_DIMENSIONS, DEFAULT_SOURCES };
@@ -30,23 +34,54 @@ export function mergeCompanyDelivery(store, task, delivery) {
     names.add(c.name); urls.add(c.url);
   }
   const byName = new Map(current.companies.map(c => [c.name, c]));
-  for (const c of delivery.companies ?? []) byName.set(c.name, { ...c, dimensions: [...new Set([...(byName.get(c.name)?.dimensions ?? []), ...c.dimensions])], updatedAt: new Date().toISOString(), taskId: task.id });
+  for (const c of delivery.companies ?? []) byName.set(c.name, { ...c, dimensions: [...new Set([...(byName.get(c.name)?.dimensions ?? []), ...c.dimensions])], updatedAt: c.updatedAt ?? new Date().toISOString(), taskId: task.id });
   store.saveSetting(key, { folderToken: delivery.libraryFolderToken, manifestUrl: delivery.manifestUrl ?? current.manifestUrl, companies: [...byName.values()] });
 }
 export function companyTaskInput(input) { const v = industryInputSchema.parse(input); return { direction: `更新全量信息库 · ${v.companies.length} 家公司`, sources: v.sources.join('、'), prompt: v.prompt ?? industryPrompt(v), industry: v }; }
 
 // Read a known manifest document; never enumerate a user's Drive.
-export async function refreshLibrary(store, root, app, run = promisify(execFile)) {
-  const current = library(store, root, app);
+const timestamp = z.string().datetime({ offset: true });
+const manifestCompanySchema = companyReceiptSchema.extend({ updatedAt: timestamp, taskId: z.string().uuid().optional() });
+export function parseLibraryManifest(content) {
+  let value;
+  try {
+    const text = String(content ?? '').trim();
+    const start = text.indexOf('{'), end = text.lastIndexOf('}');
+    if (start < 0 || end < start) throw new Error('missing JSON');
+    value = JSON.parse(text.slice(start, end + 1));
+  } catch { throw new LibraryRefreshError('LIBRARY_INVALID_JSON', '公司索引不是有效 JSON，请在原会话修复索引；本地已同步记录保留'); }
+  const parsed = z.object({ companies: z.array(manifestCompanySchema).max(1000) }).safeParse(value);
+  if (!parsed.success) throw new LibraryRefreshError('LIBRARY_INVALID_SCHEMA', '公司索引字段格式不正确，请在原会话核对公司链接、维度和日期；本地已同步记录保留');
+  const companies = parsed.data.companies;
+  if (new Set(companies.map(c => c.name)).size !== companies.length || new Set(companies.map(c => c.url)).size !== companies.length) throw new LibraryRefreshError('LIBRARY_DUPLICATES', '公司索引存在重复公司或文档，请在原会话核对；本地已同步记录保留');
+  return companies.map(c => ({ ...c, updatedAt: new Date(c.updatedAt).toISOString() }));
+}
+export async function refreshLibrary(store, root, app, run = promisify(execFile), { command } = {}) {
+  const key = libraryKey(root, app), current = library(store, root, app);
   if (!current.manifestUrl) return current;
   const args = [...(app?.profile ? ['--profile', app.profile] : []), 'docs', '+fetch', '--doc', current.manifestUrl, '--doc-format', 'markdown', '--as', 'user'];
-  const { stdout } = await run('lark-cli', args, { timeout: 20000, maxBuffer: 1024 * 1024, windowsHide: true });
-  const response = JSON.parse(stdout);
-  if (!response.ok) throw new Error('无法读取飞书资料库索引，请检查授权后重试');
-  const content = response.data?.document?.content ?? '';
-  const start = content.indexOf('{'), end = content.lastIndexOf('}');
-  const manifest = z.object({ companies: z.array(companyReceiptSchema.extend({ updatedAt: z.string().datetime(), taskId: z.string().uuid().optional() })).max(1000) }).parse(JSON.parse(content.slice(start, end + 1)));
-  if (new Set(manifest.companies.map(c => c.name)).size !== manifest.companies.length || new Set(manifest.companies.map(c => c.url)).size !== manifest.companies.length) throw new Error('飞书索引存在重复公司或文档');
-  const companies = manifest.companies.map(c => ({ ...c, taskId: current.companies.find(v => v.name === c.name)?.taskId }));
-  return store.saveSetting(libraryKey(root, app), { ...current, companies });
+  const local = resolve(homedir(), '.local/bin/lark-cli');
+  let stdout;
+  try {
+    ({ stdout } = await run(command ?? (existsSync(local) ? local : 'lark-cli'), args, { timeout: 20000, maxBuffer: 1024 * 1024, windowsHide: true, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }));
+  } catch (e) { throw libraryReadError(e); }
+  let response;
+  try { response = JSON.parse(stdout); } catch { throw new LibraryRefreshError('LIBRARY_INVALID_RESPONSE', 'Lark CLI 返回格式异常，请检查 CLI 后重试；本地已同步记录保留'); }
+  if (!response.ok) throw libraryReadError({ stdout });
+  const remote = parseLibraryManifest(response.data?.document?.content);
+  // A task may deliver another company while the remote fetch is in flight. Merge
+  // against the latest local index and retain entries newer than this snapshot.
+  const latest = library(store, root, app);
+  if (latest.manifestUrl !== current.manifestUrl || latest.folderToken !== current.folderToken) throw new LibraryRefreshError('LIBRARY_CHANGED', '同步期间公司索引已改变，请刷新重试；本地记录保留', 409);
+  const localByName = new Map(latest.companies.map(c => [c.name, c]));
+  const companies = remote.map(c => {
+    const local = localByName.get(c.name);
+    if (local && Date.parse(local.updatedAt) > Date.parse(c.updatedAt)) return local;
+    const related = local?.taskId ?? store.list?.().find(t => t.industry?.companies.includes(c.name) && libraryKey(t.feishuRoot, t.feishuApp) === key)?.id;
+    return { ...c, taskId: related };
+  });
+  const known = new Set(companies.map(c => c.name));
+  // Keep only entries delivered during this request, not remotely removed entries.
+  for (const local of latest.companies) if (!known.has(local.name) && !current.companies.some(c => c.name === local.name && c.updatedAt === local.updatedAt)) companies.push(local);
+  return store.saveSetting(key, { ...latest, companies, syncedAt: new Date().toISOString() });
 }

@@ -20,9 +20,10 @@ ${task.feishuRoot.folderToken ? `目标文件夹 ID：${task.feishuRoot.folderTo
 失败回传（已取得目录 ID 时带 folderToken；尚未取得时省略该字段） {"requestId":"${meta.deliveryRequestId}","status":"failed","folderToken":"实际目标目录ID","error":"不含正文与凭据的失败原因及下一步"}
 不把报告正文写到回执、其他本地文件或对话输出。成功或失败后结束当前轮次，保持会话供用户继续提出要求，不重复调研。`.replaceAll('lark-cli', cli);
 }
-export async function waitCloudDelivery(sessions, meta, { signal, timeoutMs }) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
+export const RESEARCH_TIMEOUT_MS = 30 * 60 * 1000;
+export async function waitCloudDelivery(sessions, meta, { signal, timeoutMs = RESEARCH_TIMEOUT_MS, now = Date.now, pause = delay }) {
+  const started = now();
+  while (now() - started <= timeoutMs) {
     signal.throwIfAborted();
     let receipt;
     try {
@@ -37,7 +38,7 @@ export async function waitCloudDelivery(sessions, meta, { signal, timeoutMs }) {
     }
     const state = sessions.get(meta.id);
     if (state.lastTurnCompletedAt) throw new Error('本轮会话已结束但未交付飞书报告链接，请在原生会话核对后重试');
-    await delay(150, null, { signal });
+    await pause(150, null, { signal });
   }
-  sessions.cancel(meta.id); throw new Error('等待飞书报告交付超时，请在原生会话核对；任务记录已保留');
+  sessions.cancel(meta.id); throw new Error('调研超过 30 分钟仍未完成飞书交付，任务失败；已完成文档和会话记录保留，可在原会话核对后重试');
 }

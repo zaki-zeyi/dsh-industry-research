@@ -28,3 +28,10 @@ test('返回工作台后，迟到的详情响应不能重新打开旧会话',asy
  await page.getByRole('button',{name:'← 返回工作台'}).click();release();await finished;await page.evaluate(()=>new Promise(requestAnimationFrame));await page.unroute('**/api/tasks/'+id);
  await expect(page.getByRole('heading',{name:'历史 AI 任务',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'← 返回工作台'})).toHaveCount(0);
 });
+test('索引格式错误准确提示并保留公司，后台轮询不清除错误，刷新成功后清除',async({page,request})=>{
+ const before=await(await request.get('/api/industry/library')).json();
+ await page.route('**/api/industry/library?refresh=true',route=>route.fulfill({status:502,json:{code:'LIBRARY_INVALID_SCHEMA',error:'公司索引字段格式不正确，请在原会话核对公司链接、维度和日期；本地已同步记录保留'}}));
+ await page.clock.install();await page.goto('/');await expect(page.getByRole('alert')).toContainText('日期');await expect(page.getByRole('alert')).not.toContainText('授权');await expect(page.locator('.industry-company')).toHaveCount(before.companies.length);
+ await page.clock.runFor(4500);await expect(page.getByRole('alert')).toContainText('日期');
+ await page.unroute('**/api/industry/library?refresh=true');await page.getByRole('button',{name:'刷新列表'}).click();await expect(page.getByRole('alert')).toHaveCount(0);await expect(page.getByText(/上次同步/)).toBeVisible();await expect(page.locator('.industry-company')).toHaveCount(before.companies.length);
+});

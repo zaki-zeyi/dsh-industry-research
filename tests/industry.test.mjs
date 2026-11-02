@@ -64,3 +64,41 @@ test('AC-IND-07 已知飞书索引读取，无目录列表权限，失败不丢�
  await assert.rejects(refreshLibrary(f.service.store,root,undefined,async()=>{throw new Error('offline');}));assert.equal(library(f.service.store,root).companies.length,1);
  }finally{await f.close();}
 });
+
+test('AC-IND-08 真实索引格式：+08:00和Z日期兼容，回执允许更新时间',async()=>{
+ const { parseLibraryManifest }=await import('../server/industry.mjs');const { agentDeliverySchema }=await import('../server/agent-delivery.mjs');
+ const c={...company('后摩智能'),updatedAt:'2026-11-02T19:41:58+08:00'};
+ const parsed=parseLibraryManifest('# 公司索引\n\n```json\n'+JSON.stringify({companies:[c]})+'\n```');assert.equal(parsed[0].updatedAt,'2026-11-02T11:41:58.000Z');
+ assert.equal(parseLibraryManifest(JSON.stringify({companies:[{...c,updatedAt:'2026-11-02T11:41:58Z'}]})).length,1);
+ const receipt=agentDeliverySchema.parse({status:'published',url:c.url,companies:[c]});assert.equal(receipt.companies[0].updatedAt,'2026-11-02T11:41:58.000Z');
+ assert.throws(()=>parseLibraryManifest(JSON.stringify({companies:[{...c,updatedAt:'bad-date'}]})),e=>e.code==='LIBRARY_INVALID_SCHEMA'&&!e.message.includes('授权'));
+ assert.throws(()=>parseLibraryManifest('索引正文损坏'),e=>e.code==='LIBRARY_INVALID_JSON');
+});
+
+test('AC-IND-09 刷新沿用已配置CLI路径和profile，格式/命令/授权错误分类并保留缓存',async()=>{
+ const f=await setup();try{const a=await f.service.createAuthorized(companyTaskInput(input));await until(()=>f.service.require(a.id).status==='ready');const root=f.service.feishuSettings(),before=library(f.service.store,root);
+ await refreshLibrary(f.service.store,root,undefined,async(command,args)=>{assert.equal(command,'/test/lark-cli');assert.ok(args.includes(before.manifestUrl));return{stdout:JSON.stringify({ok:true,data:{document:{content:JSON.stringify({companies:[{...company('后摩智能'),updatedAt:'2026-11-02T19:41:58+08:00'}]})}}})};},{command:'/test/lark-cli'});
+ for(const [error,code] of [[{code:'ENOENT'},'LARK_CLI_UNAVAILABLE'],[{killed:true},'LIBRARY_TIMEOUT'],[{stderr:'TOKEN_EXPIRED secret-must-not-leak'},'FEISHU_AUTH_REQUIRED']]){
+  await assert.rejects(refreshLibrary(f.service.store,root,undefined,async()=>{throw error;}),e=>e.code===code&&!e.message.includes('secret-must-not-leak'));
+ }
+ await assert.rejects(refreshLibrary(f.service.store,root,undefined,async()=>({stdout:JSON.stringify({ok:true,data:{document:{content:'invalid'}}})})),e=>e.code==='LIBRARY_INVALID_JSON');assert.equal(library(f.service.store,root).companies.length,1);
+ }finally{await f.close();}
+});
+
+test('AC-IND-10 刷新与交付并发时保留新公司和新状态',async()=>{
+ const f=await setup();try{const a=await f.service.createAuthorized(companyTaskInput(input));await until(()=>f.service.require(a.id).status==='ready');const root=f.service.feishuSettings();
+ const refreshed=await refreshLibrary(f.service.store,root,undefined,async()=>{
+  const t=f.service.require(a.id);mergeCompanyDelivery(f.service.store,t,{libraryFolderToken:'libraryFolder',companies:[{...company('光羽芯辰'),added:9}]});
+  return{stdout:JSON.stringify({ok:true,data:{document:{content:JSON.stringify({companies:[{...company('后摩智能'),updatedAt:'2020-01-01T00:00:00Z'}]})}}})};});
+ assert.equal(refreshed.companies.find(c=>c.name==='光羽芯辰').added,9);assert.ok(refreshed.syncedAt);
+ }finally{await f.close();}
+});
+
+test('AC-IND-11 旧10分钟超时但30分钟内有效交付可恢复；真正超时或用户中断不能恢复',async()=>{
+ const f=await setup();try{const a=await f.service.createAuthorized(companyTaskInput(input));await until(()=>f.service.require(a.id).status==='ready');const t=f.service.require(a.id),meta=f.service.store.terminal(t.terminalId);
+ const receipt={requestId:meta.deliveryRequestId,status:'published',folderToken:'rootFolder',libraryFolderToken:'libraryFolder',manifestUrl:url('ManifestDoc'),url:url('HoumoDoc'),companies:input.companies.map(name=>({...company(name),updatedAt:'2026-11-02T19:41:58+08:00'}))};
+ t.status='failed';t.error='等待飞书报告交付超时';t.runs.at(-1).status='failed';meta.activity='waiting_input';meta.lastTurnReason='completed';meta.lastTurnCompletedAt=new Date(Date.parse(t.runs.at(-1).startedAt)+12*60000).toISOString();f.service.store.saveTerminal(meta);f.service.store.save(t);
+ f.service.recordAgentDelivery(t.id,meta.id,receipt);assert.equal(f.service.require(t.id).status,'ready');assert.equal(f.service.require(t.id).error,null);
+ for(const status of ['failed','interrupted']){const current=f.service.require(t.id);current.status=status;current.error='等待飞书报告交付超时';f.service.store.save(current);meta.lastTurnCompletedAt=new Date(Date.parse(current.runs.at(-1).startedAt)+31*60000).toISOString();f.service.store.saveTerminal(meta);f.service.recordAgentDelivery(t.id,meta.id,receipt);assert.equal(f.service.require(t.id).status,status);}
+ }finally{await f.close();}
+});
