@@ -1,0 +1,34 @@
+name: Plugin platform acceptance
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  acceptance:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install chromium
+      - run: npm run acceptance
+      - run: npm run plugin:pack
+      - run: node scripts/release-acceptance.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: acceptance-${{ matrix.os }}
+          path: |
+            artifacts/*.tgz
+            artifacts/*desktop.zip
+            artifacts/*.sha256
+            artifacts/plugin-release.json
+            playwright-report
+            test-results

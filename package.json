@@ -1,0 +1,77 @@
+{
+  "name": "dsh-industry-research",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "server": "node --env-file-if-exists=.env server/index.mjs",
+    "build": "vite build",
+    "start": "node --env-file-if-exists=.env server/index.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e": "playwright test",
+    "test:live": "node --env-file-if-exists=.env scripts/live-acceptance.mjs",
+    "acceptance": "npm run build && npm test && npm run test:e2e",
+    "plugin:pack": "node scripts/build-plugin.mjs",
+    "plugin:install": "node scripts/install-dsh-plugin.mjs",
+    "accept:update": "node scripts/accept-and-update.mjs",
+    "test:native-host": "node scripts/native-host-acceptance.mjs --browser",
+    "test:feishu-qr": "node scripts/feishu-registration-smoke.mjs",
+    "plugin:check-pack": "node scripts/check-plugin-pack.mjs",
+    "test:git-install": "node scripts/git-install-acceptance.mjs",
+    "plugin:publish-git": "node scripts/publish-git-plugin.mjs"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "1.76.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "express": "4.22.3",
+    "lucide-react": "0.468.0",
+    "node-pty": "1.1.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "react-markdown": "9.0.3",
+    "remark-gfm": "4.0.0",
+    "ws": "8.22.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "fflate": "0.8.3",
+    "vite": "6.4.5"
+  },
+  "exports": {
+    ".": "./plugin/index.mjs",
+    "./client": "./plugin/client.js",
+    "./package.json": "./package.json",
+    "./plugin/cordis.patch.yml": "./plugin/cordis.patch.yml"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./plugin/cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "plugin",
+    "server",
+    "dist",
+    "scripts/prepare-pty.mjs",
+    "scripts/terminal-turn-notify.mjs",
+    "README.md",
+    "docs"
+  ],
+  "main": "./plugin/index.mjs"
+}

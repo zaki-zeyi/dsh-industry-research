@@ -1,0 +1,30 @@
+import { test, expect } from '@playwright/test';
+test('完整公司调研流程：默认配置、自定义持久化、可编辑Prompt、文档卡片、冲突和历史',async({page,request})=>{
+ await page.goto('/');await expect(page.getByRole('heading',{name:'全量信息库',exact:true})).toBeVisible();await page.getByRole('button',{name:'更新全量信息库',exact:true}).first().click();
+ const dialog=page.getByRole('dialog');await expect(dialog.getByRole('heading',{name:'更新全量信息库'})).toBeVisible();await expect(dialog.getByText('17 家公司 · 5 个维度 · 16 个信源')).toBeVisible();
+ await dialog.getByRole('textbox',{name:'自定义调研维度'}).fill('客户与合作伙伴');await dialog.getByRole('group',{name:'调研维度'}).getByRole('button',{name:'＋ 添加'}).click();await expect(dialog.getByRole('checkbox',{name:'客户与合作伙伴'})).toBeChecked();
+ await dialog.getByRole('textbox',{name:'自定义数据源'}).fill('公司官方网站');await dialog.getByRole('group',{name:'数据源'}).getByRole('button',{name:'＋ 添加'}).click();await expect(dialog.getByRole('checkbox',{name:'公司官方网站'})).toBeChecked();
+ await dialog.getByRole('button',{name:'关闭调研配置'}).click();await page.getByRole('button',{name:'更新全量信息库',exact:true}).first().click();await expect(dialog.getByRole('checkbox',{name:'客户与合作伙伴'})).toBeChecked();await expect(dialog.getByRole('checkbox',{name:'公司官方网站'})).toBeChecked();
+ await dialog.getByLabel('其他要求').fill('优先最近一年信息');await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/优先最近一年信息/);await dialog.getByLabel('任务 Prompt',{exact:false}).fill('请调研选择的全部公司，保留来源与日期，呈现更新摘要。');await dialog.getByRole('button',{name:'启动',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'更新全量信息库 · 17 家公司'})).toBeVisible();await page.getByRole('button',{name:'← 返回工作台'}).click();await expect(page.locator('.industry-company')).toHaveCount(17,{timeout:10000});
+ await expect(page.getByText('1 处信息冲突，请在文档中核对来源')).toBeVisible();await page.screenshot({path:'artifacts/industry-library.png',fullPage:true});await expect(page.getByRole('link',{name:'后摩智能'})).toHaveAttribute('href',/feishu.cn\/docx\//);
+ await page.getByRole('textbox',{name:'搜索',exact:true}).fill('后摩');await expect(page.locator('.industry-company')).toHaveCount(1);await page.reload();await expect(page.locator('.industry-company')).toHaveCount(17);
+ await page.getByRole('button',{name:'历史 AI 任务'}).click();await expect(page.locator('.industry-history article').first()).toContainText('已完成');await page.locator('.industry-history article').first().getByRole('button',{name:'继续会话'}).click();await expect(page.getByRole('heading',{name:'更新全量信息库 · 17 家公司'})).toBeVisible();
+ const tasks=await(await request.get('/api/tasks')).json();expect(tasks.items[0].status).toBe('ready');
+});
+test('空选禁用启动、失败任务保留并可重试',async({page})=>{
+ await page.goto('/');await page.getByRole('button',{name:'更新全量信息库',exact:true}).first().click();const dialog=page.getByRole('dialog');await dialog.getByRole('group',{name:'调研公司'}).getByRole('button',{name:'清空',exact:true}).click();await expect(dialog.getByRole('button',{name:'启动',exact:true})).toBeDisabled();
+ await dialog.getByRole('textbox',{name:'自定义调研公司'}).fill('失败验收公司');await dialog.getByRole('group',{name:'调研公司'}).getByRole('button',{name:'＋ 添加'}).click();await dialog.getByRole('button',{name:'启动',exact:true}).click();await expect(page.getByRole('button',{name:'重试任务'})).toBeVisible({timeout:10000});await expect(page.getByRole('alert')).toContainText('测试信源不可用');await page.getByRole('button',{name:'重试任务'}).click();await expect(page.getByText(/已完成 ·/)).toBeVisible({timeout:10000});
+});
+test('窄屏布局无横向溢出，弹窗支持Escape和键盘焦点',async({page})=>{
+ await page.setViewportSize({width:390,height:844});await page.goto('/');await page.getByRole('button',{name:'更新全量信息库',exact:true}).first().click();await expect(page.getByRole('dialog')).toBeVisible();await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toHaveCount(0);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+test('返回工作台后，迟到的详情响应不能重新打开旧会话',async({page,request})=>{
+ const list=await(await request.get('/api/tasks')).json();const id=list.items[0].id;
+ await page.goto('/');await page.getByRole('button',{name:'历史 AI 任务'}).click();
+ let release;const gate=new Promise(r=>{release=r;});let observed;const received=new Promise(r=>{observed=r;});let finish;const finished=new Promise(r=>{finish=r;});
+ await page.route('**/api/tasks/'+id,async route=>{const response=await route.fetch();observed();await gate;await route.fulfill({response});finish();});
+ await page.locator('.industry-history article').filter({hasText:list.items[0].direction}).first().getByRole('button',{name:'继续会话'}).click();await received;
+ await page.getByRole('button',{name:'← 返回工作台'}).click();release();await finished;await page.evaluate(()=>new Promise(requestAnimationFrame));await page.unroute('**/api/tasks/'+id);
+ await expect(page.getByRole('heading',{name:'历史 AI 任务',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'← 返回工作台'})).toHaveCount(0);
+});

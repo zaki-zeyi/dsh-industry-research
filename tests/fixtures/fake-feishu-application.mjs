@@ -1,0 +1,22 @@
+import { requiredScopes } from '../../server/feishu-binding.mjs';
+import { writeFileSync } from 'node:fs';
+const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGQAAAABJRU5ErkJggg==','base64');
+export function applicationRunner({defaultBound=true,defaultUserName='默认用户'}={}){
+ const calls=[],profiles=new Map(),defaultAccount={appId:'cli_default123',bound:defaultBound,userName:defaultUserName};let fail=false,mismatch=false,issued=0;
+ const run=async(args,options={})=>{
+  calls.push({args,options});const profile=args[0]==='--profile'?args[1]:null;const cmd=profile?args.slice(2):args;
+  if(cmd[0]==='profile'){if(fail)throw new Error('credential-secret');profiles.set(cmd[cmd.indexOf('--name')+1],{appId:cmd[cmd.indexOf('--app-id')+1],bound:false,userName:'自定义用户'});return 'saved';}
+  const account=profile?profiles.get(profile):defaultAccount;
+  if(!account)throw new Error('missing profile');
+  if(cmd[1]==='status')return {appId:mismatch?'cli_wrong123':account.appId,identities:{bot:{appName:profile?'自定义应用':'默认应用'},user:{available:account.bound,verified:account.bound,userName:account.userName,openId:'ou_scanned',scope:requiredScopes.join(' ')}}};
+  if(cmd[1]==='qrcode'){writeFileSync(cmd.at(-1),png);return '';}
+  if(cmd.includes('--device-code')){account.bound=true;if(!profile&&issued>1)account.userName='切换用户';return {success:true};}
+  issued++;return {device_code:'private-device-'+issued,verification_url:'https://accounts.feishu.cn/device?code='+(profile?'custom-':'test-')+issued,expires_in:600};
+ };
+ return {run,calls,profiles,setFail(v){fail=v;},setMismatch(v){mismatch=v;}};
+}
+
+export function registrationRunner() {
+ const pending=[];let serial=0;
+ return {pending,registerApp:async options=>{const id=++serial;options.onQRCodeReady({url:'https://open.feishu.cn/page/cli?user_code=fixture-'+id,expireIn:600});return new Promise((resolve,reject)=>{const request={options,resolve,reject};pending.push(request);options.signal.addEventListener('abort',()=>reject(Object.assign(new Error('cancelled'),{code:'abort'})),{once:true});});},approve(appId='cli_scanned123'){pending.at(-1).resolve({client_id:appId,client_secret:'fixture-secret',user_info:{open_id:'ou_scanned',tenant_brand:'feishu'}});}};
+}
