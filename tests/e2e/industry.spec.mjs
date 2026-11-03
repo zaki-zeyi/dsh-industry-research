@@ -38,13 +38,13 @@ test('索引格式错误准确提示并保留公司，后台轮询不清除错�
 test('FR04 内部资料链接可生成逐字稿、展示文档和原始资料并自动通知',async({page,request})=>{
  await page.goto('/');await page.getByRole('button',{name:'内部资料'}).click();await expect(page.getByRole('heading',{name:'内部资料',exact:true})).toBeVisible();
  await page.getByRole('button',{name:'解析内部资料'}).click();const dialog=page.getByRole('dialog');await expect(dialog.getByRole('heading',{name:'内部资料'})).toBeVisible();
- await dialog.getByLabel('内部资料目录',{exact:false}).fill('访谈资料');await dialog.getByLabel('网络链接').check();await dialog.getByLabel('网络资料链接').fill('https://example.com/interview.mp4');await dialog.getByLabel('其他要求').fill('核对融资日期');
+ await expect(dialog.getByLabel('内部资料目录',{exact:false})).toHaveCount(0);await dialog.getByLabel('网络链接').check();await dialog.getByLabel('网络资料链接').fill('https://example.com/interview.mp4');await dialog.getByLabel('其他要求').fill('核对融资日期');
  await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/核对融资日期/);await dialog.getByRole('button',{name:'启动'}).click();
  await expect(page.getByRole('heading',{name:'内部资料解析 · interview.mp4'})).toBeVisible({timeout:10000});await page.getByRole('button',{name:'← 返回工作台'}).click();
  const list=page.locator('.industry-company').filter({hasText:'interview.mp4'});await expect(list).toContainText('已完成',{timeout:10000});await expect(list.getByRole('link',{name:'逐字稿'})).toHaveAttribute('href',/InternalTranscript/);await expect(list.getByRole('link',{name:'原始资料'})).toHaveAttribute('href',/FixtureSource/);await expect(list).toContainText('飞书机器人已通知');
  await expect(list.getByRole('link',{name:'会议纪要',exact:true})).toHaveAttribute('href',/InternalMinutes/);
- const api=await(await request.get('/api/internal-materials')).json();const task=api.items.find(item=>item.internal.sourceLabel==='interview.mp4');expect(task.publication.sourceMaterialUrl).toContain('FixtureSource');expect(task.notification.status).toBe('sent');expect(task.internal.directoryName).toBe('访谈资料');
- await page.getByRole('button',{name:'解析内部资料'}).click();await expect(page.getByRole('dialog').getByLabel('内部资料目录',{exact:false})).toHaveValue('访谈资料');await page.keyboard.press('Escape');
+ const api=await(await request.get('/api/internal-materials')).json();const task=api.items.find(item=>item.internal.sourceLabel==='interview.mp4');expect(task.publication.sourceMaterialUrl).toContain('FixtureSource');expect(task.notification.status).toBe('sent');expect(task.internal.directoryName).toBe('内部资料');
+ await page.getByRole('button',{name:'解析内部资料'}).click();await expect(page.getByRole('dialog').getByLabel('内部资料目录',{exact:false})).toHaveCount(0);await page.keyboard.press('Escape');
 });
 
 

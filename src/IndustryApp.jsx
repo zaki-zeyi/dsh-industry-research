@@ -75,7 +75,7 @@ function ResearchModal({ onClose, onCreated, kind, scheduled=false }) {
 }
 
 function InternalMaterialModal({ directoryName: initialDirectoryName, onClose, onCreated }) {
-  const [directoryName, setDirectoryName] = useState(initialDirectoryName ?? '内部资料');
+  const directoryName = initialDirectoryName ?? '内部资料';
   const [sourceType, setSourceType] = useState('local');
   const [source, setSource] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
@@ -183,7 +183,6 @@ function InternalMaterialModal({ directoryName: initialDirectoryName, onClose, o
       </label> : <label className="industry-field">网络资料链接
         <input required maxLength={4000} type="url" placeholder="https://…" value={source} onChange={event => { setSource(event.target.value); setPrompt(null); }}/>
       </label>}
-      <label className="industry-field">内部资料目录<input required maxLength={120} value={directoryName} onChange={event => { setDirectoryName(event.target.value); setPrompt(null); }}/><small>根目录下的文件夹名称，下次自动沿用</small></label>
       <label className="industry-field">其他要求
         <textarea maxLength={2000} placeholder="例如：重点核对产品发布时间、融资金额和说话人身份" value={requirements} onChange={event => { setRequirements(event.target.value); setPrompt(null); }}/>
       </label>
