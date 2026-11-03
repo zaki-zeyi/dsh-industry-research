@@ -8,12 +8,13 @@ import {startRuntime} from '../server/runtime.mjs';
 import {mockHost} from './fixtures/fake-native-host.mjs';
 import {until} from './helpers.mjs';
 const input={kind:'daily',companies:['后摩智能'],dimensions:['融资'],sources:['公司官网'],requirements:''};
-test('FR02 北京时间完整自然日：跨年、闰月、UTC日界、上一自然周',()=>{
+test('FR02 北京时间完整自然日：跨年、闰月、UTC日界、前七个完整自然日',()=>{
  assert.deepEqual(reportWindow('daily',new Date('2026-12-31T16:00:00Z')).start,'2026-12-30T16:00:00.000Z');
- assert.equal(reportWindow('weekly',new Date('2026-11-03T01:00:00Z')).start,'2026-10-25T16:00:00.000Z');
+ assert.equal(reportWindow('weekly',new Date('2026-11-03T01:00:00Z')).start,'2026-10-26T16:00:00.000Z');
  assert.equal(reportWindow('daily',new Date('2024-03-01T01:00:00Z')).display,'2024-02-29 00:00 至 2024-02-29 23:59（北京时间）');
- assert.equal(reportWindow('weekly',new Date('2026-11-08T15:59:59Z')).end,'2026-11-01T16:00:00.000Z');
- assert.equal(reportWindow('weekly',new Date('2027-01-01T01:00:00Z')).display,'2026-12-21 00:00 至 2026-12-27 23:59（北京时间）');
+ assert.equal(reportWindow('weekly',new Date('2026-11-08T15:59:59Z')).end,'2026-11-07T16:00:00.000Z');
+ assert.equal(reportWindow('weekly',new Date('2027-01-01T01:00:00Z')).display,'2026-12-25 00:00 至 2026-12-31 23:59（北京时间）');
+ assert.equal(reportWindow('weekly',new Date('2026-11-06T01:00:00Z')).display,'2026-10-30 00:00 至 2026-11-05 23:59（北京时间）');
  assert.throws(()=>briefingTask({...input,kind:'research'}));assert.throws(()=>briefingTask({...input,companies:[]}));
 });
 async function setup(updated=false,receiptExtras={}){
