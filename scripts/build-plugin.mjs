@@ -22,7 +22,7 @@ try {
   cpSync(resolve(root, 'docs/plugin-install.md'), resolve(stage, 'README.md'));
   const source = JSON.parse(readFileSync(resolve(root, 'package.json')));
   const dependencies = Object.fromEntries(['express', 'ws', 'zod', 'node-pty', '@larksuiteoapi/node-sdk'].map(name => [name, source.dependencies[name]]));
-  const manifest = { name: source.name, version: source.version, description: '行研工作台：适用于 DeepSeek Harness 桌面版和网页版的 公司全量信息库与宿主原生会话调研插件', type: 'module', main: source.main, engines: source.engines, exports: source.exports, dsh: source.dsh, dependencies, bundledDependencies: Object.keys(dependencies), files: ['plugin', 'server', 'dist', 'scripts', 'docs', 'README.md'] };
+  const manifest = { name: source.name, version: source.version, description: '行研工作台：适用于 DeepSeek Harness 桌面版和网页版的 公司全量信息库、友商分析与宿主原生会话调研插件', type: 'module', main: source.main, engines: source.engines, exports: source.exports, dsh: source.dsh, dependencies, bundledDependencies: Object.keys(dependencies), files: ['plugin', 'server', 'dist', 'scripts', 'docs', 'README.md'] };
   writeFileSync(resolve(stage, 'package.json'), JSON.stringify(manifest, null, 2));
   // Copy the complete production dependency tree, including nested versions.
   function copyDependency(name, parentRoot, parentTarget = stage) {
@@ -68,6 +68,6 @@ try {
   const zipSha256 = createHash('sha256').update(readFileSync(resolve(root, 'artifacts', zipFilename))).digest('hex');
   writeFileSync(resolve(root, 'artifacts', `${zipFilename}.sha256`), `${zipSha256}  ${zipFilename}\n`);
   writeFileSync(resolve(root, 'artifacts', 'desktop-install-path.txt'), `${directoryPath}\n`);
-  writeFileSync(resolve(root, 'artifacts/plugin-release.json'), JSON.stringify({ name: manifest.name, version: manifest.version, filename: packed.filename, size: packed.size, sha256, bundled: packed.bundled, prdRevision: 169, targets: ['win32-x64', 'win32-arm64', 'darwin-x64', 'darwin-arm64'], directory, zipFilename, zipSha256 }, null, 2));
+  writeFileSync(resolve(root, 'artifacts/plugin-release.json'), JSON.stringify({ name: manifest.name, version: manifest.version, filename: packed.filename, size: packed.size, sha256, bundled: packed.bundled, prdRevision: 449, targets: ['win32-x64', 'win32-arm64', 'darwin-x64', 'darwin-arm64'], directory, zipFilename, zipSha256 }, null, 2));
   console.log(`桌面弹窗填写：${directoryPath}\n桌面解压包：${zipFilename}\n安装包：${archive}\nSHA256：${sha256}`);
 } finally { rmSync(stage, { recursive: true, force: true }); }
