@@ -86,7 +86,7 @@ export class NativeResearcher {
     const meta = await this.sessions.create(task); terminal(meta.id); session(meta.sessionId);
     const cancel = () => { try { this.sessions.cancel(meta.id); } catch {} }; signal.addEventListener('abort', cancel, { once: true });
     try {
-      signal.throwIfAborted(); await this.sessions.send(meta.id, `请读取 ${meta.promptPath}，按照该文件中的本次用户调研任务执行。`);
+      signal.throwIfAborted(); await this.sessions.send(meta.id, `请读取 ${meta.promptPath}，按照该文件中的本次用户${task.internal ? '内部资料解析' : '调研'}任务执行。`);
       if (task.cloudOnly) return await waitCloudDelivery(this.sessions, meta, { signal, timeoutMs: this.timeoutMs });
       const start = Date.now(); let previous, invalid, report;
       while (Date.now() - start < this.timeoutMs) {

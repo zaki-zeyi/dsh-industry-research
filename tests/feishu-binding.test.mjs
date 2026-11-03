@@ -118,3 +118,48 @@ test('PRD1990 默认应用在授权途中变更时不误报绑定成功',async()
  }});
  try{const flow=await binding.start();await assert.rejects(binding.complete(flow.flowId),e=>e.status===409&&/应用已发生变化/.test(e.message));}finally{binding.close();}
 });
+
+test('本机DPoP或用户授权失效时返回可自动执行的恢复动作',async()=>{
+ let result={
+  appId:'cli_default123',
+  dpopKeyStatus:'missing',
+  identities:{
+   bot:{status:'ready',available:true},
+   user:{status:'missing',available:false,tokenStatus:'needs_refresh',message:'DPoP key unavailable or inconsistent',scope:requiredScopes.join(' ')},
+  },
+ };
+ const binding=new FeishuBinding({run:async()=>result});
+ try{
+  let state=await binding.status();
+  assert.equal(state.bound,false);
+  assert.deepEqual(state.recovery,{
+   code:'LARK_DPOP_KEY_UNAVAILABLE',
+   action:'authorize',
+   automatic:true,
+   message:'本机飞书登录密钥不可用，将自动重新发起扫码授权；完成扫码后会自动恢复。',
+  });
+  result={...result,dpopKeyStatus:'available',identities:{...result.identities,user:{...result.identities.user,available:true,verified:true,tokenStatus:'valid'}}};
+  state=await binding.status();assert.equal(state.bound,true);
+ }finally{binding.close();}
+});
+
+test('扫码仍在等待时不阻塞页面，后台完成授权并自动切回已绑定状态',async()=>{
+ let bound=false,finish;const binding=new FeishuBinding({run:async args=>{
+  if(args[1]==='status')return {appId:'cli_default123',dpopKeyStatus:bound?'available':'missing',identities:{bot:{status:'ready'},user:{...status(bound).identities.user,tokenStatus:bound?'valid':'needs_refresh'}}};
+  if(args[1]==='qrcode'){writeFileSync(args.at(-1),png);return '';}
+  if(args.includes('--device-code'))return new Promise(resolve=>{finish=()=>{bound=true;resolve({ok:true});};});
+  return {device_code:'private-auto',verification_url:'https://accounts.feishu.cn/device?code=auto',expires_in:600};
+ }});
+ try{
+  const flow=await binding.start();
+  const completed=binding.autoComplete(flow.flowId);
+  while(!finish)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(binding.flow.autoCompleting,true);
+  const polling=await binding.status();
+  assert.equal(polling.flowId,flow.flowId);
+  assert.equal(polling.autoCompleting,true);
+  finish();
+  assert.equal((await completed).bound,true);
+  assert.equal((await binding.status()).bound,true);
+ }finally{binding.close();}
+});

@@ -6,6 +6,7 @@ import { resolve, dirname } from 'node:path';
 import { existsSync, realpathSync, readFileSync, statSync } from 'node:fs';
 import { z } from 'zod';
 import { ServiceError } from './service.mjs';
+import { prepareInternalMaterial } from './internal-materials.mjs';
 
 export function createApp(service, { dist = resolve('dist'), health = {}, libraryRun } = {}) {
   const app = express(); app.disable('x-powered-by');
@@ -26,6 +27,38 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.get('/api/briefings', (req,res) => res.json({items:service.store.list().filter(t => t.briefing && (!req.query.kind || t.briefing.kind === req.query.kind)).map(t => ({id:t.id,direction:t.direction,status:t.status,createdAt:t.createdAt,briefing:t.briefing,stage:t.stage,publication:t.publication,notification:t.notification}))}));
   app.post('/api/briefings', async(req,res,next)=>{try {res.status(202).json(await service.createAuthorized(briefingTask(req.body),req.headers['idempotency-key']));}catch(e){next(e);}});
   app.post('/api/briefings/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);if(!t.briefing||t.status!=='ready')throw new ServiceError(409,'报告尚未完成');await service.notifications.send(t.id);res.json(service.require(t.id));}catch(e){next(e);}});
+  app.get('/api/internal-materials', (_req, res) => res.json({
+    items: service.store.list().filter(task => task.internal).map(task => ({
+      id: task.id,
+      direction: task.direction,
+      status: task.status,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      internal: task.internal,
+      publication: task.publication,
+      notification: task.notification,
+      error: task.error,
+    })),
+  }));
+  app.post('/api/internal-materials', async (req, res, next) => {
+    try {
+      const key = req.headers['idempotency-key'];
+      if (key) z.string().min(1).max(100).parse(key);
+      res.status(202).json(await service.createAuthorized(prepareInternalMaterial(req.body), key));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post('/api/internal-materials/:id/notify', async (req, res, next) => {
+    try {
+      const task = service.require(req.params.id);
+      if (!task.internal || task.status !== 'ready') throw new ServiceError(409, '内部资料解析尚未完成');
+      await service.internalNotifications.send(task.id);
+      res.json(service.require(task.id));
+    } catch (error) {
+      next(error);
+    }
+  });
   app.get('/api/briefings/schedule',(req,res,next)=>{try{const kind=req.query.kind?z.enum(['daily','weekly']).parse(req.query.kind):undefined;res.json(service.briefingSchedules?.get(kind)??{available:false});}catch(e){next(e);}});
   app.put('/api/briefings/schedule',async(req,res,next)=>{try{res.json(await service.briefingSchedules.save(req.body));}catch(e){next(e);}});
   app.post('/api/briefings/trigger/:kind',async(req,res,next)=>{try{const kind=z.enum(['daily','weekly']).parse(req.params.kind);res.status(202).json(await service.briefingSchedules.trigger(kind));}catch(e){next(e);}});
@@ -39,7 +72,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.delete('/api/feishu-registration', (_req, res, next) => { try { service.binding.registration.cancel(); res.json({ status: 'idle' }); } catch(e) { next(e); } });
   app.get('/api/feishu-registration/qr/:id', (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.type('png').send(service.binding.registration.qr(req.params.id)); } catch(e) { next(e); } });
   app.get('/api/feishu-binding', async (_req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.status()); } catch(e) { next(e); } });
-  app.post('/api/feishu-binding', async (req, res, next) => { try { const input = z.object({ rebind: z.boolean().optional() }).strict().parse(req.body ?? {}); res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.start(input)); } catch(e) { next(e); } });
+  app.post('/api/feishu-binding', async (req, res, next) => { try { const input = z.object({ rebind: z.boolean().optional(), auto: z.boolean().optional() }).strict().parse(req.body ?? {}); res.setHeader('Cache-Control', 'no-store'); const flow = await service.binding.start({ rebind: input.rebind }); if (input.auto && !flow.bound) void service.binding.autoComplete?.(flow.flowId); res.json(flow); } catch(e) { next(e); } });
   app.post('/api/feishu-binding/complete', async (req, res, next) => { try { const { flowId } = z.object({ flowId: z.string().uuid() }).strict().parse(req.body); res.json(await service.binding.complete(flowId)); } catch(e) { next(e); } });
   app.get('/api/feishu-binding/qr/:id', (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.type('png').send(service.binding.qr(req.params.id)); } catch(e) { next(e); } });
   app.get('/api/feishu-settings', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json(service.feishuSettings()); });
@@ -60,7 +93,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     let tasks = service.store.list();
     if (req.query.cursor) { const index = tasks.findIndex(t => t.id === req.query.cursor); if (index < 0) throw new ServiceError(400, '分页游标无效'); tasks = tasks.slice(index + 1); }
     const page = tasks.slice(0, limit);
-    res.json({ items: page.map(({ id, direction, sources, status, stage, createdAt, updatedAt, publication, report, mode, ai, briefing }) => ({ id, ai, briefing, direction, sources, status, stage, createdAt, updatedAt, publication, mode, summary: service.cloudOnly ? null : report?.summary ?? null })), nextCursor: tasks.length > limit ? page.at(-1).id : null });
+    res.json({ items: page.map(({ id, direction, sources, status, stage, createdAt, updatedAt, publication, report, mode, ai, briefing, internal }) => ({ id, ai, briefing, internal, direction, sources, status, stage, createdAt, updatedAt, publication, mode, summary: service.cloudOnly ? null : report?.summary ?? null })), nextCursor: tasks.length > limit ? page.at(-1).id : null });
   } catch(e) { next(e); } });
   app.post('/api/tasks', async (req, res, next) => { try { const key = req.headers['idempotency-key']; if (key) z.string().min(1).max(100).parse(key); res.status(202).json(await service.createAuthorized(req.body, key)); } catch(e) { next(e); } });
   app.get('/api/tasks/:id', (req, res, next) => { try { const t = service.require(req.params.id); res.json(service.cloudOnly ? { task: { ...t, report: null, reports: [], draft: '', localPublication: undefined }, events: [] } : { task: t, events: service.store.events(req.params.id) }); } catch(e) { next(e); } });
@@ -105,7 +138,11 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   if (existsSync(dist)) { app.use(express.static(dist)); app.get('*', (_req, res) => res.sendFile(resolve(dist, 'index.html'))); }
   app.use((err, _req, res, _next) => {
     const status = err instanceof z.ZodError ? 400 : err.status ?? 500;
-    res.status(status).json({ ...((typeof err.code==='string'&&err.code.startsWith('LIBRARY_')) || ['LARK_CLI_UNAVAILABLE', 'FEISHU_AUTH_REQUIRED', 'FEISHU_DOCUMENT_DENIED'].includes(err.code) ? { code: err.code } : {}), error: err instanceof z.ZodError ? err.issues.map(i => i.message).join('；') : status === 500 ? '服务内部异常，请稍后重试' : err.message });
+    res.status(status).json({
+      ...((typeof err.code==='string'&&/^(?:LIBRARY_|LARK_|FEISHU_)/.test(err.code)) ? { code: err.code } : {}),
+      ...(err.recovery ? { recovery: err.recovery } : {}),
+      error: err instanceof z.ZodError ? err.issues.map(i => i.message).join('；') : status === 500 ? '服务内部异常，请稍后重试' : err.message,
+    });
   });
   return app;
 }

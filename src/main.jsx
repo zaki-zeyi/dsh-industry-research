@@ -8,7 +8,14 @@ import { hostOrigin } from './host-origin.mjs';
 
 async function api(path, options) {
   const r = await fetch(`/api${path}`, { ...options, headers: { 'Content-Type': 'application/json', ...options?.headers } });
-  const body = await r.json(); if (!r.ok) throw new Error(body.error ?? '请求失败'); return body;
+  const body = await r.json();
+  if (!r.ok) {
+    const error = new Error(body.error ?? '请求失败');
+    error.code = body.code;
+    error.recovery = body.recovery;
+    throw error;
+  }
+  return body;
 }
 function App() { return <IndustryApp BindingModal={FeishuBindingModal} RootModal={FeishuRootModal} Conversation={NativeConversation}/>; }
 
@@ -57,20 +64,47 @@ function FeishuRootModal({ current, onClose, onSaved }) {
 function FeishuBindingModal({ onClose, onBound, onStatus }) {
   const [applicationEditing, setApplicationEditing] = useState(false), [registering, setRegistering] = useState(false);
   const [state, setState] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [qrError, setQrError] = useState(false), [now, setNow] = useState(Date.now());
-  const lock = useRef(false), first = useRef(null), revision = useRef(0), editing = useRef(false);
+  const lock = useRef(false), first = useRef(null), revision = useRef(0), editing = useRef(false), automaticRepair = useRef('');
   editing.current = applicationEditing || registering;
   useEffect(() => { first.current?.focus(); let live = true; api('/feishu-binding').then(value => { if (live && revision.current === 0) { setState(value); onStatus?.(value); } }).catch(e => { if (live) setError(e.message); }); const listener = e => { if (editing.current) return; if (e.key === 'Escape' && !lock.current) onClose(); if (e.key === 'Tab') { const els = [...document.querySelectorAll('.modal button:not(:disabled), .modal a')]; const first = els[0], last = els.at(-1); if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); } } }; document.addEventListener('keydown', listener); const timer = setInterval(() => setNow(Date.now()), 1000); return () => { live = false; document.removeEventListener('keydown', listener); clearInterval(timer); }; }, []);
+  useEffect(() => {
+    const recovery = state?.recovery;
+    if (!recovery?.automatic || registering || applicationEditing || automaticRepair.current === recovery.code) return;
+    automaticRepair.current = recovery.code;
+    if (recovery.action === 'authorize') void run(false, true);
+    if (recovery.action === 'register_app') setRegistering(true);
+  }, [state?.recovery?.code, registering, applicationEditing]);
+  const shouldPoll = !state?.bound && Boolean(state?.flowId || state?.recovery);
+  useEffect(() => {
+    if (registering || applicationEditing || !shouldPoll) return;
+    let polling = false;
+    const timer = setInterval(async () => {
+      if (polling || lock.current) return;
+      polling = true;
+      try {
+        const value = await api('/feishu-binding');
+        setState(value);
+        onStatus?.(value);
+        if (value.bound) onBound(value);
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        polling = false;
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [registering, applicationEditing, shouldPoll]);
   const expired = state?.expiresAt && Date.parse(state.expiresAt) <= now;
-  async function run(complete = false, rebind = false) { if (lock.current) return; revision.current++; lock.current = true; setBusy(true); setError(''); setQrError(false); try { const value = await api(complete ? '/feishu-binding/complete' : '/feishu-binding', { method: 'POST', body: JSON.stringify(complete ? { flowId: state.flowId } : { rebind }) }); setState(value); if (value.bound) onBound(value); } catch(e) { setError(e.message); } finally { lock.current = false; setBusy(false); } }
+  async function run(complete = false, rebind = false) { if (lock.current) return; revision.current++; lock.current = true; setBusy(true); setError(''); setQrError(false); try { const value = await api(complete ? '/feishu-binding/complete' : '/feishu-binding', { method: 'POST', body: JSON.stringify(complete ? { flowId: state.flowId } : { rebind, auto: true }) }); setState(value); if (value.bound) onBound(value); } catch(e) { setError(e.message); if (e.recovery) setState(current => ({ ...current, recovery: e.recovery })); } finally { lock.current = false; setBusy(false); } }
   async function applicationSaved() { revision.current++; let value; try { value = await api('/feishu-binding'); } catch { value = { bound: false, error: '应用已保存，请重新检查授权状态' }; } setState(value); onStatus?.(value); setApplicationEditing(false); setRegistering(false); if (value.appId) await run(false); }
   if (registering) return <FeishuRegistrationModal onClose={() => setRegistering(false)} onRegistered={applicationSaved}/>;
   if (applicationEditing) return <FeishuApplicationModal onClose={() => setApplicationEditing(false)} onSaved={applicationSaved}/>;
   return <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="binding-title">
     <div className="modal-heading"><Library size={24}/><button ref={first} className="icon-button" aria-label="关闭飞书绑定" disabled={busy} onClick={onClose}><X size={20}/></button></div><h2 id="binding-title">绑定飞书</h2><p className="modal-intro">先扫码登录飞书，在飞书页面选择已有应用或创建新应用，再完成个人文档授权。</p>
     <section className="binding-application" aria-label="授权应用"><div><strong>当前应用</strong><p>{state?.appName || state?.appId || '尚未绑定应用'}</p>{state?.appName && state?.appId && <small>{state.appId}</small>}</div><button className="secondary" disabled={busy || !state} onClick={() => setRegistering(true)}>更换应用</button></section>
-    {state?.bound ? <p role="status">已绑定飞书：{state.userName}</p> : state?.authorizationUrl && !expired ? <div className="binding-qr"><a className="doc-link" href={state.authorizationUrl} target="_blank" rel="noreferrer">打开飞书授权页</a>{!qrError ? <img src={`/api/feishu-binding/qr/${state.flowId}`} alt="绑定飞书授权二维码" onError={() => setQrError(true)}/> : <p>二维码加载失败，可打开授权链接或重新获取。</p>}<p>请使用刚才登录并绑定应用的同一账号授权，然后点击“我已授权”。</p><button className="secondary" disabled={busy} onClick={() => setRegistering(true)}>换账号，重新扫码绑定应用</button></div> : <p>{busy ? '正在获取个人授权二维码…' : expired ? '个人授权二维码已过期，请重新获取。' : state?.error ?? '检查飞书授权中…'}</p>}
+    {state?.bound ? <p role="status">已绑定飞书：{state.userName}</p> : state?.authorizationUrl && !expired ? <div className="binding-qr"><a className="doc-link" href={state.authorizationUrl} target="_blank" rel="noreferrer">打开飞书授权页</a>{!qrError ? <img src={`/api/feishu-binding/qr/${state.flowId}`} alt="绑定飞书授权二维码" onError={() => setQrError(true)}/> : <p>二维码加载失败，可打开授权链接或重新获取。</p>}<p>{state.autoCompleting ? '扫码后会自动完成授权并关闭窗口，无需再次点击。' : '请使用刚才登录并绑定应用的同一账号完成授权。'}</p><button className="secondary" disabled={busy} onClick={() => setRegistering(true)}>换账号，重新扫码绑定应用</button></div> : <><p>{busy ? '正在自动检查并获取授权二维码…' : expired ? '个人授权二维码已过期，请重新获取。' : state?.error ?? '检查飞书授权中…'}</p>{state?.recovery?.message && state.recovery.message !== state.error && <p className="ai-config-hint" role="status">{state.recovery.message}</p>}</>}
     <p className="ai-config-hint">换账号时请重新扫码选择该账号可管理的应用，避免继续授权旧账号的应用。报告仍以个人身份保存；应用创建、选择及权限变更需在飞书页面确认。</p>{error && <div className="form-error" role="alert">{error}</div>}
-    <div className="modal-footer"><span>个人身份 · 报告仅存飞书</span>{state?.bound ? <><button className="secondary" disabled={busy} onClick={() => setRegistering(true)}>重新绑定</button><button className="primary" disabled={busy} onClick={() => onBound(state)}>完成</button></> : <><button className="primary" disabled={busy || !state} onClick={() => setRegistering(true)}>扫码登录并选择应用</button>{state?.flowId && !expired && <button className="primary" disabled={busy} onClick={() => run(true)}>我已授权</button>}</>}</div>
+    <div className="modal-footer"><span>个人身份 · 报告仅存飞书</span>{state?.bound ? <><button className="secondary" disabled={busy} onClick={() => setRegistering(true)}>重新绑定</button><button className="primary" disabled={busy} onClick={() => onBound(state)}>完成</button></> : <><button className="primary" disabled={busy || !state || ['install_cli', 'repair_cli'].includes(state.recovery?.action)} onClick={() => setRegistering(true)}>{state?.recovery?.action === 'register_app' ? '扫码登录并绑定应用' : '重新扫码登录'}</button>{state?.flowId && !expired && <button className="primary" disabled={busy} onClick={() => run(true)}>{state.autoCompleting ? '检查授权结果' : '我已授权'}</button>}</>}</div>
     {!state?.bound && state?.appId && <button className="text-button" disabled={busy} onClick={() => run(false, Boolean(state?.authorizationUrl))}>{state?.authorizationUrl ? '重新获取个人授权二维码' : '仅补充当前应用授权'}</button>}
     <button className="text-button" disabled={busy || !state} onClick={() => setApplicationEditing(true)}>手动配置已有应用</button>
   </section></div>;
@@ -90,7 +124,7 @@ function FeishuRegistrationModal({ onClose, onRegistered }) {
   return <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="registration-title"><div className="modal-heading"><Library size={24}/><button ref={first} className="icon-button" aria-label="关闭扫码绑定应用" disabled={busy || state?.status === 'saving'} onClick={close}><X size={20}/></button></div><h2 id="registration-title">扫码登录并绑定应用</h2><p className="modal-intro">1. 扫码登录你要使用的飞书账号。<br/>2. 在飞书页面选择已有应用或创建新应用并确认。<br/>3. 返回工作台，继续个人文档授权。</p>
     {waiting && <div className="binding-qr"><a className="doc-link" href={state.authorizationUrl} target="_blank" rel="noreferrer">打开飞书应用绑定页</a>{!qrError ? <img key={`${state.flowId}-${attempt}`} src={`/api/feishu-registration/qr/${state.flowId}?attempt=${attempt}`} alt="飞书账号登录与应用绑定二维码" onError={() => setQrError(true)}/> : <p>二维码暂不可用，可打开绑定链接或重新获取。</p>}<p>先确认飞书页面登录的是新账号，再选择或创建应用。完成后将自动继续。</p></div>}
     {(!state || state.status === 'initializing') && <p role="status">正在生成扫码登录与应用绑定二维码…</p>}{state?.status === 'saving' && <p role="status">应用已确认，正在安全保存配置…</p>}{state?.status === 'completed' && <p role="status">应用已绑定，正在继续个人授权…</p>}
-    <p className="ai-config-hint">无需填写 App ID 或密钥。选择已有应用需具备相应管理权限；企业审批限制仍由飞书控制。取消待扫码流程会保留原绑定。</p>{(error || state?.error) && <div className="form-error" role="alert">{error || state.error}</div>}<div className="modal-footer"><button className="secondary" disabled={busy || state?.status === 'saving'} onClick={close}>取消</button><button className="primary" disabled={busy || !state || ['initializing', 'saving', 'completed'].includes(state.status)} onClick={() => { setAttempt(0); start(true); }}>重新获取应用绑定二维码</button></div>
+    <p className="ai-config-hint">无需填写 App ID 或密钥。选择已有应用需具备相应管理权限；企业审批限制仍由飞书控制。取消待扫码流程会保留原绑定。</p>{state?.recovery?.message && state.recovery.message !== state.error && <p className="ai-config-hint" role="status">{state.recovery.message}</p>}{(error || state?.error) && <div className="form-error" role="alert">{error || state.error}</div>}<div className="modal-footer"><button className="secondary" disabled={busy || state?.status === 'saving'} onClick={close}>取消</button><button className="primary" disabled={busy || !state || ['initializing', 'saving', 'completed'].includes(state.status)} onClick={() => { setAttempt(0); start(true); }}>重新获取应用绑定二维码</button></div>
   </section></div>;
 }
 

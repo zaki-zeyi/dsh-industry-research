@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { agentDeliverySchema } from './agent-delivery.mjs';
 import { ServiceError } from './service.mjs';
 import { applicationSchema, cliFor } from './feishu-application.mjs';
+import { larkRecoveryForError, larkRecoveryForStatus } from './lark-health.mjs';
 export const requiredScopes = ['docx:document:create', 'docx:document:write_only', 'docx:document:readonly', 'docs:document:import', 'drive:drive.metadata:readonly', 'space:folder:create', 'offline_access'];
 export class FeishuBinding {
   constructor({ command, run, store, registerApp } = {}) {
@@ -16,7 +17,8 @@ export class FeishuBinding {
     this.command = command ?? (existsSync(local) ? local : 'lark-cli');
     this.run = run ?? ((args, options = {}) => new Promise((resolveRun, reject) => {
       const launch = larkLaunch(this.command, args);
-      const child = execFile(launch.command, launch.args, { timeout: 15000, maxBuffer: 128 * 1024, cwd: options.cwd, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }, (error, stdout) => error ? reject(error) : resolveRun(stdout));
+      const child = execFile(launch.command, launch.args, { timeout: options.timeoutMs ?? 15000, maxBuffer: 128 * 1024, cwd: options.cwd, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }, (error, stdout) => error ? reject(error) : resolveRun(stdout));
+      options.onSpawn?.(child);
       child.stdin?.on('error', () => {}); child.stdin?.end(options.input ?? '');
     }));
   }
@@ -45,7 +47,7 @@ export class FeishuBinding {
   selectedArgs(args, application = this.applicationSnapshot()) { cliFor(application); return application?.profile ? ['--profile', application.profile, ...args] : args; }
   async json(args, application = this.applicationSnapshot()) { const raw = await this.run(this.selectedArgs(args, application)); return typeof raw === 'string' ? JSON.parse(raw) : raw; }
 
-  async status(application = this.applicationSnapshot()) {
+  async inspectStatus(application = this.applicationSnapshot()) {
     try {
       const result = await this.json(['auth', 'status', '--json', '--verify'], application);
       if (application?.mode === 'custom' && result.appId !== application.appId) return { bound: false, available: true, error: 'Lark CLI 返回的应用与所选应用不一致，请重新配置，未使用默认应用代替' };
@@ -54,12 +56,38 @@ export class FeishuBinding {
       const authenticated = user?.available === true && user?.verified === true;
       const missingScopes = requiredScopes.filter(s => !scopes.has(s));
       const accountMismatch = authenticated && application.ownerOpenId && user.openId !== application.ownerOpenId;
-      if (accountMismatch) return { ...metadata, bound: false, available: true, error: '个人授权账号与扫码绑定应用的账号不一致，请使用同一账号授权，或重新扫码登录并绑定新账号的应用' };
+      const recovery = larkRecoveryForStatus(result, { missingScopes, accountMismatch });
+      if (accountMismatch) return { ...metadata, bound: false, available: true, error: '个人授权账号与扫码绑定应用的账号不一致，请使用同一账号授权，或重新扫码登录并绑定新账号的应用', recovery };
       const bound = authenticated && missingScopes.length === 0;
-      return { ...metadata, bound, authenticated, available: true, ...(bound ? { openId: user.openId, userName: String(user.userName ?? '飞书用户').slice(0, 100) } : { missingScopes, error: authenticated ? '飞书已登录，但文档与云盘权限不完整，请补充授权后开始调研' : '请绑定飞书并授权文档与云盘访问权限后开始调研' }) };
-    } catch { return { bound: false, available: false, error: '无法检查飞书授权，请确认已安装并配置 lark-cli，或稍后重试' }; }
+      return { ...metadata, bound, authenticated, available: true, ...(bound ? { openId: user.openId, userName: String(user.userName ?? '飞书用户').slice(0, 100) } : { missingScopes, recovery, error: authenticated ? '飞书已登录，但文档与云盘权限不完整，请补充授权后开始调研' : recovery?.message ?? '请绑定飞书并授权文档与云盘访问权限后开始调研' }) };
+    } catch (error) {
+      const failure = larkRecoveryForError(error);
+      return { bound: false, available: false, error: failure.message, recovery: failure };
+    }
   }
-  async requireBound(application = this.applicationSnapshot()) { if (this.registration.busy) throw new ServiceError(428, '请先完成扫码登录和应用绑定，再启动调研'); const state = await this.status(application); if (!state.bound) throw new ServiceError(428, state.error); return state; }
+  async status(application = this.applicationSnapshot()) {
+    const state = await this.inspectStatus(application);
+    if (!this.flow || state.bound) return state;
+    return {
+      ...state,
+      ...this.publicFlow(),
+      bound: false,
+      available: true,
+      error: this.flow.completionError || this.flow.recovery?.message || state.error,
+      recovery: this.flow.recovery || state.recovery,
+    };
+  }
+  async requireBound(application = this.applicationSnapshot()) {
+    if (this.registration.busy) throw new ServiceError(428, '请先完成扫码登录和应用绑定，再启动调研');
+    const state = await this.status(application);
+    if (!state.bound) {
+      const error = new ServiceError(428, state.error);
+      error.code = state.recovery?.code;
+      error.recovery = state.recovery;
+      throw error;
+    }
+    return state;
+  }
   async start({ rebind = false } = {}) {
     if (this.registration.busy || this.configuring) throw new ServiceError(409, '飞书应用配置正在处理中，请稍后再试');
     if (this.completing) throw new ServiceError(409, '授权确认正在处理中，请稍后再重新绑定');
@@ -72,7 +100,7 @@ export class FeishuBinding {
   }
   async startOnce(rebind = false) {
     const application = this.applicationSnapshot();
-    const state = await this.status(application); if (state.bound && !rebind) return state;
+    const state = await this.inspectStatus(application); if (state.bound && !rebind) return state;
     if (!rebind && this.flow && this.flow.expires > Date.now()) return this.publicFlow();
     this.clear();
     try {
@@ -84,9 +112,31 @@ export class FeishuBinding {
       const directory = mkdtempSync(resolve(tmpdir(), 'research-feishu-binding-')), qrPath = resolve(directory, 'qrcode.png');
       this.flow = { id: randomUUID(), deviceCode: data.device_code, url, rebind, application, appId: state.appId ?? application.appId, appName: state.appName, expires: Date.now() + Math.min(expiresIn, 1800) * 1000, directory, qrPath };
       await this.run(this.selectedArgs(['auth', 'qrcode', url, '--output', qrPath], application), { cwd: directory }); return this.publicFlow();
-    } catch { this.clear(); throw new ServiceError(503, '无法发起飞书绑定，请检查 lark-cli 应用配置与网络后重试'); }
+    } catch (failure) {
+      this.clear();
+      const recovery = larkRecoveryForError(failure);
+      const message = recovery.code === 'LARK_AUTHORIZATION_PENDING'
+        ? `无法发起飞书绑定：${recovery.message}`
+        : recovery.message;
+      const error = new ServiceError(503, message);
+      error.code = recovery.code;
+      error.recovery = recovery;
+      throw error;
+    }
   }
-  publicFlow() { return { bound: false, rebind: this.flow.rebind, appId: this.flow.appId, appName: this.flow.appName, flowId: this.flow.id, authorizationUrl: this.flow.url, expiresAt: new Date(this.flow.expires).toISOString() }; }
+  publicFlow() {
+    return {
+      bound: false,
+      rebind: this.flow.rebind,
+      appId: this.flow.appId,
+      appName: this.flow.appName,
+      flowId: this.flow.id,
+      authorizationUrl: this.flow.url,
+      expiresAt: new Date(this.flow.expires).toISOString(),
+      autoCompleting: Boolean(this.flow.autoCompleting),
+      ...(this.flow.recovery ? { recovery: this.flow.recovery } : {}),
+    };
+  }
   qr(id) {
     if (!this.flow || id !== this.flow.id || this.flow.expires <= Date.now()) throw new ServiceError(404, '授权二维码已失效，请重新绑定飞书');
     let bytes; try { bytes = readFileSync(this.flow.qrPath); } catch { throw new ServiceError(404, '二维码尚不可用，请重试'); }
@@ -97,11 +147,45 @@ export class FeishuBinding {
     if (this.completing) return this.completing;
     const flow = this.flow;
     this.completing = (async () => {
-      try { await this.json(['auth', 'login', '--device-code', flow.deviceCode, '--json'], flow.application); } catch { throw new ServiceError(409, '尚未完成授权或确认超时，请确认扫码账号有当前应用的使用权限；其他企业的账号请先更换对应应用再扫码'); }
+      try {
+        const raw = await this.run(this.selectedArgs(['auth', 'login', '--device-code', flow.deviceCode, '--json'], flow.application), {
+          timeoutMs: Math.min(900000, Math.max(15000, flow.expires - Date.now() + 5000)),
+          onSpawn: (child) => { flow.child = child; },
+        });
+        const payload = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (payload?.ok === false) throw Object.assign(new Error(payload?.error?.message || 'authorization failed'), { code: payload?.error?.code });
+      } catch (failure) {
+        const recovery = larkRecoveryForError(failure);
+        if (this.flow === flow) {
+          flow.completionError = recovery.message;
+          flow.recovery = recovery;
+        }
+        const error = new ServiceError(409, recovery.message);
+        error.code = recovery.code;
+        error.recovery = recovery;
+        throw error;
+      }
+      flow.child = null;
       const state = await this.requireBound(flow.application);
       if (flow.appId && state.appId !== flow.appId) throw new ServiceError(409, '授权应用已发生变化，请重新扫码，未完成绑定'); this.clear(); return state;
-    })().finally(() => { this.completing = null; }); return this.completing;
+    })().finally(() => { flow.child = null; this.completing = null; }); return this.completing;
   }
-  clear() { if (this.flow) rmSync(this.flow.directory, { recursive: true, force: true }); this.flow = null; }
+  autoComplete(id) {
+    const flow = this.flow;
+    if (!flow || flow.id !== id || flow.expires <= Date.now() || flow.autoCompletion) return flow?.autoCompletion ?? null;
+    flow.autoCompleting = true;
+    flow.autoCompletion = this.complete(id)
+      .catch(() => null)
+      .finally(() => { flow.autoCompleting = false; });
+    return flow.autoCompletion;
+  }
+  clear() {
+    if (this.flow) {
+      try { this.flow.child?.kill(); } catch {}
+      this.flow.child = null;
+      rmSync(this.flow.directory, { recursive: true, force: true });
+    }
+    this.flow = null;
+  }
   close() { this.registration.close(); this.clear(); }
 }

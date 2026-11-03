@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { ServiceError } from './service.mjs';
+import { larkRecoveryForError } from './lark-health.mjs';
 
 export function registrationUrl(value) {
   try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && !u.port && ['open.feishu.cn', 'open.larksuite.com'].includes(u.hostname) && ['/page/cli', '/page/launcher'].includes(u.pathname) && Boolean(u.searchParams.get('user_code')); } catch { return false; }
@@ -14,7 +15,7 @@ export class FeishuRegistration {
   snapshot() {
     const f = this.flow; if (!f) return { status: 'idle' };
     if (active(f) && f.expires <= Date.now()) { f.controller.abort(); f.status = 'expired'; f.error = '二维码已过期，请重新扫码登录并选择应用'; }
-    return { flowId: f.id, status: f.status, ...(f.url ? { authorizationUrl: f.url } : {}), expiresAt: new Date(f.expires).toISOString(), ...(f.appId ? { appId: f.appId } : {}), ...(f.error ? { error: f.error } : {}) };
+    return { flowId: f.id, status: f.status, ...(f.url ? { authorizationUrl: f.url } : {}), expiresAt: new Date(f.expires).toISOString(), ...(f.appId ? { appId: f.appId } : {}), ...(f.error ? { error: f.error } : {}), ...(f.recovery ? { recovery: f.recovery } : {}) };
   }
   start({ refresh = false } = {}) {
     if (!this.binding.store) throw new ServiceError(503, '当前服务未启用飞书绑定配置');
@@ -39,7 +40,14 @@ export class FeishuRegistration {
           f.url = info.url; f.expires = Date.now() + Math.min(info.expireIn, 600) * 1000; f.status = 'awaiting_scan';
           qrWork = this.binding.run(['auth', 'qrcode', f.url, '--output', f.qrPath], { cwd: f.directory });
           // Observe immediately, even when registration continues polling for several minutes.
-          qrWork.catch(() => { if (this.flow === f && active(f)) { f.status = 'failed'; f.error = '二维码生成失败，请检查本机 Lark CLI 后重试'; f.controller.abort(); } });
+          qrWork.catch(error => {
+            if (this.flow === f && active(f)) {
+              f.recovery = larkRecoveryForError(error);
+              f.status = 'failed';
+              f.error = f.recovery.message;
+              f.controller.abort();
+            }
+          });
         } });
       if (this.flow !== f || f.controller.signal.aborted) return;
       if (!f.url || !qrWork || !/^cli_[A-Za-z0-9]{5,100}$/.test(result.client_id ?? '') || typeof result.client_secret !== 'string' || !/^[\x21-\x7e]{1,512}$/.test(result.client_secret) || !/^ou_[A-Za-z0-9_-]+$/.test(result.user_info?.open_id ?? '') || (result.user_info?.tenant_brand && result.user_info.tenant_brand !== 'feishu')) throw new Error('invalid app result');
@@ -57,7 +65,10 @@ export class FeishuRegistration {
     } catch (error) {
       if (this.flow !== f || f.controller.signal.aborted) return;
       f.status = error?.code === 'expired_token' ? 'expired' : 'failed';
-      f.error = error?.code === 'access_denied' ? '已取消应用授权，可重新扫码；原绑定仍保留' : '应用绑定未完成，请检查账号的应用管理权限、网络及本机 Lark CLI 后重试；原绑定仍保留';
+      f.recovery = error?.code === 'access_denied'
+        ? { code: 'LARK_APP_AUTHORIZATION_DENIED', action: 'register_app', automatic: false, message: '已取消应用授权，可重新扫码；原绑定仍保留。' }
+        : larkRecoveryForError(error);
+      f.error = f.recovery.message;
     } finally { clearTimeout(f.timer); }
   }
   qr(id) {
