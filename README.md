@@ -1,6 +1,6 @@
 # dsh-industry-research · 行研工作台
 
-基于飞书《行研平台prd轻量化》修订版 797 实现的 DeepSeek Harness 插件。复用本机既有调研工作台的宿主适配与授权代码，在独立命名空间内提供公司全量信息库。
+基于飞书《行研平台prd轻量化》修订版 815 实现的 DeepSeek Harness 插件。复用本机既有调研工作台的宿主适配与授权代码，在独立命名空间内提供公司全量信息库。
 
 - 默认 17 家公司、5 个维度、16 个信源，支持全网查询与自定义；新增维度和信源持久保存。
 - 编辑任务 Prompt，绑定飞书后启动 DSH 标准模式原生会话；所有任务共享插件工作区。
@@ -16,6 +16,12 @@
 按 PRD512，生成报告同时去重增量更新全量信息库，复用公司原文档与索引；无更新公司不写入。完成后原生会话显示报告链接、更新摘要或“本日/周无更新”；工作台以任务绑定应用的机器人身份通知任务启动时绑定的用户。通知失败不影响报告保存，可单独重试，使用同一消息幂等键避免重复通知；账号/应用切换后停止发送。机器人须开通消息权限且用户在其可用范围内。
 
 日报/周报页签分别提供「手动生成」和「定时生成」入口。定时弹窗与手动任务共用公司、维度、信源、自定义配置及可编辑 Prompt；分别保存，互不覆盖。默认日报每天 09:00、周报每周五 09:00，可修改并启用。自定义 Prompt 中的 {{时间范围}} 在执行时替换。通过官方 DSH Schedule 服务持久化定时任务；到点由宿主唤醒调度会话，为每期创建独立报告会话。同一天同类定时触发幂等。宿主需运行并配置可用模型与飞书授权。插件不依赖第三方自动化插件。
+
+## 多会话并行（PRD815）
+
+启动任务后即可并行调研，无全局单任务阻塞。各任务拥有独立原生会话、Prompt 和交付回执；仍以同一插件工作区作为会话分组。
+
+保存同一飞书信息库前，Agent 运行插件提供的保存锁客户端；成功取得锁后使用返回的最新目录、公司链接和索引，读取远端原文后增量合并。检索阶段并行，保存阶段互斥；等待时显示「等待保存」。取消、失败或结束会释放锁。目录创建结果不确定时仍停止重建，要求核对已有链接。已有运行会话的历史指令不追溯修改，新任务和重试使用新协议。
 
 ## 本地开发
 
@@ -40,9 +46,9 @@ npm run plugin:pack
 
 运行 `npm run plugin:pack` 后生成：
 
-- `artifacts/dsh-industry-research-0.3.1-desktop.zip`
-- `artifacts/dsh-industry-research-0.3.1.tgz`
-- `artifacts/dsh-industry-research-0.3.1/` 可直接安装目录
+- `artifacts/dsh-industry-research-0.4.0-desktop.zip`
+- `artifacts/dsh-industry-research-0.4.0.tgz`
+- `artifacts/dsh-industry-research-0.4.0/` 可直接安装目录
 
 在 DSH 桌面版「添加插件」中填写上述解压目录的绝对路径，按宿主提示启用或重新加载。Windows 和 macOS 使用同一个 ZIP；网页版可以使用 DSH CLI 安装 tgz。详见 [安装说明](docs/plugin-install.md)。
 
@@ -58,4 +64,4 @@ https://github.com/zaki-zeyi/dsh-industry-research
 
 自动测试验证配置持久化、宿主会话、交付回执、索引、错误恢复与界面交互。真实扫码授权、企业审批、付费信源可访问性和实际调研内容质量需要真实环境验收。Agent 声称完成时须交付每家公司的真实文档链接；平台校验回执结构及链接稳定性，不逐条审计远端事实。增量去重和文档内高亮由 Agent 执行。
 
-[PRD 快照](docs/prd-lightweight-797.md) · [架构](docs/architecture.md) · [验收记录](docs/acceptance-report.md)
+[PRD 快照](docs/prd-lightweight-815.md) · [架构](docs/architecture.md) · [验收记录](docs/acceptance-report.md)

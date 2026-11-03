@@ -48,7 +48,7 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     terminals.onDelivery = (id, terminalId, receipt) => service.recordAgentDelivery(id, terminalId, receipt);
     terminals.onSessionExit = (id, terminalId) => service.agentTerminalExited(id, terminalId);
     service.terminals = terminals; service.aiSettings = aiSettings; service.nativeSessions = nativeSessions;
-    if (nativeSessions) { nativeSessions.onDelivery = (id, binding, receipt) => service.recordAgentDelivery(id, binding, receipt); nativeSessions.onActivity = id => { if (store.get(id)) service.event(id, 'session-state', { sessionId: service.require(id).nativeSessionId }); }; }
+    if (nativeSessions) { nativeSessions.onDelivery = (id, binding, receipt) => service.recordAgentDelivery(id, binding, receipt); nativeSessions.onActivity = id => { if(!service.active.has(id))service.cloudWrites.release(id); if (store.get(id)) service.event(id, 'session-state', { sessionId: service.require(id).nativeSessionId }); }; }
     service.briefingSchedules = new BriefingSchedules(service, host, `http://127.0.0.1:${server.address().port}`);
     service.notifications = new BriefingNotifications(service);
     service.recover();

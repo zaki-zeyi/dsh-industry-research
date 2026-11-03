@@ -7,7 +7,7 @@ import { hostOrigin } from './host-origin.mjs';
 import './industry.css';
 async function api(path, options = {}) { const r = await fetch('/api' + path, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } }); const value = await r.json(); if (!r.ok) throw new Error(value.error ?? '请求失败'); return value; }
 const time = value => new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Shanghai' }).format(new Date(value));
-const status = t => ({ ready: '已完成', failed: '失败', interrupted: '已中断', running: '调研中', queued: '排队中' })[t.status] ?? t.status;
+const status = t => t.stage==='waiting_save'?'等待保存（其他任务正在写入）':({ ready: '已完成', failed: '失败', interrupted: '已中断', running: '调研中', queued: '排队中' })[t.status] ?? t.status;
 export function IndustryApp({ BindingModal, RootModal, Conversation }) {
   const [config, setConfig] = useState(null), [binding, setBinding] = useState(null), [tab, setTab] = useState('library');
   const [companies, setCompanies] = useState([]), [tasks, setTasks] = useState([]), [cursor, setCursor] = useState(null), [query, setQuery] = useState('');

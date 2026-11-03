@@ -1,3 +1,4 @@
+import {CloudWrites} from './cloud-writes.mjs';
 import { briefingInput, briefingKey } from './briefings.mjs';
 import { RESEARCH_TIMEOUT_MS } from './cloud-research.mjs';
 import { industryInputSchema, library, mergeCompanyDelivery } from './industry.mjs';
@@ -13,7 +14,7 @@ const creationPermit = Symbol('feishu-bound');
 export class ServiceError extends Error { constructor(status, message) { super(message); this.status = status; } }
 export class ResearchService {
   constructor(store, researcher, publisher, { mode = 'demo' } = {}) {
-    this.store = store; this.researcher = researcher; this.publisher = publisher; this.mode = mode; this.bus = new EventEmitter(); this.active = new Map(); this.queue = []; this.closed = false;
+    this.store = store; this.researcher = researcher; this.publisher = publisher; this.mode = mode; this.bus = new EventEmitter(); this.active = new Map(); this.queue = []; this.closed = false; this.cloudWrites=new CloudWrites(this);
   }
   require(id) { const t = this.store.get(id); if (!t) throw new ServiceError(404, '调研任务不存在'); return t; }
   event(id, type, data) { const e = this.store.event(id, type, data); this.bus.emit(id, e); return e; }
@@ -51,14 +52,17 @@ export class ResearchService {
     this.store.transaction(() => { this.store.save(task); this.store.event(id, 'user', task.prompt); if (key) this.store.saveRequest(key, serialized, id); });
     this.enqueue(id, 'research'); return this.require(id);
   }
-  enqueue(id, stage) { if (this.closed) return; this.queue.push({ id, stage }); queueMicrotask(() => this.drain()); }
+  enqueue(id, stage) { if (this.closed) return; if(this.active.has(id)||this.queue.some(j=>j.id===id))return; this.queue.push({ id, stage }); queueMicrotask(() => this.drain()); }
   drain() {
-    if (this.closed || this.active.size || !this.queue.length) return;
-    const { id, stage } = this.queue.shift(); const controller = new AbortController();
-    this.active.set(id, { controller, promise: null });
-    const promise = this.execute(id, stage, controller.signal).finally(() => { this.active.delete(id); this.drain(); });
-    this.active.get(id).promise = promise;
+    if(this.closed)return;
+    while(this.queue.length){
+      const {id,stage}=this.queue.shift();if(this.active.has(id))continue;
+      const controller=new AbortController();this.active.set(id,{controller,promise:null});
+      const promise=this.execute(id,stage,controller.signal).finally(()=>{this.cloudWrites.release(id);this.active.delete(id);this.drain();});
+      this.active.get(id).promise=promise;
+    }
   }
+
   async execute(id, stage, signal) {
     const t = this.require(id);
     try {
@@ -67,7 +71,7 @@ export class ResearchService {
         const run = { id: newId(), ...(t.cloudOnly ? { feishuApp: t.feishuApp ?? { mode: 'default' } } : {}), startedAt: new Date().toISOString(), sessionId: null, status: 'running' }; t.runs.push(run); this.save(t);
         if (t.briefing) { t.briefingLibrary = this.store.setting(briefingKey(t)) ?? {}; t.industryLibrary = library(this.store, t.feishuRoot, t.feishuApp); }
         if (t.industry) { t.industryLibrary = library(this.store, t.feishuRoot, t.feishuApp); this.save(t); }
-        if (t.cloudOnly) { await this.binding.requireBound(t.feishuApp ?? { mode: 'default' }); this.prepareCloudRoot(t); this.save(t); }
+        if (t.cloudOnly) { await this.binding.requireBound(t.feishuApp ?? { mode: 'default' }); const pendingRoot=this.store.setting(folderCacheKey(t.feishuRoot));if(this.researcher.transport!=='dsh-native'||(pendingRoot?.owner&&!pendingRoot.folderToken&&pendingRoot.owner!==t.id&&!this.active.has(pendingRoot.owner)))this.prepareCloudRoot(t); this.save(t); }
         const report = await this.researcher.run(t, {
           signal,
           emit: (type, data) => this.event(id, type, type === 'cli' ? { ...data, runId: run.id } : data),
@@ -79,12 +83,15 @@ export class ResearchService {
         if (t.cloudOnly) {
           const delivery = agentDeliverySchema.parse(report.cloudDelivery);
           if (delivery.status !== 'published') throw new Error('未收到有效飞书报告链接');
+          const latest=this.require(id);t.feishuRoot=latest.feishuRoot;
+          this.cloudWrites.assertOwner(t);
           this.rememberCloudFolder(t, delivery);
           this.rememberBriefing(t, delivery);
           mergeCompanyDelivery(this.store, t, delivery);
           if (t.industry && t.industry.companies.some(name => !delivery.companies?.some(c => c.name === name))) throw new Error('部分公司未交付，已保存完成的公司，请重试补齐');
           t.publication = agentPublication(delivery); t.status = 'ready'; t.stage = 'done';
           run.status = 'completed'; run.endedAt = new Date().toISOString(); this.save(t);
+          this.cloudWrites.release(id);
           if(t.briefing) await this.notifications?.send(id);
           this.event(id, 'system', '报告已保存到飞书，可从首页报告卡片打开；原生会话可继续对话。'); return;
         }
@@ -173,7 +180,7 @@ export class ResearchService {
     const delivery = agentDeliverySchema.parse(input);
     if (t.cloudOnly) {
       const meta = this.store.terminal(terminalId); if (!meta || delivery.requestId !== meta.deliveryRequestId) return;
-      try { this.rememberCloudFolder(t, delivery); this.rememberBriefing(t, delivery); mergeCompanyDelivery(this.store, t, delivery); } catch { return; }
+      try { this.cloudWrites.assertOwner(t); this.rememberCloudFolder(t, delivery); this.rememberBriefing(t, delivery); mergeCompanyDelivery(this.store, t, delivery); } catch { return; }
       // A legacy 10-minute timeout may have rejected a valid receipt containing
       // source timestamps. Recover only a completed, matching delivery within
       // the new 30-minute limit, never a cancelled or genuinely overdue run.

@@ -23,7 +23,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.put('/api/industry/preferences', (req, res, next) => { try { res.json(service.store.saveSetting('industry-preferences', preferencesSchema.parse(req.body))); } catch (e) { next(e); } });
   app.get('/api/industry/library', async (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); const root = service.feishuSettings(), app = service.binding?.applicationSnapshot?.(); res.json(req.query.refresh === 'true' ? await refreshLibrary(service.store, root, app, libraryRun, { command: service.binding?.command }) : library(service.store, root, app)); } catch (e) { next(libraryReadError(e)); } });
   app.post('/api/industry/tasks', async (req, res, next) => { try { const key = req.headers['idempotency-key']; if (key) z.string().min(1).max(100).parse(key); res.status(202).json(await service.createAuthorized(companyTaskInput(req.body), key)); } catch (e) { next(e); } });
-  app.get('/api/briefings', (req,res) => res.json({items:service.store.list().filter(t => t.briefing && (!req.query.kind || t.briefing.kind === req.query.kind)).map(t => ({id:t.id,direction:t.direction,status:t.status,createdAt:t.createdAt,briefing:t.briefing,publication:t.publication,notification:t.notification}))}));
+  app.get('/api/briefings', (req,res) => res.json({items:service.store.list().filter(t => t.briefing && (!req.query.kind || t.briefing.kind === req.query.kind)).map(t => ({id:t.id,direction:t.direction,status:t.status,createdAt:t.createdAt,briefing:t.briefing,stage:t.stage,publication:t.publication,notification:t.notification}))}));
   app.post('/api/briefings', async(req,res,next)=>{try {res.status(202).json(await service.createAuthorized(briefingTask(req.body),req.headers['idempotency-key']));}catch(e){next(e);}});
   app.post('/api/briefings/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);if(!t.briefing||t.status!=='ready')throw new ServiceError(409,'报告尚未完成');await service.notifications.send(t.id);res.json(service.require(t.id));}catch(e){next(e);}});
   app.get('/api/briefings/schedule',(req,res,next)=>{try{const kind=req.query.kind?z.enum(['daily','weekly']).parse(req.query.kind):undefined;res.json(service.briefingSchedules?.get(kind)??{available:false});}catch(e){next(e);}});
@@ -64,6 +64,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   } catch(e) { next(e); } });
   app.post('/api/tasks', async (req, res, next) => { try { const key = req.headers['idempotency-key']; if (key) z.string().min(1).max(100).parse(key); res.status(202).json(await service.createAuthorized(req.body, key)); } catch(e) { next(e); } });
   app.get('/api/tasks/:id', (req, res, next) => { try { const t = service.require(req.params.id); res.json(service.cloudOnly ? { task: { ...t, report: null, reports: [], draft: '', localPublication: undefined }, events: [] } : { task: t, events: service.store.events(req.params.id) }); } catch(e) { next(e); } });
+  app.post('/api/tasks/:id/write-lock',async(req,res,next)=>{try{const {requestId}=z.object({requestId:z.string().uuid()}).strict().parse(req.body);res.json(await service.cloudWrites.acquire(req.params.id,requestId));}catch(e){next(e);}});
   app.post('/api/tasks/:id/retry', async (req, res, next) => { try { const stage = z.enum(['research', 'publish']).parse(req.body.stage); if (service.cloudOnly) await service.binding.requireBound(); res.status(202).json(service.retry(req.params.id, stage)); } catch(e) { next(e); } });
   app.post('/api/tasks/:id/publish', (req, res, next) => { try { res.status(202).json(service.publishToFeishu(req.params.id)); } catch(e) { next(e); } });
   app.post('/api/tasks/:id/cancel', (req, res, next) => { try { res.json(service.cancel(req.params.id)); } catch(e) { next(e); } });
@@ -104,7 +105,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   if (existsSync(dist)) { app.use(express.static(dist)); app.get('*', (_req, res) => res.sendFile(resolve(dist, 'index.html'))); }
   app.use((err, _req, res, _next) => {
     const status = err instanceof z.ZodError ? 400 : err.status ?? 500;
-    res.status(status).json({ ...(err.code?.startsWith('LIBRARY_') || ['LARK_CLI_UNAVAILABLE', 'FEISHU_AUTH_REQUIRED', 'FEISHU_DOCUMENT_DENIED'].includes(err.code) ? { code: err.code } : {}), error: err instanceof z.ZodError ? err.issues.map(i => i.message).join('；') : status === 500 ? '服务内部异常，请稍后重试' : err.message });
+    res.status(status).json({ ...((typeof err.code==='string'&&err.code.startsWith('LIBRARY_')) || ['LARK_CLI_UNAVAILABLE', 'FEISHU_AUTH_REQUIRED', 'FEISHU_DOCUMENT_DENIED'].includes(err.code) ? { code: err.code } : {}), error: err instanceof z.ZodError ? err.issues.map(i => i.message).join('；') : status === 500 ? '服务内部异常，请稍后重试' : err.message });
   });
   return app;
 }

@@ -1,3 +1,5 @@
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
 import { DatabaseSync } from 'node:sqlite';
@@ -11,7 +13,7 @@ const root = fileURLToPath(new URL('..', import.meta.url)), dir = mkdtempSync(re
 mkdirSync(resolve(profile, 'node_modules'), { recursive: true }); symlinkSync(root, resolve(profile, 'node_modules/dsh-industry-research'), 'junction');
 writeFileSync(resolve(profile, 'package.json'), JSON.stringify({ name: 'native-host-test', private: true, dependencies: { 'dsh-industry-research': `link:${root}` }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-industry-research'] } } }));
 const report = { title: '真实宿主原生会话验收报告', summary: '本报告由隔离的真实 DSH 宿主与本机模拟模型接口协作生成。', markdown: '本验收通过真实宿主的 Session Controller 创建会话、设定完整权限、提交任务并接收原生轮次事件。报告文件由本机模型测试夹具交付，验证工作台正确读取结构化结果并保留会话绑定。[S1]', sources: [{ id: 'S1', title: '本机模拟证据', url: 'https://example.com/native-host', excerpt: '本来源为验收夹具，用于验证本机真实宿主的会话与报告协议。' }] };
-let modelCalls = 0, browser, page, followUpObserved = false;
+let modelCalls = 0, browser, page, followUpObserved = false, parallelGate=null,releaseParallel;const parallelSeen=new Set();
 const fakeLark = resolve(dir, 'fake-lark.cjs');
 writeFileSync(fakeLark, `#!/usr/bin/env node
 const fs=require('fs'),file=${JSON.stringify(resolve(dir,'fake-lark-profiles.json'))};let profiles={};try{profiles=JSON.parse(fs.readFileSync(file,'utf8'));}catch{}
@@ -30,6 +32,8 @@ const model = createServer(async (req, res) => {
   const input = JSON.stringify(body.messages ?? []).replaceAll('\\\\','\\'); if (body.tools?.length && input.includes('针对这份报告补充解释')) followUpObserved = true; const match = [...input.matchAll(/请读取 (.+?prompt-[a-f0-9-]+\.txt)，按照/g)].at(-1);
   if (match && body.tools?.length) {
     const prompt = readFileSync(match[1], 'utf8');
+    if(parallelGate){parallelSeen.add(match[1]);if(parallelSeen.size===3)releaseParallel();await parallelGate;}
+    if(prompt.includes('并行调研与保存锁'))await promisify(execFile)(process.execPath,[resolve(match[1],'..','cloud-write-client.mjs'),resolve(match[1],'..','cloud-write-config.json')]);
     if (prompt.includes('本次报告仅存储在飞书云文档')) {
       const receiptPath = /原子更新 (.+)，本次 requestId/.exec(prompt)[1], requestId = /本次 requestId 固定为 ([a-f0-9-]+)/.exec(prompt)[1];
       writeFileSync(receiptPath, JSON.stringify({ requestId, status: 'published', folderToken: /目标文件夹 ID：([A-Za-z0-9_-]+)/.exec(prompt)?.[1] ?? 'autoFolder123', url: 'https://example.feishu.cn/docx/embeddedNativeReport', ...(prompt.includes('reportFolderToken') ? {reportFolderToken:'nativeDailyFolder',noUpdates:false,partial:false}:{}), ...(prompt.includes('knownLibrary') || prompt.includes('reportFolderToken') ? { libraryFolderToken: 'industryNativeFolder', manifestUrl: 'https://example.feishu.cn/docx/industryNativeManifest', companies: [{ name: '后摩智能', url: 'https://example.feishu.cn/docx/embeddedNativeReport', dimensions: ['技术路线'], added: 1, conflicts: 0 }] } : {}) }));
@@ -76,6 +80,11 @@ try {
   const scheduled=await fetch(status.url+'/api/briefings/schedule',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(scheduleBody)});assert.equal(scheduled.status,200,await scheduled.text());
   const stopped=await fetch(status.url+'/api/briefings/schedule',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...scheduleBody,enabled:false})});assert.equal(stopped.status,200);
   console.log('PASS: FR02 真实宿主日报原生会话、全量信息库联动回执、官方 Schedule 创建与停用');
+  parallelGate=new Promise(done=>{releaseParallel=done;});
+  const batch=await Promise.all([1,2,3].map(n=>fetch(status.url+'/api/industry/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...research,requirements:'并行宿主验收'+n})}).then(async r=>{assert.equal(r.status,202);return r.json();})));
+  await until(async()=>{const tasks=await Promise.all(batch.map(t=>fetch(status.url+'/api/tasks/'+t.id).then(r=>r.json()).then(v=>v.task)));if(tasks.some(t=>t.status==='failed'))throw new Error(tasks.find(t=>t.status==='failed').error);return tasks.every(t=>t.status==='ready');});parallelGate=null;
+  assert.equal(parallelSeen.size,3);console.log('PASS: PRD815 三个真实宿主原生会话同时进入模型，保存锁依次获取并完成交付');
+
   if (process.argv.includes('--browser')) {
     browser = await chromium.launch({ headless: true }); page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const launchURL = /dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s]+)/.exec(log)?.[1] ?? hostURL;

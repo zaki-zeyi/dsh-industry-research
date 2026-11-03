@@ -1,5 +1,7 @@
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import { EventEmitter } from 'node:events';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 export const report = { title: '宿主原生会话报告', summary: '这是来自 DSH 宿主原生会话的完整调研报告摘要。', markdown: '本报告来自宿主原生会话，在相同会话中执行调研并输出结构化文件；正文包含可追溯的数据来源和对应引用，便于用户继续追问和保存。[S1]', sources: [{ id: 'S1', title: '测试来源', url: 'https://example.com/native', excerpt: '这是宿主会话验收所使用的模拟来源摘录。' }] };
 export function mockHost({ failFirst = false, noReport = false, defaultPreset = 'cordis' } = {}) {
@@ -17,6 +19,7 @@ export function mockHost({ failFirst = false, noReport = false, defaultPreset = 
         const promptPath = /请读取 (.+)，按照/.exec(request.content[0].text)?.[1];
         const content = promptPath ? readFileSync(promptPath, 'utf8') : request.content[0].text;
         if (failFirst && prompts === 1) { host.emit(request.sessionId, 'turn/end', { kind: 'error', error: { code: 'INVALID_CREDENTIAL', message: 'secret must never propagate' } }); return { accepted: true }; }
+        if(content.includes('并行调研与保存锁')&&promptPath&&existsSync(resolve(promptPath,'..','cloud-write-config.json')))await promisify(execFile)(process.execPath,[resolve(promptPath,'..','cloud-write-client.mjs'),resolve(promptPath,'..','cloud-write-config.json')]);
         if (content.includes('本次报告仅存储在飞书云文档')) {
           if (!noReport) { const path = /原子更新 (.+)，本次 requestId/.exec(content)[1], requestId = /本次 requestId 固定为 ([a-f0-9-]+)/.exec(content)[1]; writeFileSync(path, JSON.stringify({ requestId, status: 'published', folderToken: /目标文件夹 ID：([A-Za-z0-9_-]+)/.exec(content)?.[1] ?? 'autoFolder123', url: 'https://example.feishu.cn/docx/cloudReport123' })); }
         } else if (content.includes('本次只保存已经完成的报告')) {
