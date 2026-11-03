@@ -5,6 +5,8 @@
 - 业务/API：node --test --test-force-exit tests/*.test.mjs，133 项通过。新增北京时间自然日、闰月、跨年、七天统计窗口、日报原生会话、无更新回执、定时任务启停与重复触发去重，以及日报/周报增量合并全量信息库和交付缺失校验。
 - 浏览器：PLAYWRIGHT_CHANNEL=chrome npm run test:e2e，6 项通过。日报生成、可编辑 Prompt、报告链接、会话详情、独立周报记录、定时设置及原有 FR01 回归通过。已查看页面截图。
 - 真实隔离 DSH 宿主：node scripts/native-host-acceptance.mjs，通过。官方 Session Controller 创建标准模式会话，接收本机模型夹具回执；日报联动全量信息库，官方 Schedule 服务创建并删除日报/周报计划。
+- 桌面更新：使用桌面版自带 CLI（runDesktopCli）将 desktop Profile 的 dsh-industry-research 从 0.1.0 更新至本地 0.2.0 安装目录；保留业务数据与配置。安装包运行时验收页面、服务复用、来源限制和 PTY 均通过。
+- GitHub：本地提交已完成；推送返回 403，当前凭据 advance-lion 对 zaki-zeyi/dsh-industry-research 无写权限。
 - 安装：通过官方 dsh plugin add 将实际打包目录安装至隔离 report-check Profile，dump-config 确认插件与官方 schedule 行。打包包含 Windows/macOS 原生依赖及预构建页面。
 
 Windows 旧 PTY 用例在进程回收期间出现 ConPTY AttachConsole 提示，使用 Node 测试运行器的 --test-force-exit 防止旧句柄拖住退出；133 项断言均通过。FR02 原生会话不使用 PTY。
