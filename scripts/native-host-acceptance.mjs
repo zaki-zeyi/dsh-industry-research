@@ -18,9 +18,9 @@ const fs=require('fs'),file=${JSON.stringify(resolve(dir,'fake-lark-profiles.jso
 const args=process.argv.slice(2);
 if(args[0]==='profile'){
  process.stdin.resume();process.stdin.on('end',()=>{profiles[args[args.indexOf('--name')+1]]=args[args.indexOf('--app-id')+1];fs.writeFileSync(file,JSON.stringify(profiles));console.log('saved');});
-}else{
+}else if(args.includes('+messages-send')){if(args[args.indexOf('--as')+1]!=='bot'||args[args.indexOf('--user-id')+1]!=='ou_nativefixture')process.exit(1);console.log(JSON.stringify({ok:true,data:{message_id:'om_fixture'}}));}else{
  const profile=args[0]==='--profile'?args[1]:null;
- console.log(JSON.stringify({appId:profile?profiles[profile]:'cli_default123',identities:{user:{available:true,verified:true,userName:'验收用户',scope:'docx:document:create docx:document:write_only docx:document:readonly docs:document:import drive:drive.metadata:readonly space:folder:create offline_access'}}}));
+ console.log(JSON.stringify({appId:profile?profiles[profile]:'cli_default123',identities:{user:{available:true,verified:true,openId:'ou_nativefixture',userName:'验收用户',scope:'docx:document:create docx:document:write_only docx:document:readonly docs:document:import drive:drive.metadata:readonly space:folder:create offline_access'}}}));
 }
 `); chmodSync(fakeLark, 0o700);
 const model = createServer(async (req, res) => {
@@ -71,7 +71,7 @@ try {
   const binding = await (await fetch(`${hostURL}/industry-research/session?taskId=${task.id}`)).json(); assert.equal(binding.sessionId, task.nativeSessionId); assert.equal(task.publication.status, 'published'); assert.ok(modelCalls > 0);
   const research={companies:['后摩智能'],dimensions:['技术路线'],sources:['芯东西'],requirements:''};
   const daily=await (await fetch(status.url+'/api/briefings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...research,kind:'daily'})})).json();
-  await until(async()=>{const t=(await(await fetch(status.url+'/api/tasks/'+daily.id)).json()).task;if(t.status==='failed')throw new Error(t.error);return t.status==='ready';});
+  await until(async()=>{const t=(await(await fetch(status.url+'/api/tasks/'+daily.id)).json()).task;if(t.status==='failed')throw new Error(t.error);if(t.notification?.status==='failed')throw new Error(t.notification.error);return t.status==='ready'&&t.notification?.status==='sent';});
   const scheduleBody={daily:'09:00',weekly:'09:00',weekday:5,enabled:true,research};
   const scheduled=await fetch(status.url+'/api/briefings/schedule',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(scheduleBody)});assert.equal(scheduled.status,200,await scheduled.text());
   const stopped=await fetch(status.url+'/api/briefings/schedule',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...scheduleBody,enabled:false})});assert.equal(stopped.status,200);

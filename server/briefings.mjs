@@ -5,19 +5,11 @@ import { industryInputSchema, preferences, DEFAULT_COMPANIES, libraryKey } from 
 import { cliFor } from './feishu-application.mjs';
 export const briefingInput = industryInputSchema.extend({ kind: z.enum(['daily', 'weekly']) });
 export const labelFor = kind => kind === 'daily' ? '日报' : '周报';
-export function reportWindow(kind, now = new Date()) {
-  const date = new Date(now.getTime() + 8 * 3600000).toISOString().slice(0, 10);
-  const end = new Date(date + 'T00:00:00+08:00');
-  const start = new Date(end.getTime() - (kind === 'weekly' ? 7 : 1) * 86400000);
-  const fmt = d => new Date(d.getTime() + 8 * 3600000).toISOString().slice(0,16).replace('T',' ');
-  return { start: start.toISOString(), end: end.toISOString(), display: `${fmt(start)} 至 ${fmt(new Date(end - 60000))}（北京时间）` };
-}
-export function briefingPrompt(input, window) {
-  return `帮我统计【${window.display}】内，对【${input.companies.join('、')}】在【${input.sources.join('、')}】的【${input.dimensions.join('、')}】相关动态，并满足【${input.requirements || '无其他要求'}】，保存到飞书云盘【${labelFor(input.kind)}】中，同时自动去重增量保存到飞书云盘【全量信息库】中。并呈现本次更新摘要。`;
-}
+export {reportWindow,briefingPrompt} from './briefing-prompt.mjs';
+import {reportWindow,briefingPrompt} from './briefing-prompt.mjs';
 export function briefingTask(input, now) {
   const v = briefingInput.parse(input), window = reportWindow(v.kind, now);
-  return { direction: `${labelFor(v.kind)} · ${window.display}`, sources: v.sources.join('、'), prompt: v.prompt ?? briefingPrompt(v,window), briefing: { ...v, window } };
+  return { direction: `${labelFor(v.kind)} · ${window.display}`, sources: v.sources.join('、'), prompt: v.prompt?.replaceAll('{{时间范围}}',window.display) ?? briefingPrompt(v,window), briefing: { ...v, window } };
 }
 export const briefingKey = task => `briefing:${task.briefing.kind}:${libraryKey(task.feishuRoot,task.feishuApp)}`;
 export function briefingCloudPrompt(task, meta) {
@@ -38,30 +30,34 @@ ${task.feishuRoot.folderToken ? `目标文件夹 ID：${task.feishuRoot.folderTo
 原子更新 ${meta.deliveryPath}，本次 requestId 固定为 ${meta.deliveryRequestId}：
 {"requestId":"${meta.deliveryRequestId}","status":"published","folderToken":"根目录token","reportFolderToken":"${name}子目录token","url":"真实飞书文档链接","noUpdates":false,"partial":false,"libraryFolderToken":"全量信息库子目录token","manifestUrl":"公司索引飞书链接","companies":[{"name":"本次有更新公司","url":"公司飞书文档链接","dimensions":["维度"],"added":1,"conflicts":0}]}
 全量信息库无更新时 companies 为 []，已有目录与索引仍保留。仅当日报/周报与全部应更新的公司资料都保存并核对完成后回传 published，部分成功标 partial true 并明确未完成公司。摘要列出每家公司新增条数、冲突与资料缺口。
-创建子目录后先回传 status publishing 及目录 token。失败 status failed，error 填原因，保留目录 token 与已有链接。成功后在用户 AI 会话呈现最终飞书文档链接；确认全部无更新则同时发送“本${b.kind === 'daily' ? '日' : '周'}无更新”。回执仅含元信息，无正文或凭据。结束本轮，保留会话供续聊。`;
+创建子目录后先回传 status publishing 及目录 token。失败 status failed，error 填原因，保留目录 token 与已有链接。不要自行发送 IM，工作台会以绑定应用的机器人身份通知当前绑定用户。成功后在用户 AI 会话呈现最终飞书文档链接；确认全部无更新则同时发送“本${b.kind === 'daily' ? '日' : '周'}无更新”。回执仅含元信息，无正文或凭据。结束本轮，保留会话供续聊。`;
 }
 const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
-export const scheduleInput = z.object({ daily: clock, weekly: clock, weekday: z.number().int().min(1).max(7), enabled: z.boolean(), research: industryInputSchema.omit({prompt:true}) }).strict();
+export const scheduleInput = z.object({ daily: clock, weekly: clock, weekday: z.number().int().min(1).max(7), enabled: z.boolean(), research: industryInputSchema }).strict();
+export const singleScheduleInput = z.object({kind:z.enum(['daily','weekly']),time:clock,weekday:z.number().int().min(1).max(7).default(5),enabled:z.boolean(),research:industryInputSchema}).strict();
 export class BriefingSchedules {
-  constructor(service, host, url) { this.service=service; this.host=host; this.url=url; this.chain=Promise.resolve(); this.endpointFile=service.nativeSessions ? resolve(service.nativeSessions.workRoot,'briefing-endpoint.json') : null; if(this.endpointFile) { mkdirSync(service.nativeSessions.workRoot,{recursive:true});writeFileSync(this.endpointFile,JSON.stringify({url})); } }
-  get() { return { daily:'09:00', weekly:'09:00', weekday:5, enabled:false, research:{companies:DEFAULT_COMPANIES,...preferences(this.service.store),requirements:''}, ...this.service.store.setting('briefing-schedule'), available: Boolean(this.host?.schedule) }; }
-  save(input) { const job=this.chain.then(()=>this.commit(scheduleInput.parse(input)));this.chain=job.catch(()=>{});return job; }
-  async commit(v) {
-    const old=this.get(); if(!this.host?.schedule) throw Object.assign(new Error('当前宿主未启用官方 Schedule 服务，请启用后配置定时任务'),{status:503});
-    if(v.enabled && this.service.cloudOnly) await this.service.binding.requireBound();
-    let sessionId=old.sessionId;
-    if(!sessionId && v.enabled) { const created=await this.host.sessionController.create({cwd:this.service.nativeSessions.workRoot + '/workspace',agentPreset:'standard'}); sessionId=created.sessionId;const resolved=await this.host.sessionController.resolveAgent(sessionId);this.host.permissionPresets.set(resolved.agent.session,'danger-full-access'); }
-    const records={...old.records};
-    // Persist each committed host mutation, so a partial failure remains repairable.
-    for(const kind of ['daily','weekly']) {
-      if(records[kind]) { await this.host.schedule.delete({sessionId,id:records[kind].id});delete records[kind];this.service.store.saveSetting('briefing-schedule',{...old,enabled:false,sessionId,records}); }
-      if(v.enabled) {
-        const prompt=`使用终端 Node.js fetch 读取 ${this.endpointFile} 中的 url 字段，再向该 url 加 /api/briefings/trigger/${kind} 发起请求，method POST，Content-Type application/json，body {}。这会创建独立调研会话。不要自行调研。失败时在此会话说明错误；成功后保持安静，结果由报告会话提供。`;
-        records[kind]=await this.host.schedule.create(sessionId,{title:`行研${labelFor(kind)}`,prompt,[kind]:{time:v[kind]+':00',time_zone:'Asia/Shanghai',...(kind==='weekly'?{weekdays:[v.weekday]}:{})}});
-        this.service.store.saveSetting('briefing-schedule',{...v,enabled:false,sessionId,records});
-      }
-    }
-    this.service.store.saveSetting('briefing-schedule',{...v,sessionId,records});return this.get();
+  constructor(service, host, url) { this.service=service;this.host=host;this.chain=Promise.resolve();this.endpointFile=service.nativeSessions?resolve(service.nativeSessions.workRoot,'briefing-endpoint.json'):null;if(this.endpointFile){mkdirSync(service.nativeSessions.workRoot,{recursive:true});writeFileSync(this.endpointFile,JSON.stringify({url}));} }
+  get(kind) {
+    const saved=this.service.store.setting('briefing-schedule')??{};
+    const research={companies:DEFAULT_COMPANIES,...preferences(this.service.store),requirements:''};
+    const plans=Object.fromEntries(['daily','weekly'].map(k=>[k,{kind:k,time:saved[k]??'09:00',weekday:saved.weekday??5,enabled:saved.enabled??false,research:saved.research??research,...saved.plans?.[k]}]));
+    const all={...saved,daily:plans.daily.time,weekly:plans.weekly.time,weekday:plans.weekly.weekday,enabled:plans.daily.enabled||plans.weekly.enabled,research:saved.research??research,plans,available:Boolean(this.host?.schedule)};
+    return kind?{...plans[kind],available:all.available}:all;
   }
-  async trigger(kind) { const s=this.get();if(!s.enabled) throw Object.assign(new Error('定时任务未启用'),{status:409});const date=new Date(Date.now()+8*3600000).toISOString().slice(0,10);return this.service.createAuthorized(briefingTask({...s.research,kind}),`briefing:${kind}:${date}`); }
+  save(input) {const job=this.chain.then(async()=>{if(input.kind)return this.commitOne(singleScheduleInput.parse(input));const v=scheduleInput.parse(input);for(const kind of ['daily','weekly'])await this.commitOne({kind,time:v[kind],weekday:v.weekday,enabled:v.enabled,research:v.research});return this.get();});this.chain=job.catch(()=>{});return job;}
+  async commitOne(v) {
+    if(!this.host?.schedule)throw Object.assign(new Error('当前宿主未启用官方 Schedule 服务'),{status:503});
+    if(v.enabled&&this.service.cloudOnly)await this.service.binding.requireBound();
+    const old=this.get(),plans={...old.plans},records={...old.records};let sessionId=old.sessionId;
+    if(!sessionId&&v.enabled){mkdirSync(resolve(this.service.nativeSessions.workRoot,'workspace'),{recursive:true});const created=await this.host.sessionController.create({cwd:resolve(this.service.nativeSessions.workRoot,'workspace'),agentPreset:'standard'});sessionId=created.sessionId;const r=await this.host.sessionController.resolveAgent(sessionId);this.host.permissionPresets.set(r.agent.session,'danger-full-access');}
+    const persist=()=>this.service.store.saveSetting('briefing-schedule',{...old,sessionId,plans,records});
+    if(records[v.kind]){await this.host.schedule.delete({sessionId,id:records[v.kind].id});delete records[v.kind];}
+    plans[v.kind]={...v,enabled:false};persist();
+    if(v.enabled){
+      const prompt=`使用终端 Node.js 读取 ${this.endpointFile} 的 url 字段，向该 url 加 /api/briefings/trigger/${v.kind} 发起 POST，Content-Type application/json，body {}。这会创建独立调研会话。不要自行调研。失败在此会话说明原因；成功后保持安静，报告会话及飞书机器人通知用户。`;
+      records[v.kind]=await this.host.schedule.create(sessionId,{title:'行研'+labelFor(v.kind),prompt,[v.kind]:{time:v.time+':00',time_zone:'Asia/Shanghai',...(v.kind==='weekly'?{weekdays:[v.weekday]}:{})}});
+    }
+    plans[v.kind]=v;persist();return this.get(v.kind);
+  }
+  async trigger(kind){const s=this.get(kind);if(!s.enabled)throw Object.assign(new Error('定时任务未启用'),{status:409});const date=new Date(Date.now()+8*3600000).toISOString().slice(0,10);const key=`briefing:${kind}:${date}`;const prior=this.service.store.request(key);if(prior)return this.service.require(prior.task_id);return this.service.createAuthorized(briefingTask({...s.research,kind}),key);}
 }

@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 import { library } from '../server/industry.mjs';
 import { createHash } from 'node:crypto';
 const dir=mkdtempSync(resolve(tmpdir(),'industry-e2e-')),host=mockHost();let bound=true;
-const binding={applicationSnapshot:()=>({mode:'default'}),async status(){return{bound,authenticated:bound,applicationConfigured:true};},async requireBound(){if(!bound)throw Object.assign(new Error('请先绑定飞书'),{status:428});},registration:{snapshot:()=>({status:'idle'})},close(){}};
+const binding={applicationSnapshot:()=>({mode:'default'}),async status(){return{bound,authenticated:bound,applicationConfigured:true};},async requireBound(){if(!bound)throw Object.assign(new Error('请先绑定飞书'),{status:428});return{openId:'ou_e2e',appId:'cli_e2e'};},async json(args){return args[0]==='auth'?{appId:'cli_e2e',identities:{user:{available:true,openId:'ou_e2e'}}}:{ok:true};},registration:{snapshot:()=>({status:'idle'})},close(){}};
 const runtime=await startRuntime({port:3099,dataDir:dir,env:{RESEARCH_MODE:'native'},host,binding,libraryRun:async()=>({stdout:JSON.stringify({ok:true,data:{document:{content:JSON.stringify({companies:library(runtime.service.store,runtime.service.feishuSettings()).companies.map(c=>({...c,updatedAt:'2026-11-02T19:41:58+08:00'}))})}}})})});
 const schedules=new Map();host.schedule={async create(sessionId,v){const r={...v,id:crypto.randomUUID()};schedules.set(r.id,r);return r;},async delete({id}){schedules.delete(id);return{deleted:true};}};
 const attempts=new Map();

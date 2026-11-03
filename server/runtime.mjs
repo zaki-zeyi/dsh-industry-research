@@ -1,3 +1,4 @@
+import {BriefingNotifications} from './briefing-notifications.mjs';
 import { BriefingSchedules } from './briefings.mjs';
 import { resolve } from 'node:path';
 import { FeishuBinding } from './feishu-binding.mjs';
@@ -49,6 +50,7 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     service.terminals = terminals; service.aiSettings = aiSettings; service.nativeSessions = nativeSessions;
     if (nativeSessions) { nativeSessions.onDelivery = (id, binding, receipt) => service.recordAgentDelivery(id, binding, receipt); nativeSessions.onActivity = id => { if (store.get(id)) service.event(id, 'session-state', { sessionId: service.require(id).nativeSessionId }); }; }
     service.briefingSchedules = new BriefingSchedules(service, host, `http://127.0.0.1:${server.address().port}`);
+    service.notifications = new BriefingNotifications(service);
     service.recover();
 
     server.on('request', createApp(service, { dist, libraryRun, health: { application: 'industry-research', dataIdentity: dataIdentity(dataDir), transport: researcher.transport ?? 'json' } }));
