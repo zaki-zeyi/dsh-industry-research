@@ -1,4 +1,4 @@
-import { basename, resolve } from 'node:path';
+import { basename, resolve, isAbsolute } from 'node:path';
 import { statSync } from 'node:fs';
 import { z } from 'zod';
 import { cliFor } from './feishu-application.mjs';
@@ -48,6 +48,7 @@ export function prepareInternalMaterial(input) {
   let uploadEligible = false;
 
   if (value.sourceType === 'local') {
+    if (!isAbsolute(value.source) || /^[A-Za-z]:[\\/]fakepath[\\/]/i.test(value.source)) throw new ServiceError(400, '请通过文件选择器提供原始完整路径');
     source = resolve(value.source);
     try {
       const stat = statSync(source);

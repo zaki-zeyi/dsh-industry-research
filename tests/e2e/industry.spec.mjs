@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test, expect } from '@playwright/test';
 test('完整公司调研流程：默认配置、自定义持久化、可编辑Prompt、文档卡片、冲突和历史',async({page,request})=>{
  await page.goto('/');await expect(page.getByRole('heading',{name:'全量信息库',exact:true})).toBeVisible();await page.getByRole('button',{name:'更新全量信息库',exact:true}).first().click();
@@ -9,7 +12,7 @@ test('完整公司调研流程：默认配置、自定义持久化、可编辑Pr
  await expect(page.getByRole('heading',{name:'更新全量信息库 · 17 家公司'})).toBeVisible();await page.getByRole('button',{name:'← 返回工作台'}).click();await expect(page.locator('.industry-company')).toHaveCount(17,{timeout:10000});
  await expect(page.getByText('1 处信息冲突，请在文档中核对来源')).toBeVisible();await page.screenshot({path:'artifacts/industry-library.png',fullPage:true});await expect(page.getByRole('link',{name:'后摩智能'})).toHaveAttribute('href',/feishu.cn\/docx\//);
  await page.getByRole('textbox',{name:'搜索',exact:true}).fill('后摩');await expect(page.locator('.industry-company')).toHaveCount(1);await page.reload();await expect(page.locator('.industry-company')).toHaveCount(17);
- await page.getByRole('button',{name:'历史 AI 任务'}).click();await expect(page.locator('.industry-history article').first()).toContainText('已完成');await page.locator('.industry-history article').first().getByRole('button',{name:'继续会话'}).click();await expect(page.getByRole('heading',{name:'更新全量信息库 · 17 家公司'})).toBeVisible();
+ await page.getByRole('tab',{name:'历史 AI 任务'}).click();await expect(page.locator('.industry-history article').first()).toContainText('已完成');await page.locator('.industry-history article').first().getByRole('button',{name:'继续会话'}).click();await expect(page.getByRole('heading',{name:'更新全量信息库 · 17 家公司'})).toBeVisible();
  const tasks=await(await request.get('/api/tasks')).json();expect(tasks.items[0].status).toBe('ready');
 });
 test('空选禁用启动、失败任务保留并可重试',async({page})=>{
@@ -21,12 +24,12 @@ test('窄屏布局无横向溢出，弹窗支持Escape和键盘焦点',async({pa
 });
 test('返回工作台后，迟到的详情响应不能重新打开旧会话',async({page,request})=>{
  const list=await(await request.get('/api/tasks')).json();const id=list.items[0].id;
- await page.goto('/');await page.getByRole('button',{name:'历史 AI 任务'}).click();
+ await page.goto('/');await page.getByRole('tab',{name:'历史 AI 任务'}).click();
  let release;const gate=new Promise(r=>{release=r;});let observed;const received=new Promise(r=>{observed=r;});let finish;const finished=new Promise(r=>{finish=r;});
  await page.route('**/api/tasks/'+id,async route=>{const response=await route.fetch();observed();await gate;await route.fulfill({response});finish();});
  await page.locator('.industry-history article').filter({hasText:list.items[0].direction}).first().getByRole('button',{name:'继续会话'}).click();await received;
  await page.getByRole('button',{name:'← 返回工作台'}).click();release();await finished;await page.evaluate(()=>new Promise(requestAnimationFrame));await page.unroute('**/api/tasks/'+id);
- await expect(page.getByRole('heading',{name:'历史 AI 任务',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'← 返回工作台'})).toHaveCount(0);
+ await expect(page.getByRole('tab',{name:'历史 AI 任务'})).toHaveAttribute('aria-selected','true');await expect(page.getByRole('button',{name:'← 返回工作台'})).toHaveCount(0);
 });
 test('索引格式错误准确提示并保留公司，后台轮询不清除错误，刷新成功后清除',async({page,request})=>{
  const before=await(await request.get('/api/industry/library')).json();
@@ -48,21 +51,36 @@ test('FR04 内部资料链接可生成逐字稿、展示文档和原始资料并
 });
 
 
-test('PRD1557 历史任务位于全量信息库下级，文件选择取消和重新选择后可启动',async({page,request})=>{
- await page.goto('/');const nav=page.getByRole('navigation',{name:'全量信息库下级导航'});await expect(nav.getByRole('button',{name:'历史 AI 任务'})).toBeVisible();await nav.getByRole('button',{name:'历史 AI 任务'}).click();await expect(page.getByRole('heading',{name:'历史 AI 任务',exact:true})).toBeVisible();
- await page.getByRole('button',{name:'内部资料',exact:true}).click();await page.getByRole('button',{name:'解析内部资料'}).click();const d=page.getByRole('dialog'),file=d.getByLabel('选择本地文件',{exact:true});
- await expect(d.getByRole('button',{name:'启动',exact:true})).toBeDisabled();await file.setInputFiles([]);await expect(d.getByRole('button',{name:'启动',exact:true})).toBeDisabled();
- await file.setInputFiles({name:'旧资料.txt',mimeType:'text/plain',buffer:Buffer.from('old')});await file.setInputFiles({name:'访谈确认.txt',mimeType:'text/plain',buffer:Buffer.from('new interview bytes')});
- await expect(d.getByRole('status')).toContainText('访谈确认.txt');await file.setInputFiles([]);await expect(d.getByRole('status')).toContainText('访谈确认.txt');
- await d.getByRole('button',{name:'启动',exact:true}).click();await expect(page.getByRole('heading',{name:'内部资料解析 · 访谈确认.txt'})).toBeVisible();
- const tasks=await(await request.get('/api/internal-materials')).json();const task=tasks.items.find(t=>t.internal.sourceLabel==='访谈确认.txt');expect(task.internal.fileSize).toBe(Buffer.byteLength('new interview bytes'));expect(task.internal.source).not.toContain('fakepath');
-});
 
-test('PRD1554 文件导入失败可见且可重试，取消弹窗不启动任务',async({page,request})=>{
+async function shell(page, paths) {
+ await page.route('**/picker-shell',route=>route.fulfill({contentType:'text/html; charset=utf-8',body:`<!doctype html><iframe title="测试工作台" style="width:100vw;height:100vh" src="/?embed=dsh&hostOrigin=http%3A%2F%2F127.0.0.1%3A3099"></iframe><script>
+ const paths=${JSON.stringify(paths)};const frame=document.querySelector('iframe');
+ window.addEventListener('message',e=>{if(e.origin!==location.origin||e.source!==frame.contentWindow||e.data.type!=='industry-research:pick-file')return;
+ const input=document.createElement('input');input.type='file';document.body.append(input);const finish=value=>{frame.contentWindow.postMessage({type:'industry-research:file-result',requestId:e.data.requestId,...value},location.origin);input.remove();};
+ input.addEventListener('cancel',()=>finish({cancelled:true}));input.addEventListener('change',()=>{const f=input.files[0];finish(f?{path:paths[f.name],size:f.size}:{cancelled:true});});input.click();});
+ </script>`}));
+ await page.goto('/picker-shell');return page.frameLocator('iframe[title="测试工作台"]');
+}
+test('PRD1622 历史任务位于全量信息库页内，支持键盘切换',async({page})=>{
+ await page.goto('/');await expect(page.locator('.industry-sidebar').getByText('历史 AI 任务')).toHaveCount(0);
+ const tabs=page.getByRole('tablist',{name:'全量信息库视图'});await tabs.getByRole('tab',{name:'历史 AI 任务'}).click();await expect(page.getByRole('tabpanel')).toHaveAccessibleName('历史 AI 任务');
+ await page.keyboard.press('ArrowLeft');await expect(tabs.getByRole('tab',{name:'公司档案'})).toHaveAttribute('aria-selected','true');
+});
+test('PRD1622 选择原始完整路径、取消保留原选择，启动不复制也不上传字节',async({page,request})=>{
+ const dir=mkdtempSync(join(tmpdir(),'prd1622-original-')),path=join(dir,'访谈确认.txt');writeFileSync(path,'original interview bytes');let copies=0;
+ page.on('request',r=>{if(r.url().includes('/internal-material-files'))copies++;});
+ try {
+  const w=await shell(page,{'访谈确认.txt':path});await w.getByRole('button',{name:'内部资料',exact:true}).click();await w.getByRole('button',{name:'解析内部资料'}).click();const d=w.getByRole('dialog');
+  await expect(d.getByRole('button',{name:'启动',exact:true})).toBeDisabled();
+  const chosen=page.waitForEvent('filechooser');await d.getByRole('button',{name:'选择本地文件'}).click();await(await chosen).setFiles(path);
+  await expect(d.getByLabel('本地文件完整路径')).toHaveText(path);await expect(d.getByLabel('任务 Prompt',{exact:false})).toHaveValue(new RegExp('访谈确认'));
+  const cancel=page.waitForEvent('filechooser');await d.getByRole('button',{name:'选择本地文件'}).click();await(await cancel).setFiles([]);await expect(d.getByLabel('本地文件完整路径')).toHaveText(path);
+  await d.getByRole('button',{name:'启动',exact:true}).click();await expect(w.getByRole('heading',{name:'内部资料解析 · 访谈确认.txt'})).toBeVisible();
+  const tasks=await(await request.get('/api/internal-materials')).json();expect(tasks.items.find(t=>t.internal.sourceLabel==='访谈确认.txt').internal.source).toBe(path);expect(copies).toBe(0);expect(readFileSync(path,'utf8')).toBe('original interview bytes');
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
+test('PRD1622 网页无宿主路径桥接时提示，不复制文件，网络来源仍可用',async({page})=>{
  await page.goto('/');await page.getByRole('button',{name:'内部资料',exact:true}).click();await page.getByRole('button',{name:'解析内部资料'}).click();const d=page.getByRole('dialog');
- await d.getByLabel('选择本地文件',{exact:true}).setInputFiles({name:'重试.txt',mimeType:'text/plain',buffer:Buffer.from('retry file')});
- await page.route('**/api/internal-material-files?*',route=>route.fulfill({status:503,json:{error:'文件导入失败，请重试'}}));
- await d.getByRole('button',{name:'启动',exact:true}).click();await expect(d.getByRole('alert')).toContainText('文件导入失败');await expect(d.getByRole('button',{name:'启动',exact:true})).toBeEnabled();
- await page.unroute('**/api/internal-material-files?*');await d.getByRole('button',{name:'启动',exact:true}).click();await expect(page.getByRole('heading',{name:'内部资料解析 · 重试.txt'})).toBeVisible();
- await page.getByRole('button',{name:'← 返回工作台'}).click();const before=(await(await request.get('/api/internal-materials')).json()).items.length;await page.getByRole('button',{name:'解析内部资料'}).click();await d.getByLabel('选择本地文件',{exact:true}).setInputFiles({name:'cancel.txt',mimeType:'text/plain',buffer:Buffer.from('cancel')});await d.getByRole('button',{name:'关闭内部资料解析'}).click();expect((await(await request.get('/api/internal-materials')).json()).items.length).toBe(before);
+ await d.getByRole('button',{name:'选择本地文件'}).click();await expect(d.getByRole('alert')).toContainText('DSH 桌面版');await expect(d.getByRole('button',{name:'启动',exact:true})).toBeDisabled();
+ await d.getByLabel('网络链接').check();await d.getByLabel('网络资料链接').fill('https://example.com/another.mp4');await expect(d.getByRole('button',{name:'启动',exact:true})).toBeEnabled();await d.getByRole('button',{name:'关闭内部资料解析'}).click();
 });

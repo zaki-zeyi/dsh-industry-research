@@ -4,4 +4,5 @@
 
 .industry-overview.briefing-overview{grid-template-columns:minmax(0,1fr)}
 
-.industry-subnav{margin:0 0 8px 20px;padding-left:12px;border-left:1px solid #dce5dd}.industry-sidebar .industry-subnav button{font-size:13px;padding:10px 12px;width:100%}
+
+.industry-library-tabs{display:flex;gap:24px;border-bottom:1px solid #dce5dd;margin-bottom:24px}.industry-library-tabs button{border:0;border-bottom:2px solid transparent;background:transparent;padding:12px 0;color:#7b8983}.industry-library-tabs [aria-selected="true"]{color:#315a45;border-bottom-color:#315a45;font-weight:600}
