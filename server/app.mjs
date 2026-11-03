@@ -1,3 +1,4 @@
+import { registerInternalFileUpload } from './internal-file-upload.mjs';
 import { briefingTask } from './briefings.mjs';
 import { libraryReadError } from './library-errors.mjs';
 import { refreshLibrary, preferences, preferencesSchema, library, companyTaskInput } from './industry.mjs';
@@ -8,7 +9,7 @@ import { z } from 'zod';
 import { ServiceError } from './service.mjs';
 import { prepareInternalMaterial } from './internal-materials.mjs';
 
-export function createApp(service, { dist = resolve('dist'), health = {}, libraryRun } = {}) {
+export function createApp(service, { dist = resolve('dist'), health = {}, libraryRun, uploadDir } = {}) {
   const app = express(); app.disable('x-powered-by');
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer');
@@ -20,6 +21,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     next();
   });
   app.use(express.json({ limit: '32kb' }));
+  registerInternalFileUpload(app, service, uploadDir);
   app.get('/api/industry/preferences', (_req, res) => res.json(preferences(service.store)));
   app.put('/api/industry/preferences', (req, res, next) => { try { res.json(service.store.saveSetting('industry-preferences', preferencesSchema.parse(req.body))); } catch (e) { next(e); } });
   app.get('/api/industry/library', async (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); const root = service.feishuSettings(), app = service.binding?.applicationSnapshot?.(); res.json(req.query.refresh === 'true' ? await refreshLibrary(service.store, root, app, libraryRun, { command: service.binding?.command }) : library(service.store, root, app)); } catch (e) { next(libraryReadError(e)); } });

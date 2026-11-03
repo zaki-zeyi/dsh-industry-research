@@ -46,3 +46,23 @@ test('FR04 内部资料链接可生成逐字稿、展示文档和原始资料并
  const api=await(await request.get('/api/internal-materials')).json();const task=api.items.find(item=>item.internal.sourceLabel==='interview.mp4');expect(task.publication.sourceMaterialUrl).toContain('FixtureSource');expect(task.notification.status).toBe('sent');expect(task.internal.directoryName).toBe('访谈资料');
  await page.getByRole('button',{name:'解析内部资料'}).click();await expect(page.getByRole('dialog').getByLabel('内部资料目录',{exact:false})).toHaveValue('访谈资料');await page.keyboard.press('Escape');
 });
+
+
+test('PRD1557 历史任务位于全量信息库下级，文件选择取消和重新选择后可启动',async({page,request})=>{
+ await page.goto('/');const nav=page.getByRole('navigation',{name:'全量信息库下级导航'});await expect(nav.getByRole('button',{name:'历史 AI 任务'})).toBeVisible();await nav.getByRole('button',{name:'历史 AI 任务'}).click();await expect(page.getByRole('heading',{name:'历史 AI 任务',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'内部资料',exact:true}).click();await page.getByRole('button',{name:'解析内部资料'}).click();const d=page.getByRole('dialog'),file=d.getByLabel('选择本地文件',{exact:true});
+ await expect(d.getByRole('button',{name:'启动',exact:true})).toBeDisabled();await file.setInputFiles([]);await expect(d.getByRole('button',{name:'启动',exact:true})).toBeDisabled();
+ await file.setInputFiles({name:'旧资料.txt',mimeType:'text/plain',buffer:Buffer.from('old')});await file.setInputFiles({name:'访谈确认.txt',mimeType:'text/plain',buffer:Buffer.from('new interview bytes')});
+ await expect(d.getByRole('status')).toContainText('访谈确认.txt');await file.setInputFiles([]);await expect(d.getByRole('status')).toContainText('访谈确认.txt');
+ await d.getByRole('button',{name:'启动',exact:true}).click();await expect(page.getByRole('heading',{name:'内部资料解析 · 访谈确认.txt'})).toBeVisible();
+ const tasks=await(await request.get('/api/internal-materials')).json();const task=tasks.items.find(t=>t.internal.sourceLabel==='访谈确认.txt');expect(task.internal.fileSize).toBe(Buffer.byteLength('new interview bytes'));expect(task.internal.source).not.toContain('fakepath');
+});
+
+test('PRD1554 文件导入失败可见且可重试，取消弹窗不启动任务',async({page,request})=>{
+ await page.goto('/');await page.getByRole('button',{name:'内部资料',exact:true}).click();await page.getByRole('button',{name:'解析内部资料'}).click();const d=page.getByRole('dialog');
+ await d.getByLabel('选择本地文件',{exact:true}).setInputFiles({name:'重试.txt',mimeType:'text/plain',buffer:Buffer.from('retry file')});
+ await page.route('**/api/internal-material-files?*',route=>route.fulfill({status:503,json:{error:'文件导入失败，请重试'}}));
+ await d.getByRole('button',{name:'启动',exact:true}).click();await expect(d.getByRole('alert')).toContainText('文件导入失败');await expect(d.getByRole('button',{name:'启动',exact:true})).toBeEnabled();
+ await page.unroute('**/api/internal-material-files?*');await d.getByRole('button',{name:'启动',exact:true}).click();await expect(page.getByRole('heading',{name:'内部资料解析 · 重试.txt'})).toBeVisible();
+ await page.getByRole('button',{name:'← 返回工作台'}).click();const before=(await(await request.get('/api/internal-materials')).json()).items.length;await page.getByRole('button',{name:'解析内部资料'}).click();await d.getByLabel('选择本地文件',{exact:true}).setInputFiles({name:'cancel.txt',mimeType:'text/plain',buffer:Buffer.from('cancel')});await d.getByRole('button',{name:'关闭内部资料解析'}).click();expect((await(await request.get('/api/internal-materials')).json()).items.length).toBe(before);
+});

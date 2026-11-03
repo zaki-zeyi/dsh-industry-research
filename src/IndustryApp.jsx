@@ -46,8 +46,8 @@ export function IndustryApp({ BindingModal, RootModal, Conversation }) {
   const visible = companies.filter(c => c.name.toLowerCase().includes(query.toLowerCase()));
   const history = tasks.filter(t => !t.briefing && !t.internal && t.direction.includes(query) && (filter === 'all' || t.status === filter));
   return <div className="industry-shell">
-    <aside className="industry-sidebar"><a className="industry-brand" href="#" onClick={back}><span>研</span>行研工作台</a><div className="side-caption">研究空间</div><button className={tab === 'library' && !selected ? 'active' : ''} onClick={() => { back(); setTab('library'); setQuery(''); refreshCompanies(); }}><Library size={18}/>全量信息库<span>{companies.length}</span></button>{['daily','weekly'].map(k=><button key={k} className={tab===k&&!selected?'active':''} onClick={()=>{back();setTab(k);setQuery('');}}><History size={18}/>{k==='daily'?'日报':'周报'}</button>)}<button className={tab === 'internal' && !selected ? 'active' : ''} onClick={() => { back(); setTab('internal'); setQuery(''); }}><FileText size={18}/>内部资料</button><button className={tab === 'history' && !selected ? 'active' : ''} onClick={() => { back(); setTab('history'); setQuery(''); }}><History size={18}/>历史 AI 任务</button><div className="industry-side-bottom"><span className="live-dot"/>一个公司，一份持续生长的研究<small>DSH · Industry Research</small></div></aside>
-    <main className="industry-main"><header className="industry-top"><span>行研工作台 <i>/</i> {selected ? 'AI 会话' : tab === 'daily' ? '日报' : tab === 'weekly' ? '周报' : tab === 'internal' ? '内部资料' : tab === 'library' ? '全量信息库' : '历史 AI 任务'}</span><div><button onClick={() => setModal('binding')}>{binding?.bound ? '重新绑定飞书' : '绑定飞书'}</button><button onClick={() => setModal('root')}><Folder size={14}/>设置飞书根目录</button></div></header>
+    <aside className="industry-sidebar"><a className="industry-brand" href="#" onClick={back}><span>研</span>行研工作台</a><div className="side-caption">研究空间</div><button className={['library','history'].includes(tab) && !selected ? 'active' : ''} onClick={() => { back(); setTab('library'); setQuery(''); refreshCompanies(); }}><Library size={18}/>全量信息库<span>{companies.length}</span></button><nav className="industry-subnav" aria-label="全量信息库下级导航"><button className={tab === 'history' && !selected ? 'active' : ''} onClick={() => { back(); setTab('history'); setQuery(''); }}><History size={18}/>历史 AI 任务</button></nav>{['daily','weekly'].map(k=><button key={k} className={tab===k&&!selected?'active':''} onClick={()=>{back();setTab(k);setQuery('');}}><History size={18}/>{k==='daily'?'日报':'周报'}</button>)}<button className={tab === 'internal' && !selected ? 'active' : ''} onClick={() => { back(); setTab('internal'); setQuery(''); }}><FileText size={18}/>内部资料</button><div className="industry-side-bottom"><span className="live-dot"/>一个公司，一份持续生长的研究<small>DSH · Industry Research</small></div></aside>
+    <main className="industry-main"><header className="industry-top"><span>行研工作台 <i>/</i> {selected ? 'AI 会话' : tab === 'daily' ? '日报' : tab === 'weekly' ? '周报' : tab === 'internal' ? '内部资料' : tab === 'library' ? '全量信息库' : '全量信息库 / 历史 AI 任务'}</span><div><button onClick={() => setModal('binding')}>{binding?.bound ? '重新绑定飞书' : '绑定飞书'}</button><button onClick={() => setModal('root')}><Folder size={14}/>设置飞书根目录</button></div></header>
     {(syncError || error) && <div className="industry-error" role="alert"><AlertCircle size={17}/>{syncError || error}<button aria-label="关闭错误" onClick={() => { setError(''); setSyncError(''); }}><X size={16}/></button></div>}
     {selected ? <section className="industry-content"><button className="secondary" onClick={back}>← 返回工作台</button><div className="industry-heading"><div><p className="industry-eyebrow">RESEARCH SESSION</p><h1>{selected.direction}</h1><p>{status(selected)} · {time(selected.createdAt)}</p></div>{['failed', 'interrupted'].includes(selected.status) && <button className="primary" onClick={() => retry(selected)}>重试任务</button>}</div>{selected.error && <div role="alert" className="industry-error">{selected.error}</div>}{selected.nativeSession ? <Conversation task={selected}/> : <div className="industry-empty"><Sparkles/><h2>{config?.mode === 'demo' ? '离线流程演示' : '请从 DSH 打开原生会话'}</h2><p>当前任务状态：{status(selected)}。演示不会检索真实资料或上传飞书。</p></div>}</section> : ['daily','weekly'].includes(tab) ? <Briefings kind={tab} config={config} onGenerate={begin} onSchedule={schedule} onOpen={open} onRetry={retry}/> : tab === 'internal' ? <InternalMaterials config={config} onCreate={beginInternal} onOpen={open} onRetry={retry}/> : <section className="industry-content"><p className="industry-eyebrow">INDUSTRY INTELLIGENCE / 01</p><div className="industry-heading"><div><h1>{tab === 'library' ? '全量信息库' : '历史 AI 任务'}</h1><p>{tab === 'library' ? '让分散的信息，成为持续积累的洞察。' : '每一次调研都有迹可循，随时回到原生会话继续探索。'}</p></div><button className="primary" onClick={begin}><Plus size={17}/>更新全量信息库</button></div>
     {config?.mode === 'demo' && <div className="industry-demo">离线演示 · 不执行真实检索或飞书上传；实际调研请在 DSH 中安装本插件。</div>}
@@ -78,6 +78,8 @@ function InternalMaterialModal({ directoryName: initialDirectoryName, onClose, o
   const [directoryName, setDirectoryName] = useState(initialDirectoryName ?? '内部资料');
   const [sourceType, setSourceType] = useState('local');
   const [source, setSource] = useState('');
+  const [selectedFile, setSelectedFile] = useState(null);
+  const staged = useRef(null), uploadController = useRef(null);
   const [requirements, setRequirements] = useState('');
   const [prompt, setPrompt] = useState(null);
   const [error, setError] = useState('');
@@ -85,6 +87,7 @@ function InternalMaterialModal({ directoryName: initialDirectoryName, onClose, o
   const key = useRef(crypto.randomUUID());
   const lock = useRef(false);
   const dialog = useRef(null);
+  useEffect(() => () => uploadController.current?.abort(), []);
   const generated = internalMaterialPrompt({source: source.trim(), requirements: requirements.trim(), directoryName});
 
   useEffect(() => {
@@ -113,6 +116,7 @@ function InternalMaterialModal({ directoryName: initialDirectoryName, onClose, o
 
   function changeSourceType(value) {
     setSourceType(value);
+    setSelectedFile(null); staged.current = null;
     setSource('');
     setPrompt(null);
     setError('');
@@ -125,10 +129,25 @@ function InternalMaterialModal({ directoryName: initialDirectoryName, onClose, o
     setBusy(true);
     setError('');
     try {
+      let actualSource = source.trim();
+      if (sourceType === 'local') {
+        if (!selectedFile) throw new Error('请先选择本地文件');
+        if (selectedFile.size > 100 * 1024 * 1024) throw new Error('本地文件不能超过 100 MB');
+        if (!staged.current) {
+          uploadController.current = new AbortController();
+          const response = await fetch('/api/internal-material-files?name=' + encodeURIComponent(selectedFile.name), {
+            method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: selectedFile, signal: uploadController.current.signal,
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error ?? '文件导入失败，请重试');
+          staged.current = result.source;
+        }
+        actualSource = staged.current;
+      }
       const task = await api('/internal-materials', {
         method: 'POST',
         headers: { 'Idempotency-Key': key.current },
-        body: JSON.stringify({ directoryName, sourceType, source: source.trim(), requirements, prompt: prompt ?? generated }),
+        body: JSON.stringify({ directoryName, sourceType, source: actualSource, requirements, prompt: prompt ?? generated }),
       });
       onCreated(task);
     } catch (cause) {
@@ -144,25 +163,27 @@ function InternalMaterialModal({ directoryName: initialDirectoryName, onClose, o
   }}><section ref={dialog} className="industry-modal" role="dialog" aria-modal="true" aria-labelledby="internal-material-title">
     <header><span><FileText size={18}/> 内部资料解析</span><button disabled={busy} aria-label="关闭内部资料解析" onClick={onClose}><X size={20}/></button></header>
     <h2 id="internal-material-title">内部资料</h2>
-    <p>支持录音、视频和内部文档。平台只接收来源路径或链接，原始资料正文由本次 DSH 会话处理。</p>
+    <p>支持录音、视频和内部文档。选择本地文件或填写网络链接，由本次 DSH 会话解析。</p>
     <form onSubmit={submit}><fieldset disabled={busy} className="industry-form-fields">
       <fieldset className="industry-choices"><legend>资料来源</legend><div>
         <label><input type="radio" name="source-type" checked={sourceType === 'local'} onChange={() => changeSourceType('local')}/>本地文件路径</label>
         <label><input type="radio" name="source-type" checked={sourceType === 'url'} onChange={() => changeSourceType('url')}/>网络链接</label>
       </div></fieldset>
-      <label className="industry-field">{sourceType === 'local' ? '本地文件路径' : '网络资料链接'}
-        <small>{sourceType === 'local' ? '超过 100 MB 的文件不自动上传，仍保留本地路径' : '仅支持 http 或 https'}</small>
-        <input
-          required
-          maxLength={4000}
-          spellCheck={false}
-          type={sourceType === 'url' ? 'url' : 'text'}
-          placeholder={sourceType === 'local' ? '例如：D:\\内部资料\\季度访谈.mp4' : 'https://…'}
-          value={source}
-          onChange={event => { setSource(event.target.value); setPrompt(null); }}
-        />
-      </label>
-<label className="industry-field">内部资料目录<input required maxLength={120} value={directoryName} onChange={event => { setDirectoryName(event.target.value); setPrompt(null); }}/><small>根目录下的文件夹名称，下次自动沿用</small></label>
+      {sourceType === 'local' ? <label className="industry-field">选择本地文件
+        <input aria-label="选择本地文件" type="file" onChange={event => {
+          const file = event.target.files?.[0];
+          if (!file) return;
+          if (file.size > 100 * 1024 * 1024 || !file.size) {
+            setError(file.size ? '本地文件不能超过 100 MB' : '不能导入空文件'); event.target.value = ''; return;
+          }
+          setSelectedFile(file); staged.current = null; setSource(file.name); setPrompt(null); setError('');
+        }}/>
+        <small>支持录音、视频和文档，单个文件不超过 100 MB。启动时导入宿主，保留文件供失败重试。</small>
+        {selectedFile && <span role="status">已选择：{selectedFile.name} · {(selectedFile.size / 1024 / 1024).toFixed(1)} MB</span>}
+      </label> : <label className="industry-field">网络资料链接
+        <input required maxLength={4000} type="url" placeholder="https://…" value={source} onChange={event => { setSource(event.target.value); setPrompt(null); }}/>
+      </label>}
+      <label className="industry-field">内部资料目录<input required maxLength={120} value={directoryName} onChange={event => { setDirectoryName(event.target.value); setPrompt(null); }}/><small>根目录下的文件夹名称，下次自动沿用</small></label>
       <label className="industry-field">其他要求
         <textarea maxLength={2000} placeholder="例如：重点核对产品发布时间、融资金额和说话人身份" value={requirements} onChange={event => { setRequirements(event.target.value); setPrompt(null); }}/>
       </label>
@@ -171,6 +192,6 @@ function InternalMaterialModal({ directoryName: initialDirectoryName, onClose, o
       </label>
       <p className="ai-config-hint">保存原始资料、逐字稿和会议纪要；提及调研公司时自动去重更新全量信息库。</p>
       {error && <p className="industry-error" role="alert">{error}</p>}
-    </fieldset><footer><span>{sourceType === 'local' ? '本地文件' : '网络资料'} · 结果仅存飞书</span><button className="primary" disabled={busy || !source.trim()}>{busy ? <LoaderCircle className="spin" size={16}/> : <FileText size={16}/>}启动</button></footer></form>
+    </fieldset><footer><span>{sourceType === 'local' ? '本地文件' : '网络资料'} · 结果仅存飞书</span><button className="primary" disabled={busy || !source.trim() || (sourceType === 'local' && !selectedFile)}>{busy ? <LoaderCircle className="spin" size={16}/> : <FileText size={16}/>}启动</button></footer></form>
   </section></div>;
 }

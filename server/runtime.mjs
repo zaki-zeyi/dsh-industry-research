@@ -55,7 +55,7 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     service.internalNotifications = new InternalMaterialNotifications(service);
     service.recover();
 
-    server.on('request', createApp(service, { dist, libraryRun, health: { application: 'industry-research', dataIdentity: dataIdentity(dataDir), transport: researcher.transport ?? 'json' } }));
+    server.on('request', createApp(service, { dist, libraryRun, uploadDir: resolve(dataDir, 'internal-imports'), health: { application: 'industry-research', dataIdentity: dataIdentity(dataDir), transport: researcher.transport ?? 'json' } }));
     terminalSockets = attachTerminalWebSocket(server, terminals);
   } catch (error) {
     server.close(); await service?.close(); service?.binding?.close(); await terminals?.close(); nativeSessions?.close(); store?.close(); release(); throw error;

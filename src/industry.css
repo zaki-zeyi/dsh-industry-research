@@ -3,3 +3,5 @@
 .industry-overview .briefing-storage{flex:1;min-width:0}.briefing-storage small{max-width:none;white-space:normal}.industry-heading>div:last-child{display:flex;gap:8px;flex-wrap:wrap}
 
 .industry-overview.briefing-overview{grid-template-columns:minmax(0,1fr)}
+
+.industry-subnav{margin:0 0 8px 20px;padding-left:12px;border-left:1px solid #dce5dd}.industry-sidebar .industry-subnav button{font-size:13px;padding:10px 12px;width:100%}
