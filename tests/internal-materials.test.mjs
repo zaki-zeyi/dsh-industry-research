@@ -156,9 +156,9 @@ test('FR04 原生会话完成逐字稿交付后保存双目录并自动通知绑
     requireBound: async () => ({ openId: 'ou_internal', appId: 'cli_internal123' }),
     applicationSnapshot: () => ({ mode: 'default' }),
     async json(args) {
-      if (args[0] === 'auth') return { appId: 'cli_internal123', identities: { user: { openId: 'ou_internal', available: true } } };
+      if (args[0] === 'auth') return { appId: 'cli_internal123', identities: { bot: { status: 'ready', available: true, verified: true }, user: { openId: 'ou_internal', available: true } } };
       messages.push(args);
-      return { ok: true };
+      return { ok: true, data: { message_id: 'om_internal' } };
     },
     close() {},
   };

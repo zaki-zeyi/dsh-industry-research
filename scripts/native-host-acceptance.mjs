@@ -22,7 +22,7 @@ if(args[0]==='profile'){
  process.stdin.resume();process.stdin.on('end',()=>{profiles[args[args.indexOf('--name')+1]]=args[args.indexOf('--app-id')+1];fs.writeFileSync(file,JSON.stringify(profiles));console.log('saved');});
 }else if(args.includes('+messages-send')){if(args[args.indexOf('--as')+1]!=='bot'||args[args.indexOf('--user-id')+1]!=='ou_nativefixture')process.exit(1);console.log(JSON.stringify({ok:true,data:{message_id:'om_fixture'}}));}else{
  const profile=args[0]==='--profile'?args[1]:null;
- console.log(JSON.stringify({appId:profile?profiles[profile]:'cli_default123',identities:{user:{available:true,verified:true,openId:'ou_nativefixture',userName:'验收用户',scope:'docx:document:create docx:document:write_only docx:document:readonly docs:document:import drive:drive.metadata:readonly space:folder:create offline_access'}}}));
+  console.log(JSON.stringify({appId:profile?profiles[profile]:'cli_default123',identities:{bot:{status:'ready',available:true,verified:true},user:{available:true,verified:true,openId:'ou_nativefixture',userName:'验收用户',scope:'docx:document:create docx:document:write_only docx:document:readonly docs:document:import drive:drive.metadata:readonly space:folder:create offline_access'}}}));
 }
 `); chmodSync(fakeLark, 0o700);
 const model = createServer(async (req, res) => {

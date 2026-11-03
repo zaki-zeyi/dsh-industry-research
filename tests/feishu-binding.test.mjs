@@ -4,7 +4,7 @@ import { writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { FeishuBinding, requiredScopes } from '../server/feishu-binding.mjs';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGQAAAABJRU5ErkJggg==','base64');
-const status = (bound, scope = requiredScopes.join(' ')) => ({ identities: { user: { available: bound, verified: bound, userName: '验收用户', scope } } });
+const status = (bound, scope = requiredScopes.join(' ')) => ({ identities: { bot: { status: 'ready', available: true, verified: true, appName: '行研工作台助手' }, user: { available: bound, verified: bound, userName: '验收用户', scope } } });
 
 test('PRD1907 绑定只认服务端验证的用户授权和所需scope，缺CLI失败关闭且不泄露凭据', async () => {
   for (const raw of [status(false), status(true, ''), { verified: true, identities: { bot: { available: true, verified: true } } }]) {
@@ -54,6 +54,21 @@ test('PRD1915 缺少目录读取/搜索权限仍可绑定，授权请求不申�
   } });
   try { await binding.start(); assert.ok(!grant.includes('space:document:retrieve')); assert.ok(!grant.includes('search:docs:read')); }
   finally { binding.close(); }
+});
+
+test('FR02 机器人身份不可用时保留文档绑定但明确标记通知未就绪', async () => {
+  const binding = new FeishuBinding({ run: async () => ({
+    appId: 'cli_fixture',
+    identities: {
+      bot: { status: 'missing', available: false, verified: false },
+      user: { available: true, verified: true, openId: 'ou_fixture', scope: requiredScopes.join(' ') },
+    },
+  }) });
+  try {
+    const state = await binding.status();
+    assert.equal(state.bound, true);
+    assert.equal(state.notificationReady, false);
+  } finally { binding.close(); }
 });
 
 test('回归：macOS临时二维码路径通过指定CLI工作目录落在允许根内', async () => {

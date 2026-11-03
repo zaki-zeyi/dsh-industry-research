@@ -21,7 +21,7 @@ async function setup(updated=false,receiptExtras={}){
  const dir=mkdtempSync(resolve(tmpdir(),'briefings-')),host=mockHost();const records=new Map();
  host.schedule={async create(sessionId,v){const r={...v,id:'schedule-'+records.size};records.set(r.id,{sessionId,...r});return r;},async delete({id}){records.delete(id);return {deleted:true};}};
  const messages=[];let failNotice=false;
- const f=await startRuntime({port:0,dataDir:dir,env:{RESEARCH_MODE:'native'},host,binding:{requireBound:async()=>({openId:'ou_fixture',appId:'cli_fixture'}),json:async(args,app)=>{if(args[0]==='auth')return{appId:'cli_fixture',identities:{user:{openId:'ou_fixture',available:true}}};if(failNotice)throw new Error('fixture denied');messages.push({args,app});return{ok:true};},applicationSnapshot:()=>({mode:'default'}),close(){}}});
+  const f=await startRuntime({port:0,dataDir:dir,env:{RESEARCH_MODE:'native'},host,binding:{requireBound:async()=>({openId:'ou_fixture',appId:'cli_fixture'}),json:async(args,app)=>{if(args[0]==='auth')return{appId:'cli_fixture',identities:{bot:{status:'ready',available:true,verified:true},user:{openId:'ou_fixture',available:true}}};if(failNotice)throw new Error('fixture denied');messages.push({args,app});return{ok:true,data:{message_id:'om_fixture'}};},applicationSnapshot:()=>({mode:'default'}),close(){}}});
  host.sessionController.prompt=async r=>{host.emit(r.sessionId,'turn/start');const p=readFileSync(/请读取 (.+)，按照/.exec(r.content[0].text)[1],'utf8');assert.match(p,/披露日未知/);assert.match(p,/本日无更新|本周无更新/);assert.match(p,/冲突/);writeFileSync(/原子更新 (.+)，本次 requestId/.exec(p)[1],JSON.stringify({requestId:/本次 requestId 固定为 ([a-f0-9-]+)/.exec(p)[1],status:'published',folderToken:'Root123',reportFolderToken:p.includes('【日报】')?'Daily123':'Weekly123',url:'https://example.feishu.cn/docx/Report123',noUpdates:!updated,partial:false,...(updated?{libraryFolderToken:'Library123',manifestUrl:'https://example.feishu.cn/docx/Manifest123',companies:[{name:'后摩智能',url:'https://example.feishu.cn/docx/Company123',dimensions:['融资'],added:1,conflicts:0}]}:{}),...receiptExtras}));host.emit(r.sessionId,'turn/end',{kind:'completed'});};
  return {...f,host,records,messages,failNotice:v=>{failNotice=v;},async close(){await f.close();rmSync(dir,{recursive:true,force:true});}};
 }
@@ -71,11 +71,14 @@ test('最新PRD 机器人按任务绑定身份通知，无更新/报告链接，
  f.failNotice(true);const t=await f.service.createAuthorized(briefingTask(input));await until(()=>f.service.require(t.id).notification?.status==='failed');
  assert.equal(f.service.require(t.id).status,'ready');f.failNotice(false);await Promise.all([f.service.notifications.send(t.id),f.service.notifications.send(t.id)]);
  assert.equal(f.messages.length,1);const m=f.messages[0];assert.ok(m.args.includes('bot'));assert.ok(m.args.includes('ou_fixture'));assert.ok(m.args.some(a=>a.includes('本日无更新')));assert.equal(m.app.appId,'cli_fixture');
+  assert.equal(f.service.require(t.id).notification.messageId,'om_fixture');
  await f.service.notifications.send(t.id);assert.equal(f.messages.length,1);assert.equal(f.service.require(t.id).runs.length,1);
  }finally{await f.close();}
  const f2=await setup(true);try{const t=await f2.service.createAuthorized(briefingTask(input));await until(()=>f2.service.require(t.id).notification?.status==='sent');assert.ok(f2.messages[0].args.some(a=>a.includes('https://example.feishu.cn/docx/Report123')));}finally{await f2.close();}
 });
 
 test('通知拒绝在绑定账号切换后发送，不回退其他用户',async()=>{const f=await setup();try{f.service.binding.json=async()=>({appId:'cli_other',identities:{user:{available:true,openId:'ou_other'}}});const t=await f.service.createAuthorized(briefingTask(input));await until(()=>f.service.require(t.id).notification?.status==='failed');assert.equal(f.messages.length,0);assert.equal(f.service.require(t.id).status,'ready');}finally{await f.close();}});
+
+test('通知拒绝在机器人身份不可用时发送，并给出重新绑定指引',async()=>{const f=await setup();try{f.service.binding.json=async()=>({appId:'cli_fixture',identities:{bot:{status:'missing',available:false,verified:false},user:{available:true,openId:'ou_fixture'}}});const t=await f.service.createAuthorized(briefingTask(input));await until(()=>f.service.require(t.id).notification?.status==='failed');assert.equal(f.messages.length,0);assert.match(f.service.require(t.id).notification.error,/im:message:send_as_bot/);}finally{await f.close();}});
 
 test('不合法的已发布回执不能绕过缺口校验并发送无更新通知',async()=>{const f=await setup(false,{noUpdates:true,partial:true});try{const t=await f.service.createAuthorized(briefingTask(input));await until(()=>f.service.require(t.id).status==='failed');assert.equal(f.messages.length,0);assert.match(f.service.require(t.id).error,/缺口/);}finally{await f.close();}});

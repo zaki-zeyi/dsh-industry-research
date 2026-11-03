@@ -10,9 +10,10 @@ import { ServiceError } from './service.mjs';
 import { applicationSchema, cliFor } from './feishu-application.mjs';
 import { larkRecoveryForError, larkRecoveryForStatus } from './lark-health.mjs';
 export const requiredScopes = ['docx:document:create', 'docx:document:write_only', 'docx:document:readonly', 'docs:document:import', 'drive:drive.metadata:readonly', 'space:folder:create', 'offline_access'];
+export const requiredTenantScopes = ['im:message:send_as_bot'];
 export class FeishuBinding {
   constructor({ command, run, store, registerApp } = {}) {
-    this.store = store; this.scopes = requiredScopes; this.registration = new FeishuRegistration(this, registerApp);
+    this.store = store; this.scopes = requiredScopes; this.tenantScopes = requiredTenantScopes; this.registration = new FeishuRegistration(this, registerApp);
     const local = resolve(homedir(), '.local/bin/lark-cli');
     this.command = command ?? (existsSync(local) ? local : 'lark-cli');
     this.run = run ?? ((args, options = {}) => new Promise((resolveRun, reject) => {
@@ -51,7 +52,9 @@ export class FeishuBinding {
     try {
       const result = await this.json(['auth', 'status', '--json', '--verify'], application);
       if (application?.mode === 'custom' && result.appId !== application.appId) return { bound: false, available: true, error: 'Lark CLI 返回的应用与所选应用不一致，请重新配置，未使用默认应用代替' };
-      const metadata = { ...(result.appId ? { appId: result.appId } : {}), ...(result.identities?.bot?.appName ? { appName: String(result.identities.bot.appName).slice(0, 100) } : {}) };
+      const bot = result.identities?.bot;
+      const notificationReady = bot?.status === 'ready' && bot?.available === true && bot?.verified === true;
+      const metadata = { ...(result.appId ? { appId: result.appId } : {}), ...(bot?.appName ? { appName: String(bot.appName).slice(0, 100) } : {}), notificationReady };
       const user = result.identities?.user, scopes = new Set((user?.scope ?? '').split(/[ ,]+/));
       const authenticated = user?.available === true && user?.verified === true;
       const missingScopes = requiredScopes.filter(s => !scopes.has(s));

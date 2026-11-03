@@ -32,8 +32,8 @@ export class FeishuRegistration {
     try {
       const result = await this.registerApp({ source: 'dsh-industry-research', signal: f.controller.signal,
         appPreset: { name: '{user}的行研工作台', desc: '调研报告创建与保存' },
-        // Include only the business scopes needed by the existing personal delivery flow.
-        addons: { preset: false, scopes: { user: this.binding.scopes.filter(s => s !== 'offline_access') } },
+        // Include user scopes for document delivery and tenant scopes for bot notifications.
+        addons: { preset: false, scopes: { user: this.binding.scopes.filter(s => s !== 'offline_access'), tenant: this.binding.tenantScopes } },
         onQRCodeReady: info => {
           if (this.flow !== f || f.controller.signal.aborted) return;
           if (!registrationUrl(info.url) || !Number.isFinite(info.expireIn) || info.expireIn <= 0) throw new Error('invalid verification response');

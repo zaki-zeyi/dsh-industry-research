@@ -25,6 +25,7 @@ export class InternalMaterialNotifications {
       if (identity.identities?.user?.openId !== recipient
         || identity.identities.user.available !== true
         || (application.appId && identity.appId !== application.appId)) throw new Error('identity changed');
+      if (identity.identities?.bot?.available !== true || identity.identities?.bot?.verified !== true) throw new Error('bot unavailable');
       task.notification = { status: 'sending', recipient, attemptedAt: new Date().toISOString() };
       service.save(task);
       const response = await service.binding.json([
@@ -32,13 +33,14 @@ export class InternalMaterialNotifications {
         '--text', internalNotificationText(task), '--idempotency-key', task.id,
       ], application);
       if (response.ok !== true) throw new Error('unconfirmed');
-      task.notification = { ...task.notification, status: 'sent', sentAt: new Date().toISOString() };
+      const messageId = response.data?.message_id ?? response.message_id;
+      task.notification = { ...task.notification, status: 'sent', sentAt: new Date().toISOString(), ...(messageId ? { messageId: String(messageId) } : {}) };
       service.save(task);
     } catch {
       task.notification = {
         ...task.notification,
         status: 'failed',
-        error: '飞书通知未确认成功。解析文档和原始资料链接已保留，请检查绑定身份、机器人权限后重试。',
+        error: '飞书机器人未发送成功。请重新绑定应用并确认已开通“发送消息”权限（im:message:send_as_bot），且机器人可用范围包含当前绑定用户；解析文档和原始资料链接已保留，可重试通知。',
       };
       service.save(task);
     }

@@ -1,7 +1,8 @@
 import { briefingTask } from './briefings.mjs';
 import { libraryReadError } from './library-errors.mjs';
 import { refreshLibrary, preferences, preferencesSchema, library, companyTaskInput } from './industry.mjs';
-import express from 'express';
+import { createRequire } from 'node:module';
+const express = createRequire(import.meta.url)('express');
 import { resolve, dirname } from 'node:path';
 import { existsSync, realpathSync, readFileSync, statSync } from 'node:fs';
 import { z } from 'zod';
