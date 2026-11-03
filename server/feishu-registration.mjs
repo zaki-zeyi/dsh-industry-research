@@ -15,14 +15,16 @@ export class FeishuRegistration {
   snapshot() {
     const f = this.flow; if (!f) return { status: 'idle' };
     if (active(f) && f.expires <= Date.now()) { f.controller.abort(); f.status = 'expired'; f.error = '二维码已过期，请重新扫码登录并选择应用'; }
-    return { flowId: f.id, status: f.status, ...(f.url ? { authorizationUrl: f.url } : {}), expiresAt: new Date(f.expires).toISOString(), ...(f.appId ? { appId: f.appId } : {}), ...(f.error ? { error: f.error } : {}), ...(f.recovery ? { recovery: f.recovery } : {}) };
+    return { flowId: f.id, status: f.status, updatingApp: Boolean(f.targetAppId), ...(f.appId || f.targetAppId ? { appId: f.appId ?? f.targetAppId } : {}), ...(f.url ? { authorizationUrl: f.url } : {}), expiresAt: new Date(f.expires).toISOString(), ...(f.remoteStatus ? { remoteStatus: f.remoteStatus } : {}), ...(f.error ? { error: f.error } : {}), ...(f.recovery ? { recovery: f.recovery } : {}) };
   }
   start({ refresh = false } = {}) {
     if (!this.binding.store) throw new ServiceError(503, '当前服务未启用飞书绑定配置');
     if (this.binding.configuring || this.binding.starting || this.binding.completing || this.flow?.status === 'saving') throw new ServiceError(409, '授权或应用配置正在处理中，请稍后再试');
     if (this.busy && !refresh) return this.snapshot();
     this.cancel(); this.binding.clear();
-    const f = { id: randomUUID(), status: 'initializing', controller: new AbortController(), expires: Date.now() + 600000, directory: mkdtempSync(resolve(tmpdir(), 'research-feishu-app-')) };
+    const selected = this.binding.applicationSnapshot();
+    const targetAppId = selected?.mode === 'custom' && /^cli_[A-Za-z0-9]{5,100}$/.test(selected.appId ?? '') ? selected.appId : undefined;
+    const f = { id: randomUUID(), status: 'initializing', controller: new AbortController(), expires: Date.now() + 600000, directory: mkdtempSync(resolve(tmpdir(), 'research-feishu-app-')), targetAppId };
     f.qrPath = resolve(f.directory, 'qrcode.png'); this.flow = f;
     f.timer = setTimeout(() => { if (active(f)) { f.controller.abort(); f.status = 'expired'; f.error = '二维码已过期，请重新扫码登录并选择应用'; } }, 600000); f.timer.unref?.();
     this.work = this.execute(f); return this.snapshot();
@@ -30,7 +32,7 @@ export class FeishuRegistration {
   async execute(f) {
     let qrWork;
     try {
-      const result = await this.registerApp({ source: 'dsh-industry-research', signal: f.controller.signal,
+      const result = await this.registerApp({ source: 'dsh-industry-research', signal: f.controller.signal, ...(f.targetAppId ? { appId: f.targetAppId } : {}),
         appPreset: { name: '{user}的行研工作台', desc: '调研报告创建与保存' },
         // Include user scopes for document delivery and tenant scopes for bot notifications.
         addons: { preset: false, scopes: { user: this.binding.scopes.filter(s => s !== 'offline_access'), tenant: this.binding.tenantScopes } },
@@ -48,9 +50,13 @@ export class FeishuRegistration {
               f.controller.abort();
             }
           });
+        },
+        onStatusChange: info => {
+          if (this.flow === f && active(f) && typeof info?.status === 'string') f.remoteStatus = info.status;
         } });
       if (this.flow !== f || f.controller.signal.aborted) return;
       if (!f.url || !qrWork || !/^cli_[A-Za-z0-9]{5,100}$/.test(result.client_id ?? '') || typeof result.client_secret !== 'string' || !/^[\x21-\x7e]{1,512}$/.test(result.client_secret) || !/^ou_[A-Za-z0-9_-]+$/.test(result.user_info?.open_id ?? '') || (result.user_info?.tenant_brand && result.user_info.tenant_brand !== 'feishu')) throw new Error('invalid app result');
+      if (f.targetAppId && result.client_id !== f.targetAppId) throw new Error('updated app id mismatch');
       await qrWork;
       if (this.flow !== f || f.controller.signal.aborted || f.expires <= Date.now()) return;
       f.status = 'saving'; this.binding.configuring = true;

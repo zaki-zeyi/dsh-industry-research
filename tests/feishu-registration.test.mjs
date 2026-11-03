@@ -15,6 +15,16 @@ test('PRD2036 官方扫码选择/创建应用，凭据仅stdin，不修改默认
   const auth=await f.binding.start();assert.equal((await f.binding.complete(auth.flowId)).bound,true);assert.equal((await f.binding.status({mode:'default'})).userName,'默认用户');
  }finally{await f.close();}
 });
+test('FR02 更新已有自定义应用时直接携带 appId，进入权限差异确认而非通用选择页',async()=>{
+ const f=setup();try{
+  const app={mode:'custom',appId:'cli_existing123',profile:'research-existing',ownerOpenId:'ou_scanned'};
+  f.store.saveSetting('feishu-application',app);
+  const flow=f.reg.start();assert.equal(flow.updatingApp,true);assert.equal(flow.appId,'cli_existing123');
+  const pending=f.sdk.pending.at(-1);assert.equal(pending.options.appId,'cli_existing123');assert.equal(new URL(flow.authorizationUrl).searchParams.get('clientID'),'cli_existing123');
+  pending.options.onStatusChange({status:'polling'});assert.equal(f.reg.snapshot().remoteStatus,'polling');
+  f.reg.cancel();
+ }finally{await f.close();}
+});
 test('PRD2036 取消和刷新失效旧二维码，迟到结果不改变原应用，失败信息不泄露凭据',async()=>{
  const f=setup();try{
   const first=f.reg.start();const old=f.sdk.pending[0];const second=f.reg.start({refresh:true});assert.notEqual(first.flowId,second.flowId);assert.throws(()=>f.reg.qr(first.flowId),/失效/);old.resolve({client_id:'cli_old123',client_secret:'secret-old',user_info:{open_id:'ou_old',tenant_brand:'feishu'}});await Promise.resolve();assert.equal(f.binding.applicationSnapshot().mode,'default');
