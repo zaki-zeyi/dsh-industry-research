@@ -53,6 +53,7 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     service.briefingSchedules = new BriefingSchedules(service, host, `http://127.0.0.1:${server.address().port}`);
     service.notifications = new BriefingNotifications(service);
     service.internalNotifications = new InternalMaterialNotifications(service);
+    if (nativeSessions) await nativeSessions.reconcileWorkspace();
     service.recover();
 
     server.on('request', createApp(service, { dist, libraryRun, health: { application: 'industry-research', dataIdentity: dataIdentity(dataDir), transport: researcher.transport ?? 'json' } }));

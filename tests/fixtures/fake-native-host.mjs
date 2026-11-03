@@ -6,13 +6,22 @@ import { resolve } from 'node:path';
 export const report = { title: '宿主原生会话报告', summary: '这是来自 DSH 宿主原生会话的完整调研报告摘要。', markdown: '本报告来自宿主原生会话，在相同会话中执行调研并输出结构化文件；正文包含可追溯的数据来源和对应引用，便于用户继续追问和保存。[S1]', sources: [{ id: 'S1', title: '测试来源', url: 'https://example.com/native', excerpt: '这是宿主会话验收所使用的模拟来源摘录。' }] };
 export function mockHost({ failFirst = false, noReport = false, defaultPreset = 'cordis' } = {}) {
   const bus = new EventEmitter(), calls = [], permissions = [], modes = new Map(); let created = 0, prompts = 0;
+  const workspaces = new Map(), sessionCwds = new Map();
   const host = {
+    sessionCwds,
+    workspaceRegistry: {
+      async create(path,title) {
+        const prior=[...workspaces.values()].find(w=>w.path===path);if(prior)return prior;
+        const w={id:'workspace-'+(workspaces.size+1),path,title,sessionIds:[],async attachSession(id){if(sessionCwds.get(id)!==path)throw new Error('cwd mismatch');if(!this.sessionIds.includes(id))this.sessionIds.push(id);}};workspaces.set(w.id,w);return w;
+      },
+      get(id){return workspaces.get(id);},list(){return [...workspaces.values()];},
+    },
     calls, permissions, modes, defaultPreset, get created() { return created; },
     on(name, fn) { bus.on(name, fn); return () => bus.off(name, fn); },
     emit(id, type, reason) { bus.emit('session/event', { id }, { type, data: { reason } }); },
     permissionPresets: { set(session, name) { permissions.push({ sessionId: session.id, name }); } },
     sessionController: {
-      async create({ cwd, agentPreset }) { const selected = agentPreset ?? defaultPreset, sessionId = `native-session-${++created}`; calls.push({ kind: 'create', cwd, agentPreset }); modes.set(sessionId, selected); return { sessionId, agentPreset: selected }; },
+      async create({ cwd, workspaceId, agentPreset }) { const selected = agentPreset ?? defaultPreset, sessionId = `native-session-${++created}`; if(cwd!==undefined&&workspaceId!==undefined)throw new Error('workspaceId and cwd are exclusive');const workspace=workspaceId?workspaces.get(workspaceId):null;if(workspaceId&&!workspace)throw new Error('workspace not found');sessionCwds.set(sessionId,workspace?.path??cwd);if(workspace)await workspace.attachSession(sessionId);calls.push({ kind: 'create', cwd, workspaceId, agentPreset }); modes.set(sessionId, selected); return { sessionId, agentPreset: selected }; },
       async resolveAgent(id) { return { agent: { session: { id } } }; },
       async prompt(request) {
         calls.push({ kind: 'prompt', ...request }); prompts++; host.emit(request.sessionId, 'turn/start');

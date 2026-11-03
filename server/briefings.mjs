@@ -49,7 +49,8 @@ export class BriefingSchedules {
     if(!this.host?.schedule)throw Object.assign(new Error('当前宿主未启用官方 Schedule 服务'),{status:503});
     if(v.enabled&&this.service.cloudOnly)await this.service.binding.requireBound();
     const old=this.get(),plans={...old.plans},records={...old.records};let sessionId=old.sessionId;
-    if(!sessionId&&v.enabled){mkdirSync(resolve(this.service.nativeSessions.workRoot,'workspace'),{recursive:true});const created=await this.host.sessionController.create({cwd:resolve(this.service.nativeSessions.workRoot,'workspace'),agentPreset:'standard'});sessionId=created.sessionId;const r=await this.host.sessionController.resolveAgent(sessionId);this.host.permissionPresets.set(r.agent.session,'danger-full-access');}
+    if(!sessionId&&v.enabled){const created=await this.service.nativeSessions.createHostSession();sessionId=created.sessionId;const r=await this.host.sessionController.resolveAgent(sessionId);this.host.permissionPresets.set(r.agent.session,'danger-full-access');}
+    if(sessionId&&v.enabled)await this.service.nativeSessions.bindSession(sessionId);
     const persist=()=>this.service.store.saveSetting('briefing-schedule',{...old,sessionId,plans,records});
     if(records[v.kind]){await this.host.schedule.delete({sessionId,id:records[v.kind].id});delete records[v.kind];}
     plans[v.kind]={...v,enabled:false};persist();

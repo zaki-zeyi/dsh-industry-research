@@ -79,6 +79,7 @@ try {
   const scheduleBody={daily:'09:00',weekly:'09:00',weekday:5,enabled:true,research};
   const scheduled=await fetch(status.url+'/api/briefings/schedule',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(scheduleBody)});assert.equal(scheduled.status,200,await scheduled.text());
   const stopped=await fetch(status.url+'/api/briefings/schedule',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...scheduleBody,enabled:false})});assert.equal(stopped.status,200);
+  const group=(await(await fetch(status.url+'/api/config')).json()).nativeWorkspace;assert.equal(group.title,'行研工作台');for(const id of [task.nativeSessionId,daily.nativeSessionId??(await(await fetch(status.url+'/api/tasks/'+daily.id)).json()).task.nativeSessionId,(await(await fetch(status.url+'/api/briefings/schedule')).json()).sessionId])assert.ok(group.sessionIds.includes(id),'all plugin sessions must be attached to the real host workspace');
   console.log('PASS: FR02 真实宿主日报原生会话、全量信息库联动回执、官方 Schedule 创建与停用');
   parallelGate=new Promise(done=>{releaseParallel=done;});
   const batch=await Promise.all([1,2,3].map(n=>fetch(status.url+'/api/industry/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...research,requirements:'并行宿主验收'+n})}).then(async r=>{assert.equal(r.status,202);return r.json();})));

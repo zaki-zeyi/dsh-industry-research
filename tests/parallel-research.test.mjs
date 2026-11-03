@@ -49,7 +49,8 @@ test('PRD815 三会话并行检索，共用工作区；保存互斥并刷新索�
    const tasks=await Promise.all([create(1),create(2),create(3)]);
    await until(()=>started.length===3&&acquired.length===1);
    assert.equal(f.service.active.size,3);
-   assert.equal(new Set(host.calls.filter(c=>c.kind==='create').map(c=>c.cwd)).size,1);
+   assert.equal(new Set(host.calls.filter(c=>c.kind==='create').map(c=>c.workspaceId)).size,1);
+   assert.ok(host.calls.filter(c=>c.kind==='create').every(c=>c.workspaceId&&c.cwd===undefined));
    const first=acquired[0].id,waiting=tasks.filter(t=>t.id!==first);
    await until(()=>waiting.every(t=>f.service.require(t.id).stage==='waiting_save'));
    f.service.cancel(waiting[0].id);

@@ -17,16 +17,66 @@ export class NativeSessions {
     this.timer = setInterval(() => this.observeDeliveries(), pollMs); this.timer.unref();
   }
   get(id) { const meta = this.store.terminal(id); if (!meta || meta.agent !== 'dsh-native') throw new ServiceError(404, '宿主会话绑定不存在'); return meta; }
+  async workspace() {
+    if (!this.workspacePromise) {
+      this.workspacePromise = (async () => {
+        if (!this.host.workspaceRegistry?.create) throw new ServiceError(503, '宿主未提供工作区注册服务，无法绑定插件会话');
+        const path = resolve(this.workRoot, 'workspace'); mkdirSync(path, { recursive: true });
+        const workspace = await this.host.workspaceRegistry.create(path, '行研工作台');
+        this.store.saveSetting('native-workspace', { id: workspace.id, path: workspace.path, title: workspace.title });
+        return workspace;
+      })().catch(error => { this.workspacePromise = null; throw error; });
+    }
+    return this.workspacePromise;
+  }
+  async bindSession(sessionId) {
+    const workspace = await this.workspace();
+    if (!workspace.sessionIds.includes(sessionId)) await workspace.attachSession(sessionId);
+    return workspace;
+  }
+  async createHostSession() {
+    const workspace = await this.workspace();
+    const created = await this.host.sessionController.create({ workspaceId: workspace.id, agentPreset: 'standard' });
+    await this.bindSession(created.sessionId);
+    return { ...created, workspaceId: workspace.id };
+  }
+  async reconcileWorkspace() {
+    const workspace = await this.workspace();
+    const sessions = new Set(this.store.terminalList().filter(v => v.agent === 'dsh-native').map(v => v.sessionId));
+    const schedule = this.store.setting('briefing-schedule'); if (schedule?.sessionId) sessions.add(schedule.sessionId);
+    const failures = [];
+    for (const sessionId of sessions) {
+      try {
+        await this.bindSession(sessionId);
+        for (const meta of this.store.terminalList().filter(v => v.agent === 'dsh-native' && v.sessionId === sessionId)) {
+          meta.workspaceId = workspace.id; delete meta.workspaceBindingError; this.store.saveTerminal(meta);
+        }
+      } catch {
+        failures.push(sessionId);
+        for (const meta of this.store.terminalList().filter(v => v.agent === 'dsh-native' && v.sessionId === sessionId)) {
+          meta.workspaceBindingError = '原会话工作目录不匹配或已不可访问，工作区归属未更改'; this.store.saveTerminal(meta);
+        }
+      }
+    }
+    this.store.saveSetting('native-workspace', { id: workspace.id, path: workspace.path, title: workspace.title, unboundSessionIds: failures });
+    return workspace;
+  }
+  workspaceState() {
+    const saved = this.store.setting('native-workspace');
+    if (!saved) return null;
+    const workspace = this.host.workspaceRegistry?.get(saved.id);
+    return { ...saved, sessionIds: workspace ? [...workspace.sessionIds] : [] };
+  }
   async create(task) {
     const prior = task.terminalId ? this.store.terminal(task.terminalId) : null;
     const id = newId(), cwd = resolve(this.workRoot, task.id); mkdirSync(cwd, { recursive: true });
-    const workspace = resolve(this.workRoot, 'workspace'); mkdirSync(workspace, { recursive: true });
-    const created = prior?.agent === 'dsh-native' ? null : await this.host.sessionController.create({ cwd: workspace, agentPreset: 'standard' });
+    const created = prior?.agent === 'dsh-native' ? null : await this.createHostSession();
     const sessionId = created ? created.sessionId : prior.sessionId;
+    const workspace = await this.bindSession(sessionId);
     const resolved = await this.host.sessionController.resolveAgent(sessionId);
     if (!resolved.agent) throw new ServiceError(503, '无法恢复宿主 DSH 会话，历史记录已保留');
     if (!prior || prior.agent !== 'dsh-native') this.host.permissionPresets.set(resolved.agent.session, 'danger-full-access');
-    const meta = { id, taskId: task.id, agent: 'dsh-native', sessionId, agentPreset: created?.agentPreset ?? prior?.agentPreset, cwd, reportPath: resolve(cwd, `report-${id}.json`), promptPath: resolve(cwd, `prompt-${id}.txt`), status: 'running', activity: 'waiting_input', workflow: 'manual-upload', createdAt: new Date().toISOString() };
+    const meta = { id, taskId: task.id, agent: 'dsh-native', sessionId, workspaceId: workspace.id, agentPreset: created?.agentPreset ?? prior?.agentPreset, cwd, reportPath: resolve(cwd, `report-${id}.json`), promptPath: resolve(cwd, `prompt-${id}.txt`), status: 'running', activity: 'waiting_input', workflow: 'manual-upload', createdAt: new Date().toISOString() };
     if (task.cloudOnly) { meta.workflow = 'cloud-only'; meta.targetFolderToken = task.feishuRoot.folderToken; meta.reportPath = undefined; meta.deliveryRequestId = newId(); meta.deliveryPath = resolve(cwd, `delivery-${meta.deliveryRequestId}.json`); }
     if(task.cloudOnly){meta.writeClientPath=resolve(cwd,'cloud-write-client.mjs');meta.writeConfigPath=resolve(cwd,'cloud-write-config.json');copyFileSync(new URL('./cloud-write-client.mjs',import.meta.url),meta.writeClientPath);writeFileSync(meta.writeConfigPath,JSON.stringify({taskId:task.id,requestId:meta.deliveryRequestId,endpointFile:resolve(this.workRoot,'briefing-endpoint.json')}));}
     writeFileSync(meta.promptPath, task.cloudOnly ? cloudPrompt(task, meta) : `${executionPrompt(task)}\n\n请将完整报告 JSON 保存到 ${meta.reportPath}。本轮只生成报告，完成后立即结束当前轮次并等待用户新要求，不重复调研。平台会在本轮结束后自动发送保存指令；收到该独立指令后再执行保存或授权。`);
