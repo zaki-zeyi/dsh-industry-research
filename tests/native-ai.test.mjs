@@ -39,7 +39,7 @@ test('PRD1101 工作台覆盖只包含桥接与权限，不覆盖原生模型、
     assert.deepEqual(patch.filter(x => x.id).map(x => x.id), ['permission']); assert.equal(patch.at(-1).insert[0].id, 'research-terminal-bridge');
     assert.equal(patch[0].config.presets['danger-full-access'].approval, 'never');
     const text = JSON.stringify(patch); for (const value of ['deepseek-flash', 'agent-default-model', 'defaultModel', 'llm-deepseek', 'must-ignore']) assert.ok(!text.includes(value));
-    assert.deepEqual(launch.args.slice(0, 2), ['--profile', 'tui']);
+    assert.deepEqual(launch.args.slice(launch.args.indexOf('--profile'), launch.args.indexOf('--profile') + 2), ['--profile', 'tui']);
   } finally { await f.close(); }
 });
 

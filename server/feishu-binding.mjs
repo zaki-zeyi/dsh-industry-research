@@ -1,3 +1,4 @@
+import { larkLaunch } from './lark-launch.mjs';
 import { FeishuRegistration } from './feishu-registration.mjs';
 import { execFile } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
@@ -14,7 +15,8 @@ export class FeishuBinding {
     const local = resolve(homedir(), '.local/bin/lark-cli');
     this.command = command ?? (existsSync(local) ? local : 'lark-cli');
     this.run = run ?? ((args, options = {}) => new Promise((resolveRun, reject) => {
-      const child = execFile(this.command, args, { timeout: 15000, maxBuffer: 128 * 1024, cwd: options.cwd, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }, (error, stdout) => error ? reject(error) : resolveRun(stdout));
+      const launch = larkLaunch(this.command, args);
+      const child = execFile(launch.command, launch.args, { timeout: 15000, maxBuffer: 128 * 1024, cwd: options.cwd, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }, (error, stdout) => error ? reject(error) : resolveRun(stdout));
       child.stdin?.on('error', () => {}); child.stdin?.end(options.input ?? '');
     }));
   }

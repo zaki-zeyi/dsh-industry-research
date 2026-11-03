@@ -1,3 +1,7 @@
 - insert:
     - id: dsh-industry-research
       name: dsh-industry-research
+
+- insert:
+    - id: schedule
+      name: '@deepseek-ai/dsh-schedule'

@@ -1,3 +1,4 @@
+import { briefingTask } from './briefings.mjs';
 import { libraryReadError } from './library-errors.mjs';
 import { refreshLibrary, preferences, preferencesSchema, library, companyTaskInput } from './industry.mjs';
 import express from 'express';
@@ -22,6 +23,11 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.put('/api/industry/preferences', (req, res, next) => { try { res.json(service.store.saveSetting('industry-preferences', preferencesSchema.parse(req.body))); } catch (e) { next(e); } });
   app.get('/api/industry/library', async (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); const root = service.feishuSettings(), app = service.binding?.applicationSnapshot?.(); res.json(req.query.refresh === 'true' ? await refreshLibrary(service.store, root, app, libraryRun, { command: service.binding?.command }) : library(service.store, root, app)); } catch (e) { next(libraryReadError(e)); } });
   app.post('/api/industry/tasks', async (req, res, next) => { try { const key = req.headers['idempotency-key']; if (key) z.string().min(1).max(100).parse(key); res.status(202).json(await service.createAuthorized(companyTaskInput(req.body), key)); } catch (e) { next(e); } });
+  app.get('/api/briefings', (req,res) => res.json({items:service.store.list().filter(t => t.briefing && (!req.query.kind || t.briefing.kind === req.query.kind)).map(t => ({id:t.id,direction:t.direction,status:t.status,createdAt:t.createdAt,briefing:t.briefing,publication:t.publication}))}));
+  app.post('/api/briefings', async(req,res,next)=>{try {res.status(202).json(await service.createAuthorized(briefingTask(req.body),req.headers['idempotency-key']));}catch(e){next(e);}});
+  app.get('/api/briefings/schedule',(_req,res)=>res.json(service.briefingSchedules?.get() ?? {available:false}));
+  app.put('/api/briefings/schedule',async(req,res,next)=>{try{res.json(await service.briefingSchedules.save(req.body));}catch(e){next(e);}});
+  app.post('/api/briefings/trigger/:kind',async(req,res,next)=>{try{const kind=z.enum(['daily','weekly']).parse(req.params.kind);res.status(202).json(await service.briefingSchedules.trigger(kind));}catch(e){next(e);}});
   app.get('/api/ai-settings', (_req, res) => { if (!service.aiSettings) return res.status(503).json({ error: 'AI 配置尚未启用' }); res.setHeader('Cache-Control', 'no-store'); res.json(service.aiSettings.get()); });
   app.put('/api/ai-settings', (req, res) => { if (!service.aiSettings) return res.status(503).json({ error: 'AI 配置尚未启用' }); try { const input = z.object({ agent: z.enum(['codex', 'dsh']) }).strict().parse(req.body); res.json(service.aiSettings.save(input)); } catch (error) { res.status(400).json({ error: error instanceof z.ZodError ? 'AI 配置字段无效' : error.message }); } });
   app.get('/api/feishu-application', async (_req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.applicationInfo()); } catch(e) { next(e); } });
@@ -53,7 +59,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     let tasks = service.store.list();
     if (req.query.cursor) { const index = tasks.findIndex(t => t.id === req.query.cursor); if (index < 0) throw new ServiceError(400, '分页游标无效'); tasks = tasks.slice(index + 1); }
     const page = tasks.slice(0, limit);
-    res.json({ items: page.map(({ id, direction, sources, status, stage, createdAt, updatedAt, publication, report, mode, ai }) => ({ id, ai, direction, sources, status, stage, createdAt, updatedAt, publication, mode, summary: service.cloudOnly ? null : report?.summary ?? null })), nextCursor: tasks.length > limit ? page.at(-1).id : null });
+    res.json({ items: page.map(({ id, direction, sources, status, stage, createdAt, updatedAt, publication, report, mode, ai, briefing }) => ({ id, ai, briefing, direction, sources, status, stage, createdAt, updatedAt, publication, mode, summary: service.cloudOnly ? null : report?.summary ?? null })), nextCursor: tasks.length > limit ? page.at(-1).id : null });
   } catch(e) { next(e); } });
   app.post('/api/tasks', async (req, res, next) => { try { const key = req.headers['idempotency-key']; if (key) z.string().min(1).max(100).parse(key); res.status(202).json(await service.createAuthorized(req.body, key)); } catch(e) { next(e); } });
   app.get('/api/tasks/:id', (req, res, next) => { try { const t = service.require(req.params.id); res.json(service.cloudOnly ? { task: { ...t, report: null, reports: [], draft: '', localPublication: undefined }, events: [] } : { task: t, events: service.store.events(req.params.id) }); } catch(e) { next(e); } });

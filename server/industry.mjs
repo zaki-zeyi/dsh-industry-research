@@ -1,3 +1,4 @@
+import { larkLaunch } from './lark-launch.mjs';
 import { companyReceiptSchema } from './agent-delivery.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -20,14 +21,15 @@ export function industryPrompt(input) {
   return `帮我对【${input.companies.join('、')}】在【${input.sources.join('、')}】进行【${input.dimensions.join('、')}】的调研${input.requirements ? `，并满足【${input.requirements}】` : ''}，自动去重增量保存到飞书云盘【全量信息库】中。并呈现本次更新摘要。`;
 }
 export function mergeCompanyDelivery(store, task, delivery) {
-  if (!task.industry || !delivery.libraryFolderToken) return;
+  const research = task.industry ?? task.briefing;
+  if (!research || !delivery.libraryFolderToken) return;
   const key = libraryKey(task.feishuRoot, task.feishuApp), current = library(store, task.feishuRoot, task.feishuApp);
   if (current.manifestUrl && delivery.manifestUrl && delivery.manifestUrl !== current.manifestUrl) throw new Error('必须复用已有公司索引文档');
   if (current.folderToken && delivery.libraryFolderToken !== current.folderToken) throw new Error('全量信息库目录与已有目录不一致');
   if (!delivery.libraryFolderToken) throw new Error('缺少全量信息库目录 ID');
   const names = new Set(); const urls = new Set();
   for (const c of delivery.companies ?? []) {
-    if (!task.industry.companies.includes(c.name) || names.has(c.name) || urls.has(c.url)) throw new Error('公司交付包含未请求公司或重复文档');
+    if (!research.companies.includes(c.name) || names.has(c.name) || urls.has(c.url)) throw new Error('公司交付包含未请求公司或重复文档');
     const previous = current.companies.find(v => v.name === c.name);
     if (previous && previous.url !== c.url) throw new Error('已收录公司必须更新原文档，禁止重复创建');
     if (current.companies.some(v => v.name !== c.name && v.url === c.url)) throw new Error('不同公司不能使用同一文档');
@@ -63,7 +65,8 @@ export async function refreshLibrary(store, root, app, run = promisify(execFile)
   const local = resolve(homedir(), '.local/bin/lark-cli');
   let stdout;
   try {
-    ({ stdout } = await run(command ?? (existsSync(local) ? local : 'lark-cli'), args, { timeout: 20000, maxBuffer: 1024 * 1024, windowsHide: true, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }));
+    const launch = larkLaunch(command ?? (existsSync(local) ? local : 'lark-cli'), args);
+    ({ stdout } = await run(launch.command, launch.args, { timeout: 20000, maxBuffer: 1024 * 1024, windowsHide: true, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }));
   } catch (e) { throw libraryReadError(e); }
   let response;
   try { response = JSON.parse(stdout); } catch { throw new LibraryRefreshError('LIBRARY_INVALID_RESPONSE', 'Lark CLI 返回格式异常，请检查 CLI 后重试；本地已同步记录保留'); }

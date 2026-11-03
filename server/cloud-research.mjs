@@ -1,9 +1,11 @@
+import { briefingCloudPrompt } from './briefings.mjs';
 import { industryCloudPrompt } from './industry-prompt.mjs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readFileSync } from 'node:fs';
 import { cliFor } from './feishu-application.mjs';
 import { agentDeliverySchema } from './agent-delivery.mjs';
 export function cloudPrompt(task, meta) {
+  if (task.briefing) return briefingCloudPrompt(task, meta);
   if (task.industry) return industryCloudPrompt(task, meta);
   const cli = cliFor(task.feishuApp);
   return task.prompt + '\n\n' + `飞书操作固定使用 lark-cli，所有飞书命令（包括授权状态、文档、目录与 skills）必须使用这个配置，不得切换或回退默认应用。

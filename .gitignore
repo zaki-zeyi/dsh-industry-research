@@ -13,3 +13,6 @@ artifacts/
 # Authentication screenshots and live terminal captures can contain private session details.
 docs/screenshots/*auth*
 docs/screenshots/*live*
+
+# Local verification logs
+test-results-*.txt
