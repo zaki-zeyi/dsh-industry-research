@@ -25,6 +25,22 @@ test('FR02 更新已有自定义应用时直接携带 appId，进入权限差异
   f.reg.cancel();
  }finally{await f.close();}
 });
+test('FR02 更新已有应用发布后SDK回调丢失时复用现有profile完成，不要求重新下发密钥',async()=>{
+ const f=setup();try{
+  const app={mode:'custom',appId:'cli_existing123',profile:'research-existing',ownerOpenId:'ou_scanned'};
+  f.store.saveSetting('feishu-application',app);
+  f.cli.profiles.set('research-existing',{appId:'cli_existing123',bound:true,userName:'已有用户'});
+  f.reg.start();const pending=f.sdk.pending.at(-1);
+  pending.options.onStatusChange({status:'polling'});
+  pending.reject(Object.assign(new Error('registration response interrupted'),{code:'ERR_NETWORK'}));
+  await until(()=>f.reg.snapshot().status==='completed');
+  const done=f.reg.snapshot();
+  assert.equal(done.appId,'cli_existing123');
+  assert.equal(done.remoteStatus,'confirmed_existing_profile');
+  assert.equal(f.store.setting('feishu-application').profile,'research-existing');
+  assert.equal(f.cli.calls.filter(c=>c.args[0]==='profile').length,0);
+ }finally{await f.close();}
+});
 test('PRD2036 取消和刷新失效旧二维码，迟到结果不改变原应用，失败信息不泄露凭据',async()=>{
  const f=setup();try{
   const first=f.reg.start();const old=f.sdk.pending[0];const second=f.reg.start({refresh:true});assert.notEqual(first.flowId,second.flowId);assert.throws(()=>f.reg.qr(first.flowId),/失效/);old.resolve({client_id:'cli_old123',client_secret:'secret-old',user_info:{open_id:'ou_old',tenant_brand:'feishu'}});await Promise.resolve();assert.equal(f.binding.applicationSnapshot().mode,'default');

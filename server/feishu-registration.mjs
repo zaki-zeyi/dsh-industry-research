@@ -15,7 +15,7 @@ export class FeishuRegistration {
   snapshot() {
     const f = this.flow; if (!f) return { status: 'idle' };
     if (active(f) && f.expires <= Date.now()) { f.controller.abort(); f.status = 'expired'; f.error = '二维码已过期，请重新扫码登录并选择应用'; }
-    return { flowId: f.id, status: f.status, updatingApp: Boolean(f.targetAppId), ...(f.appId || f.targetAppId ? { appId: f.appId ?? f.targetAppId } : {}), ...(f.url ? { authorizationUrl: f.url } : {}), expiresAt: new Date(f.expires).toISOString(), ...(f.remoteStatus ? { remoteStatus: f.remoteStatus } : {}), ...(f.error ? { error: f.error } : {}), ...(f.recovery ? { recovery: f.recovery } : {}) };
+    return { flowId: f.id, status: f.status, updatingApp: Boolean(f.targetAppId), ...(f.appId || f.targetAppId ? { appId: f.appId ?? f.targetAppId } : {}), ...(f.url ? { authorizationUrl: f.url } : {}), expiresAt: new Date(f.expires).toISOString(), ...(f.remoteStatus ? { remoteStatus: f.remoteStatus } : {}), ...(f.failureCode ? { failureCode: f.failureCode } : {}), ...(f.error ? { error: f.error } : {}), ...(f.recovery ? { recovery: f.recovery } : {}) };
   }
   start({ refresh = false } = {}) {
     if (!this.binding.store) throw new ServiceError(503, '当前服务未启用飞书绑定配置');
@@ -70,6 +70,31 @@ export class FeishuRegistration {
       } finally { this.binding.configuring = false; }
     } catch (error) {
       if (this.flow !== f || f.controller.signal.aborted) return;
+      const failureCode = String(error?.code ?? error?.cause?.code ?? '').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80);
+      if (failureCode) f.failureCode = failureCode;
+      const terminal = /^(access_denied|expired_token|abort)$/i.test(failureCode);
+      if (f.targetAppId && f.remoteStatus === 'polling' && !terminal) {
+        try {
+          const application = this.binding.applicationSnapshot();
+          if (application.mode !== 'custom' || application.appId !== f.targetAppId || !application.profile) throw new Error('existing application profile unavailable');
+          const state = await this.binding.status(application);
+          if (!state.bound || state.appId !== f.targetAppId) throw new Error('existing application is no longer authorized');
+          this.binding.store.saveSetting('feishu-application', {
+            ...application,
+            ownerOpenId: application.ownerOpenId ?? state.openId,
+            permissionUpdatedAt: new Date().toISOString(),
+          });
+          this.binding.clear();
+          f.appId = f.targetAppId;
+          f.status = 'completed';
+          f.remoteStatus = 'confirmed_existing_profile';
+          delete f.error;
+          delete f.recovery;
+          return;
+        } catch {
+          // Fall through to the normal recoverable failure below.
+        }
+      }
       f.status = error?.code === 'expired_token' ? 'expired' : 'failed';
       f.recovery = error?.code === 'access_denied'
         ? { code: 'LARK_APP_AUTHORIZATION_DENIED', action: 'register_app', automatic: false, message: '已取消应用授权，可重新扫码；原绑定仍保留。' }
