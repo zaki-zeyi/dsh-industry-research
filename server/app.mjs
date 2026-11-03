@@ -32,6 +32,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
       id: task.id,
       direction: task.direction,
       status: task.status,
+      stage: task.stage,
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       internal: task.internal,
@@ -44,7 +45,10 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     try {
       const key = req.headers['idempotency-key'];
       if (key) z.string().min(1).max(100).parse(key);
-      res.status(202).json(await service.createAuthorized(prepareInternalMaterial(req.body), key));
+      const input = prepareInternalMaterial({ directoryName: service.store.setting('internal-directory-name') ?? '内部资料', ...req.body });
+      const task = await service.createAuthorized(input, key);
+      service.store.saveSetting('internal-directory-name', input.internal.directoryName);
+      res.status(202).json(task);
     } catch (error) {
       next(error);
     }
@@ -77,7 +81,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.get('/api/feishu-binding/qr/:id', (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.type('png').send(service.binding.qr(req.params.id)); } catch(e) { next(e); } });
   app.get('/api/feishu-settings', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json(service.feishuSettings()); });
   app.put('/api/feishu-settings', (req, res, next) => { try { res.json(service.setFeishuSettings(req.body)); } catch (e) { next(e); } });
-  app.get('/api/config', (_req, res) => res.json({ mode: service.mode, cloudOnly: Boolean(service.cloudOnly), terminalAvailable: Boolean(service.terminals), nativeSessionAvailable: Boolean(service.nativeSessions), transport: service.researcher.transport ?? 'json', terminalPermissions: service.terminals?.permissions ?? null, publicationTarget: service.publisher.kind ?? 'demo', publicationOwner: 'agent', singleUser: true, feishuTarget: service.feishuSettings().folderUrl ? '飞书云盘 / 指定文件夹' : `飞书云盘 / ${service.feishuSettings().rootName}`, feishuRoot: service.feishuSettings() }));
+  app.get('/api/config', (_req, res) => res.json({ mode: service.mode, cloudOnly: Boolean(service.cloudOnly), terminalAvailable: Boolean(service.terminals), nativeSessionAvailable: Boolean(service.nativeSessions), transport: service.researcher.transport ?? 'json', terminalPermissions: service.terminals?.permissions ?? null, publicationTarget: service.publisher.kind ?? 'demo', publicationOwner: 'agent', singleUser: true, feishuTarget: service.feishuSettings().folderUrl ? '飞书云盘 / 指定文件夹' : `飞书云盘 / ${service.feishuSettings().rootName}`, feishuRoot: service.feishuSettings(), internalDirectoryName: service.store.setting("internal-directory-name") ?? "内部资料" }));
   app.get('/api/tasks/:id/agent-qr', (req, res, next) => { try {
     const t = service.require(req.params.id);
     if (t.publication.status !== 'awaiting_authorization' || !t.terminalId || !service.terminals) throw new ServiceError(404, '当前没有待扫描的授权二维码');

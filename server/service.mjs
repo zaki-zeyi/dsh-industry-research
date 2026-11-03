@@ -1,7 +1,7 @@
 import {CloudWrites} from './cloud-writes.mjs';
 import { briefingInput, briefingKey } from './briefings.mjs';
 import { RESEARCH_TIMEOUT_MS } from './cloud-research.mjs';
-import { industryInputSchema, library, mergeCompanyDelivery } from './industry.mjs';
+import { industryInputSchema, preferences, DEFAULT_COMPANIES, library, mergeCompanyDelivery } from './industry.mjs';
 import { EventEmitter } from 'node:events';
 import { z } from 'zod';
 import { folderSettings, folderCacheKey } from './feishu-folder.mjs';
@@ -58,6 +58,7 @@ export class ResearchService {
     if (this.cloudOnly && permit !== creationPermit) throw new ServiceError(428, '请先绑定飞书再启动调研');
     const data = createSchema.parse(input); const serialized = JSON.stringify(data);
     if (key) { const prior = this.store.request(key); if (prior) { if (prior.input !== serialized) throw new ServiceError(409, '该请求标识已用于不同的任务'); return this.require(prior.task_id); } }
+    if (data.internal?.workflowVersion === 1534) data.internal.research = { companies: [...new Set([...DEFAULT_COMPANIES, ...library(this.store, this.feishuSettings(), this.binding?.applicationSnapshot?.()).companies.map(c => c.name)])], dimensions: preferences(this.store).dimensions };
     const id = newId(); const now = new Date().toISOString(); const application = this.binding?.applicationSnapshot?.() ?? { mode: 'default' }; const root = this.feishuSettings(application);
     const task = { id, industry: data.industry, briefing: data.briefing, internal: data.internal, feishuApp: application, cloudOnly: Boolean(this.cloudOnly), feishuRoot: root, autoUpload: this.researcher.transport === 'dsh-native' && this.publisher.kind === 'agent', ai: this.researcher.transport === 'dsh-native' ? { agent: 'dsh-native', configuration: 'host' } : this.aiSettings?.snapshot() ?? { agent: 'codex' }, direction: data.direction, sources: data.sources, prompt: data.prompt ?? promptFor(data.direction, data.sources, root.rootName, root.folderUrl), mode: this.mode, terminalMode: this.researcher.transport === 'pty', nativeSession: this.researcher.transport === 'dsh-native', status: 'queued', stage: 'queued', createdAt: now, updatedAt: now, runs: [], reports: [], report: null, draft: '', error: null, publication: { ...(this.publisher.kind === 'agent' ? { owner: 'agent' } : {}), target: this.publisher.kind === 'agent' ? 'feishu' : this.publisher.kind ?? (this.mode === 'demo' ? 'demo' : 'feishu'), status: 'pending', documentId: null, url: null, writtenBlocks: 0 } };
     this.store.transaction(() => { this.store.save(task); this.store.event(id, 'user', task.prompt); if (key) this.store.saveRequest(key, serialized, id); });
@@ -81,7 +82,7 @@ export class ResearchService {
         t.status = 'running'; t.stage = 'research'; t.error = null; t.mode = this.mode === 'native' && !t.nativeSession ? (t.mode ?? 'codex') : this.mode;
         const run = { id: newId(), ...(t.cloudOnly ? { feishuApp: t.feishuApp ?? { mode: 'default' } } : {}), startedAt: new Date().toISOString(), sessionId: null, status: 'running' }; t.runs.push(run); this.save(t);
         if (t.briefing) { t.briefingLibrary = this.store.setting(briefingKey(t)) ?? {}; t.industryLibrary = library(this.store, t.feishuRoot, t.feishuApp); }
-        if (t.internal) { t.internalFolders = this.store.setting(internalFolderKey(t)) ?? {}; this.save(t); }
+        if (t.internal) { t.internalFolders = this.store.setting(internalFolderKey(t)) ?? {}; t.industryLibrary = library(this.store, t.feishuRoot, t.feishuApp); this.save(t); }
         if (t.industry) { t.industryLibrary = library(this.store, t.feishuRoot, t.feishuApp); this.save(t); }
         if (t.cloudOnly) { await this.binding.requireBound(t.feishuApp ?? { mode: 'default' }); const pendingRoot=this.store.setting(folderCacheKey(t.feishuRoot));if(this.researcher.transport!=='dsh-native'||(pendingRoot?.owner&&!pendingRoot.folderToken&&pendingRoot.owner!==t.id&&!this.active.has(pendingRoot.owner)))this.prepareCloudRoot(t); this.save(t); }
         const report = await this.researcher.run(t, {
@@ -195,8 +196,11 @@ export class ResearchService {
     const key = internalFolderKey(t), prior = this.store.setting(key) ?? {};
     if (prior.transcriptFolderToken && delivery.reportFolderToken && prior.transcriptFolderToken !== delivery.reportFolderToken) throw new Error('内部解析资料子目录不一致');
     if (prior.sourceFolderToken && delivery.sourceFolderToken && prior.sourceFolderToken !== delivery.sourceFolderToken) throw new Error('原始内部资料子目录不一致');
+    for (const field of ['materialFolderToken', 'minutesFolderToken']) if (prior[field] && delivery[field] && prior[field] !== delivery[field]) throw new Error('内部资料子目录不一致');
     const next = {
       ...prior,
+      ...(delivery.materialFolderToken ? { materialFolderToken: delivery.materialFolderToken } : {}),
+      ...(delivery.minutesFolderToken ? { minutesFolderToken: delivery.minutesFolderToken } : {}),
       ...(delivery.reportFolderToken ? { transcriptFolderToken: delivery.reportFolderToken } : {}),
       ...(delivery.sourceFolderToken ? { sourceFolderToken: delivery.sourceFolderToken } : {}),
     };
@@ -204,6 +208,15 @@ export class ResearchService {
       t.internalFolders = next;
       this.store.saveSetting(key, next);
     }
+    // Keep partial documents available for retries even when final validation fails.
+    t.publication = agentPublication({ ...delivery, status: delivery.status === 'published' ? 'publishing' : delivery.status });
+    if (delivery.status === 'published' && t.internal.workflowVersion === 1534) {
+      if (!delivery.materialFolderToken || !delivery.reportFolderToken || !delivery.minutesFolderToken || !delivery.sourceFolderToken || !delivery.minutesUrl || delivery.minutesUrl === delivery.url) throw new Error('内部资料尚未完成逐字稿、会议纪要及目录交付');
+      if (t.internal.uploadEligible && !delivery.sourceMaterialUrl) throw new Error('原始资料尚未上传');
+      if (!Array.isArray(delivery.companies)) throw new Error('缺少内部资料公司同步结果');
+      if (delivery.companies.length && (!delivery.libraryFolderToken || !delivery.manifestUrl)) throw new Error('内部资料尚未完成信息库增量同步');
+    }
+
   }
   recordAgentDelivery(id, terminalId, input) {
     const t = this.require(id); if (t.terminalId !== terminalId || !t.report && !t.cloudOnly) return;

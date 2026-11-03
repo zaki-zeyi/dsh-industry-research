@@ -1,3 +1,4 @@
+import { internalFolderKey } from './internal-materials.mjs';
 import {library,libraryKey} from './industry.mjs';
 import {briefingKey} from './briefings.mjs';
 
@@ -29,8 +30,9 @@ export class CloudWrites {
     const s=this.service;s.prepareCloudRoot(t);
     t.industryLibrary=library(s.store,t.feishuRoot,t.feishuApp);
     if(t.briefing)t.briefingLibrary=s.store.setting(briefingKey(t))??{};
+    if(t.internal)t.internalFolders=s.store.setting(internalFolderKey(t))??{};
     t.stage='research';s.save(t);
-    return {feishuRoot:t.feishuRoot,industryLibrary:t.industryLibrary,briefingLibrary:t.briefingLibrary};
+    return {feishuRoot:t.feishuRoot,industryLibrary:t.industryLibrary,briefingLibrary:t.briefingLibrary,internalFolders:t.internalFolders};
   }
   assertOwner(t){const lock=this.locks.get(libraryKey(t.feishuRoot,t.feishuApp));if(lock?.owner&&lock.owner!==t.id)throw new Error('其他任务正在写入信息库，请先获取本轮写入锁');}
   release(id){for(const [key,lock] of this.locks){

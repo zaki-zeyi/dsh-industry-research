@@ -21,7 +21,7 @@ export function industryPrompt(input) {
   return `帮我对【${input.companies.join('、')}】在【${input.sources.join('、')}】进行【${input.dimensions.join('、')}】的调研${input.requirements ? `，并满足【${input.requirements}】` : ''}，自动去重增量保存到飞书云盘【全量信息库】中。并呈现本次更新摘要。`;
 }
 export function mergeCompanyDelivery(store, task, delivery) {
-  const research = task.industry ?? task.briefing;
+  const research = task.industry ?? task.briefing ?? task.internal?.research;
   if (!research || !delivery.libraryFolderToken) return;
   const key = libraryKey(task.feishuRoot, task.feishuApp), current = library(store, task.feishuRoot, task.feishuApp);
   if (current.manifestUrl && delivery.manifestUrl && delivery.manifestUrl !== current.manifestUrl) throw new Error('必须复用已有公司索引文档');

@@ -30,7 +30,7 @@ test('FR04 本地资料大小、URL安全校验与默认逐字稿Prompt', () => 
     assert.equal(local.internal.uploadEligible, true);
     assert.equal(local.internal.fileSize, 7);
     assert.match(local.prompt, /【时间】【说话人】/);
-    assert.match(local.prompt, /【内部解析资料】/);
+    assert.match(local.prompt, /【逐字稿】/);
     assert.match(local.prompt, /重点核对融资日期/);
 
     const network = prepareInternalMaterial({ sourceType: 'url', source: 'https://example.com/interview?id=1' });
@@ -68,8 +68,8 @@ test('FR04 飞书交付Prompt复用双目录、限制上传并回传原始资料
       internalFolders: { transcriptFolderToken: 'internalFolder', sourceFolderToken: 'sourceFolder' },
     }, { deliveryPath: 'delivery.json', deliveryRequestId: '12345678-1234-4234-8234-123456789abc' });
     assert.match(prompt, /lark-cli --profile research-fixture/);
-    assert.match(prompt, /内部解析资料.*internalFolder/);
-    assert.match(prompt, /原始内部资料.*sourceFolder/);
+    assert.match(prompt, /逐字稿.*internalFolder/);
+    assert.match(prompt, /原始资料.*sourceFolder/);
     assert.match(prompt, /超过 100MB，禁止上传/);
     assert.match(prompt, /sourceMaterialUrl/);
     assert.ok(!prompt.includes('fixture-secret'));
@@ -133,7 +133,7 @@ test('FR04 通知同时包含解析文档和原始资料，交付回执校验原
     status: 'published',
     folderToken: 'rootFolder',
     reportFolderToken: 'internalFolder',
-    sourceFolderToken: 'sourceFolder',
+    sourceFolderToken: 'sourceFolder', materialFolderToken: 'materialFolder', minutesFolderToken: 'minutesFolder', minutesUrl: 'https://example.feishu.cn/docx/MinutesDoc', companies: [],
     sourceMaterialUrl: 'https://example.feishu.cn/file/SourceFile',
     url: 'https://example.feishu.cn/docx/TranscriptDoc',
   }).success, true);
@@ -174,7 +174,7 @@ test('FR04 原生会话完成逐字稿交付后保存双目录并自动通知绑
         status: 'published',
         folderToken: 'rootFolder',
         reportFolderToken: 'internalFolder',
-        sourceFolderToken: 'sourceFolder',
+        sourceFolderToken: 'sourceFolder', materialFolderToken: 'materialFolder', minutesFolderToken: 'minutesFolder', minutesUrl: 'https://example.feishu.cn/docx/MinutesDoc', companies: [],
         sourceMaterialUrl: 'https://example.feishu.cn/file/SourceFile',
         url: 'https://example.feishu.cn/docx/TranscriptDoc',
       }));
@@ -194,6 +194,9 @@ test('FR04 原生会话完成逐字稿交付后保存双目录并自动通知绑
     assert.equal(done.publication.sourceMaterialUrl, 'https://example.feishu.cn/file/SourceFile');
     assert.equal(done.internalFolders.transcriptFolderToken, 'internalFolder');
     assert.equal(done.internalFolders.sourceFolderToken, 'sourceFolder');
+    assert.equal(done.internalFolders.materialFolderToken, 'materialFolder');
+    assert.equal(done.internalFolders.minutesFolderToken, 'minutesFolder');
+    assert.equal(done.publication.minutesUrl, 'https://example.feishu.cn/docx/MinutesDoc');
     assert.equal(messages.length, 1);
     assert.ok(messages[0].join(' ').includes('TranscriptDoc'));
     assert.ok(messages[0].join(' ').includes('SourceFile'));
