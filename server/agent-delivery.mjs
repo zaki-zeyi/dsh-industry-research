@@ -24,6 +24,7 @@ const industryReceipt = {
       return false;
     }
   }, '必须是 http 或 https 链接').optional(),
+  sourceTitle: z.string().trim().min(1).max(240).optional(),
   noUpdates: z.boolean().optional(),
   partial: z.boolean().optional(),
   libraryFolderToken: folderTokenSchema.optional(),

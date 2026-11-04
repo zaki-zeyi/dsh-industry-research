@@ -56,7 +56,11 @@ test('PRD1534 内部资料增量更新原公司文档，拒绝重复文档和未
 
 test('PRD1534 无公司命中仍交付双文档，缺原始上传链接与非法纪要链接不能成功',async()=>{
  const f=fixture();try {
-  const t=task();f.service.rememberInternalMaterial(t,receipt());
+  const t=task(),source=t.internal.source,research=t.internal.research;
+  f.service.rememberInternalMaterial(t,{...receipt(),sourceTitle:'后摩智能项之初：硅基算力会改变我们的生活吗？'});
+  assert.equal(t.internal.sourceLabel,'后摩智能项之初：硅基算力会改变我们的生活吗？');
+  assert.equal(t.internal.source,source);
+  assert.deepEqual(t.internal.research,research);
   assert.equal(library(f.store,t.feishuRoot,t.feishuApp).companies.length,0);
   t.internal.uploadEligible=true;assert.throws(()=>f.service.rememberInternalMaterial(t,receipt()),/尚未上传/);
   assert.equal(agentDeliverySchema.safeParse({...receipt(),minutesUrl:'https://evil.example/docx/Test'}).success,false);

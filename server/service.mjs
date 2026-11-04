@@ -208,6 +208,8 @@ export class ResearchService {
       t.internalFolders = next;
       this.store.saveSetting(key, next);
     }
+    const sourceTitle = typeof delivery.sourceTitle === 'string' ? delivery.sourceTitle.trim() : '';
+    if (sourceTitle) t.internal.sourceLabel = sourceTitle;
     // Keep partial documents available for retries even when final validation fails.
     t.publication = agentPublication({ ...delivery, status: delivery.status === 'published' ? 'publishing' : delivery.status });
     if (delivery.status === 'published' && t.internal.workflowVersion === 1534) {

@@ -74,6 +74,8 @@ test('FR04 飞书交付Prompt复用双目录、限制上传并回传原始资料
     assert.match(prompt, /逐字稿.*internalFolder/);
     assert.match(prompt, /原始资料.*sourceFolder/);
     assert.match(prompt, /超过 100MB，禁止上传/);
+    assert.match(prompt, /回执必须补充 sourceTitle/);
+    assert.match(prompt, /sourceTitle.*资料真实标题或文件名/);
     assert.match(prompt, /sourceMaterialUrl/);
     assert.match(prompt, /逐字稿文档标题严格使用/);
     assert.match(prompt, /会议纪要文档标题严格使用/);
@@ -143,6 +145,30 @@ test('FR04 通知同时包含解析文档和原始资料，交付回执校验原
     sourceMaterialUrl: 'https://example.feishu.cn/file/SourceFile',
     url: 'https://example.feishu.cn/docx/TranscriptDoc',
   }).success, true);
+  assert.equal(agentDeliverySchema.parse({
+    status: 'published',
+    folderToken: 'rootFolder',
+    reportFolderToken: 'internalFolder',
+    materialFolderToken: 'materialFolder',
+    minutesFolderToken: 'minutesFolder',
+    minutesUrl: 'https://example.feishu.cn/docx/MinutesDoc',
+    companies: [],
+    sourceFolderToken: 'sourceFolder',
+    sourceTitle: ' 后摩智能项之初：硅基算力会改变我们的生活吗？ ',
+    url: 'https://example.feishu.cn/docx/TranscriptDoc',
+  }).sourceTitle, '后摩智能项之初：硅基算力会改变我们的生活吗？');
+  assert.equal(agentDeliverySchema.safeParse({
+    status: 'published',
+    folderToken: 'rootFolder',
+    reportFolderToken: 'internalFolder',
+    materialFolderToken: 'materialFolder',
+    minutesFolderToken: 'minutesFolder',
+    minutesUrl: 'https://example.feishu.cn/docx/MinutesDoc',
+    companies: [],
+    sourceFolderToken: 'sourceFolder',
+    sourceTitle: 'x'.repeat(241),
+    url: 'https://example.feishu.cn/docx/TranscriptDoc',
+  }).success, false);
   assert.equal(agentDeliverySchema.safeParse({
     status: 'published',
     folderToken: 'rootFolder',

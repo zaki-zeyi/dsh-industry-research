@@ -92,6 +92,7 @@
 }
 
 .industry-content:has(input[aria-label="搜索内部资料"]) .industry-company h2{
+  display:-webkit-box;
   max-width:100%;
   margin:0;
   color:#213b2c;
@@ -99,7 +100,11 @@
   font-weight:650;
   line-height:1.45;
   letter-spacing:-.2px;
-  overflow-wrap:anywhere
+  overflow:hidden;
+  overflow-wrap:anywhere;
+  text-overflow:ellipsis;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2
 }
 
 .industry-content:has(input[aria-label="搜索内部资料"]) .industry-company>p{
