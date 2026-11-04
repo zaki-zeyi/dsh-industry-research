@@ -18,6 +18,14 @@ export class FeishuRegistration {
     if (active(f) && f.expires <= Date.now()) { f.controller.abort(); f.status = 'expired'; f.error = '二维码已过期，请重新扫码登录并选择应用'; }
     return { flowId: f.id, status: f.status, phase: f.phase ?? 'registration', updatingApp: Boolean(f.targetAppId), ...(f.appId || f.targetAppId ? { appId: f.appId ?? f.targetAppId } : {}), ...(f.url ? { authorizationUrl: f.url } : {}), expiresAt: new Date(f.expires).toISOString(), ...(f.remoteStatus ? { remoteStatus: f.remoteStatus } : {}), ...(f.failureCode ? { failureCode: f.failureCode } : {}), ...(f.error ? { error: f.error } : {}), ...(f.recovery ? { recovery: f.recovery } : {}) };
   }
+  async existingProfile(appId) {
+    try {
+      const raw = await this.binding.run(['profile', 'list']);
+      const profiles = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (!Array.isArray(profiles)) return undefined;
+      return profiles.find(profile => profile?.appId === appId && /^[A-Za-z0-9_-]{1,80}$/.test(profile?.name ?? ''))?.name;
+    } catch { return undefined; }
+  }
   start({ refresh = false, replaceApp = false, accountRebind = false } = {}) {
     if (!this.binding.store) throw new ServiceError(503, '当前服务未启用飞书绑定配置');
     if (this.binding.configuring || this.binding.starting || this.binding.completing || this.flow?.status === 'saving') throw new ServiceError(409, '授权或应用配置正在处理中，请稍后再试');
@@ -25,6 +33,7 @@ export class FeishuRegistration {
     this.cancel(); this.binding.clear();
     const selected = this.binding.applicationSnapshot();
     const targetAppId = !replaceApp && selected?.mode === 'custom' && /^cli_[A-Za-z0-9]{5,100}$/.test(selected.appId ?? '') ? selected.appId : undefined;
+    const targetProfile = targetAppId && /^[A-Za-z0-9_-]{1,80}$/.test(selected.profile ?? '') ? selected.profile : undefined;
     const f = {
       id: randomUUID(),
       status: 'initializing',
@@ -32,6 +41,7 @@ export class FeishuRegistration {
       expires: Date.now() + 600000,
       directory: mkdtempSync(resolve(tmpdir(), 'research-feishu-app-')),
       targetAppId,
+      targetProfile,
       replaceApp,
       accountRebind,
     };
@@ -71,8 +81,24 @@ export class FeishuRegistration {
       if (this.flow !== f || f.controller.signal.aborted || f.expires <= Date.now()) return;
       f.phase = 'credential_storage'; f.status = 'saving'; this.binding.configuring = true;
       try {
-        const profile = `research-${randomUUID()}`;
-        await this.binding.run(['profile', 'add', '--name', profile, '--app-id', result.client_id, '--app-secret-stdin', '--brand', 'feishu'], { input: result.client_secret + '\n' });
+        // Rebinding an existing app must update its profile in place. A new
+        // profile with the same app id is rejected and must never create a
+        // second credential entry.
+        const updateExisting = f.targetAppId === result.client_id && Boolean(f.targetProfile);
+        let profile = updateExisting ? f.targetProfile : `research-${randomUUID()}`;
+        const credential = (args) => this.binding.run(args, { input: result.client_secret + '\n' });
+        const updateArgs = () => ['config', 'init', '--name', profile, '--app-id', result.client_id, '--app-secret-stdin', '--brand', 'feishu'];
+        try {
+          await credential(updateExisting ? updateArgs() : ['profile', 'add', '--name', profile, '--app-id', result.client_id, '--app-secret-stdin', '--brand', 'feishu']);
+        } catch (error) {
+          const text = [error?.message, error?.stdout, error?.stderr, error?.cause?.message].filter(Boolean).join('\n');
+          if (updateExisting || !/already used by profile|unique app-id|already exists/i.test(text)) throw error;
+          // A selected app may already have a profile from an earlier attempt.
+          // Update that profile instead of creating a colliding keychain entry.
+          profile = await this.existingProfile(result.client_id);
+          if (!profile) throw error;
+          await credential(updateArgs());
+        }
         if (this.flow !== f || f.controller.signal.aborted) return;
         // Do not select the app until both the official page and local credential storage succeed.
         // The account used to manage an application is not necessarily the

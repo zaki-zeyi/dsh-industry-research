@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, win32 } from 'node:path';
 import { resolveCodexLaunch } from '../server/codex-launch.mjs';
+import { larkLaunch } from '../server/lark-launch.mjs';
 import { preparePty } from '../scripts/prepare-pty.mjs';
 import { createDesktopZip, extractDesktopZip } from '../scripts/desktop-archive.mjs';
 import { npmCommand } from '../scripts/npm-command.mjs';
@@ -31,6 +32,17 @@ test('Windows 支持旧 vendor 布局；缺失 binary 拒绝静默执行 cmd', (
 test('macOS 和显式 Windows exe 保留原有启动方式', () => {
   const args = ['--no-alt-screen']; assert.deepEqual(resolveCodexLaunch('/opt/bin/codex', args, { platform: 'darwin' }), { command: '/opt/bin/codex', args });
   const exe = 'D:\\Codex工具\\codex.exe'; assert.equal(resolveCodexLaunch(exe, args, windows([exe])).command, exe);
+});
+test('Windows 飞书 CLI 即使不在 PATH 也能从用户目录找到原生 exe', () => {
+  const home = 'C:\\Users\\测试用户', exe = win32.resolve(home, '.local/bin/lark-cli.exe');
+  assert.deepEqual(larkLaunch('lark-cli', ['profile', 'list'], { platform: 'win32', env: { Path: 'C:\\Windows' }, home, isFile: path => path === exe, resolvePath: win32.resolve }), { command: exe, args: ['profile', 'list'] });
+});
+test('Windows 显式无扩展飞书 CLI 路径自动补全 exe', () => {
+  const command = 'D:\\工具 & 程序\\lark-cli', exe = command + '.exe';
+  assert.deepEqual(larkLaunch(command, ['doctor'], { platform: 'win32', env: {}, home: 'C:\\Users\\测试用户', isFile: path => path === exe, resolvePath: win32.resolve }), { command: exe, args: ['doctor'] });
+});
+test('Windows 飞书 CLI 缺失时明确拒绝启动', () => {
+  assert.throws(() => larkLaunch('lark-cli', [], { platform: 'win32', env: {}, home: 'C:\\Users\\测试用户', isFile: () => false, resolvePath: win32.resolve }), /找不到 Lark CLI/);
 });
 test('Windows 无安装脚本时准备 x64/arm64 ConPTY DLL，重复执行安全', t => {
   const root = fixture(t);

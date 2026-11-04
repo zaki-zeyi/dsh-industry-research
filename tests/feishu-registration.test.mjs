@@ -29,6 +29,36 @@ test('FR02 更新已有自定义应用时直接携带 appId，进入权限差异
   f.reg.cancel();
  }finally{await f.close();}
 });
+test('FR02 重新绑定已有应用时更新原 profile，不重复创建同 App ID 凭据',async()=>{
+ const f=setup();try{
+  f.store.saveSetting('feishu-application',{mode:'custom',appId:'cli_existing123',profile:'research-existing'});
+  const flow=f.reg.start();assert.equal(flow.appId,'cli_existing123');
+  f.sdk.approve('cli_existing123');
+  await until(()=>f.reg.snapshot().status==='completed');
+  const save=f.cli.calls.find(c=>c.args[0]==='config');
+  assert.deepEqual(save.args.slice(0,4),['config','init','--name','research-existing']);
+  assert.equal(save.args[save.args.indexOf('--app-id')+1],'cli_existing123');
+  assert.equal(save.options.input,'fixture-secret\n');
+  assert.equal(f.cli.calls.some(c=>c.args[0]==='profile'),false);
+  assert.equal(f.binding.applicationSnapshot().profile,'research-existing');
+  assert.equal(f.binding.applicationSnapshot().appId,'cli_existing123');
+ }finally{await f.close();}
+});
+test('FR02 扫码选中本机已配置过的应用时复用原 profile，不覆盖其他配置',async()=>{
+ const f=setup();try{
+  f.cli.profiles.set('research-orphan',{appId:'cli_orphan123',bound:false,userName:'旧用户',openId:'ou_orphan',unionId:'on_orphan',logins:[]});
+  f.reg.start();
+  f.sdk.approve('cli_orphan123');
+  await until(()=>f.reg.snapshot().status==='completed');
+  const add=f.cli.calls.find(c=>c.args[0]==='profile'&&c.args[1]==='add');
+  assert.ok(add);
+  const save=f.cli.calls.find(c=>c.args[0]==='config');
+  assert.deepEqual(save.args.slice(0,4),['config','init','--name','research-orphan']);
+  assert.equal(save.options.input,'fixture-secret\n');
+  assert.equal(f.binding.applicationSnapshot().profile,'research-orphan');
+  assert.equal(f.binding.applicationSnapshot().appId,'cli_orphan123');
+ }finally{await f.close();}
+});
 test('FR02 更换应用允许应用管理账号不同，个人授权完成后仍严格保持原账号',async()=>{
  const f=setup();try{
   f.store.saveSetting('feishu-application',{mode:'custom',appId:'cli_existing123',profile:'research-existing',ownerOpenId:'ou_personal_old_app'});
