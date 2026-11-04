@@ -31,43 +31,43 @@ export function notificationFailure(error) {
 
   if (missingScopes.includes('im:message:send_as_bot') || /send_as_bot/i.test(upstream)) {
     return {
-      message: '当前飞书应用尚未获得机器人发消息权限（im:message:send_as_bot）。请点击“修复机器人权限”，在飞书确认权限差异并发布，然后重试通知。',
-      diagnostic,
+      message: '当前飞书应用尚未获得机器人发消息权限（im:message:send_as_bot）。请点击“重试通知”，在飞书确认权限差异并发布，完成后自动重试通知。',
+      diagnostic: { ...diagnostic, action: 'repair_bot' },
     };
   }
   if (subtype === 'app_scope_not_applied' || /has not applied for the required scope/i.test(upstream)) {
     return {
-      message: `当前飞书应用所需权限尚未生效${code ? `（错误码 ${code}）` : ''}。请点击“修复机器人权限”，确认权限差异并发布后重试。`,
-      diagnostic,
+      message: `当前飞书应用所需权限尚未生效${code ? `（错误码 ${code}）` : ''}。请点击“重试通知”，确认权限差异并发布后重试。`,
+      diagnostic: { ...diagnostic, action: 'repair_bot' },
     };
   }
   if (/bot unavailable|机器人身份不可用/i.test(upstream) || /bot unavailable|机器人身份不可用/i.test(String(error?.message ?? ''))) {
     return {
-      message: '飞书机器人身份不可用，无法发送消息。请点击“修复机器人权限”，确认已开通 im:message:send_as_bot 并发布后再重试。',
-      diagnostic,
+      message: '飞书机器人身份不可用，无法发送消息。请点击“重试通知”，确认已开通 im:message:send_as_bot 并发布后再重试。',
+      diagnostic: { ...diagnostic, action: 'repair_bot' },
     };
   }
   if (/availability|available range|not available|可用范围/i.test(upstream)) {
     return {
       message: '当前飞书账号不在机器人可用范围内。请把该账号加入应用可用范围并发布应用后重试。',
-      diagnostic,
+      diagnostic: { ...diagnostic, action: 'check_availability' },
     };
   }
-  if (/current.*(binding|application).*(changed|mismatch)|绑定.*(已切换|不一致)/i.test(`${upstream} ${error?.message ?? ''}`)) {
+  if (/current.*(binding|application).*(changed|mismatch)|identity changed|绑定.*(已切换|不一致|已改变)/i.test(`${upstream} ${error?.message ?? ''}`)) {
     return {
       message: '当前绑定的飞书账号或应用已发生变化，历史任务不会向旧账号发送通知。请确认当前绑定后重新生成报告，或恢复原绑定再重试。',
-      diagnostic,
+      diagnostic: { ...diagnostic, action: 'binding_changed' },
     };
   }
   if (type === 'authorization' || type === 'forbidden' || /access denied|permission denied/i.test(upstream)) {
     return {
       message: `飞书机器人无权发送消息${code ? `（错误码 ${code}）` : ''}。请检查应用发布状态、机器人消息权限和账号可用范围后重试。`,
-      diagnostic,
+      diagnostic: { ...diagnostic, action: 'repair_bot' },
     };
   }
   return {
     message: `飞书机器人未发送成功${code ? `（错误码 ${code}）` : ''}${upstream ? `：${upstream}` : ''}。报告和会话已保留，可修复配置后重试。`,
-    diagnostic,
+    diagnostic: { ...diagnostic, action: 'retry' },
   };
 }
 
@@ -77,6 +77,5 @@ export function notificationApplicationMatches(expected, current) {
   const currentMode = current.mode ?? 'default';
   if (expectedMode !== currentMode) return false;
   if (currentMode === 'default' && (!expected.appId || !current.appId)) return true;
-  return (expected.appId ?? '') === (current.appId ?? '')
-    && (expected.profile ?? '') === (current.profile ?? '');
+  return (expected.appId ?? '') === (current.appId ?? '');
 }

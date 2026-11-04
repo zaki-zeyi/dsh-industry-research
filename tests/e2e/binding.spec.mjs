@@ -271,3 +271,16 @@ test('插件内提供仅供当前profile使用的Bearer兼容登录', async ({ p
   await expect.poll(() => posts.some(body => body.compatibility === true)).toBe(true);
   await expect(page.getByRole('img', { name: '绑定飞书授权二维码' })).toBeVisible();
 });
+
+
+test('凭据保存失败可在原流程重试，无需再获取扫码二维码',async({page})=>{
+ let saves=0,registrations=0;
+ const flow={flowId:'99999999-9999-4999-8999-999999999999',status:'failed',canRetrySave:true,phase:'credential_storage',error:'本机保存失败',expiresAt:new Date(Date.now()+600000).toISOString()};
+ await page.route('**/api/feishu-registration',route=>{if(route.request().method()==='POST')registrations++;return route.fulfill({json:saves?{...flow,status:'completed'}:flow});});
+ await page.route('**/api/feishu-registration/retry',route=>{saves++;expect(route.request().postDataJSON()).toEqual({flowId:flow.flowId});return route.fulfill({json:{...flow,status:'saving'}});});
+ const bound={bound:true,available:true,appId:'cli_fixture123',appName:'测试行研应用',userName:'原飞书账号',notificationReady:true};
+ await page.route('**/api/feishu-binding',route=>route.fulfill({json:bound}));
+ await page.goto('/');await page.getByRole('button',{name:'更换应用',exact:true}).click();
+ await page.getByRole('button',{name:'重试保存，无需扫码',exact:true}).click();
+ await expect.poll(()=>saves).toBe(1);await expect(page.getByRole('dialog')).toContainText('已绑定飞书：原飞书账号');expect(registrations).toBe(1);
+});

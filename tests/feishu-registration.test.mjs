@@ -146,3 +146,42 @@ test('PRD2036 保存凭据期间拒绝取消和刷新，关闭后迟到保存不
  const prior=f.binding.run;f.binding.run=async(args,options)=>{if(args[0]==='profile')await new Promise(r=>{release=r;});return prior(args,options);};
  try{f.reg.start();f.sdk.approve();await until(()=>f.reg.snapshot().status==='saving');assert.throws(()=>f.reg.cancel(),e=>e.status===409);assert.throws(()=>f.reg.start({refresh:true}),e=>e.status===409);await assert.rejects(f.binding.configureApplication({mode:'default'}),e=>e.status===409);f.reg.close();release();await f.reg.work;assert.equal(f.binding.applicationSnapshot().mode,'default');}finally{await f.close();}
 });
+
+
+test('收到凭据后保存临时失败自动重试，耗尽后可手动保存且无需重新扫码',async()=>{
+ const f=setup();try{
+  f.reg.delay=async()=>{};f.cli.setFail(true);
+  const initial=f.reg.start();f.sdk.approve();await until(()=>f.reg.snapshot().status==='failed');
+  assert.equal(f.reg.snapshot().saveAttempts,3);assert.equal(f.reg.snapshot().canRetrySave,true);
+  assert.ok(!JSON.stringify(f.reg.snapshot()).includes('fixture-secret'));
+  f.cli.setFail(false);const next=f.reg.retrySave(initial.flowId);assert.equal(next.status,'saving');
+  f.reg.retrySave(initial.flowId);await f.reg.work;
+  assert.equal(f.reg.snapshot().status,'completed');assert.equal(f.reg.snapshot().saveAttempts,4);
+  assert.equal(f.sdk.pending.length,1);assert.equal(f.reg.flow.credentials,undefined);
+ }finally{await f.close();}
+});
+
+test('重试保存拒绝过期和已取消流程，权限更新保留原profile及个人登录',async()=>{
+ const f=setup();try{
+  f.reg.delay=async()=>{};f.cli.setFail(true);const initial=f.reg.start();f.sdk.approve();await until(()=>f.reg.snapshot().status==='failed');
+  f.reg.flow.expires=Date.now()-1;assert.throws(()=>f.reg.retrySave(initial.flowId),e=>e.status===409);
+  f.reg.cancel();assert.throws(()=>f.reg.retrySave(initial.flowId),e=>e.status===409);
+  f.cli.setFail(false);const app={mode:'custom',appId:'cli_existing123',profile:'research-existing',ownerOpenId:'ou_scanned'};
+  f.store.saveSetting('feishu-application',app);f.cli.profiles.set(app.profile,{appId:app.appId,bound:true,openId:'ou_scanned'});
+  const count=f.cli.calls.filter(c=>c.args[0]==='profile').length;
+  f.reg.start();f.sdk.approve(app.appId);await until(()=>f.reg.snapshot().status==='completed');
+  assert.deepEqual(f.store.setting('feishu-application'),app);assert.equal(f.binding.pendingApplicationOperation(),null);
+  assert.equal(f.cli.calls.filter(c=>c.args[0]==='profile').length,count);assert.equal((await f.binding.status()).bound,true);
+ }finally{await f.close();}
+});
+
+
+test('CLI保存后超时先验证已落盘的profile，不重复创建且不泄露错误内容',async()=>{
+ const f=setup();try{
+  const prior=f.binding.run;let adds=0;f.reg.delay=async()=>{};
+  f.binding.run=async(args,options)=>{const value=await prior(args,options);if(args[0]==='profile'){adds++;throw Object.assign(new Error('private storage failure'),{code:'ETIMEDOUT',killed:true});}return value;};
+  f.reg.start();f.sdk.approve();await until(()=>f.reg.snapshot().status==='completed');
+  assert.equal(adds,1);assert.deepEqual(f.reg.snapshot().storageDiagnostic,{code:'ETIMEDOUT',killed:true,credentialStatus:'verified'});
+  assert.ok(!JSON.stringify(f.reg.snapshot()).includes('private storage failure'));assert.ok(!JSON.stringify(f.reg.snapshot()).includes('fixture-secret'));
+ }finally{await f.close();}
+});
