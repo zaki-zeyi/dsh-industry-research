@@ -91,22 +91,24 @@ export function InternalMaterials({ config, onCreate, onOpen, onRetry }) {
     {!loading && visible.length > 0 && <div className="industry-cards">{visible.map(task => <article className="industry-company" key={task.id}>
       <div className="company-top"><span className="company-monogram"><FileText size={18}/></span><span className={'task-status ' + task.status}>{statusLabel(task)}</span></div>
       <h2 title={sourceDisplay(task)}>{sourceDisplay(task)}</h2>
-      <p>{task.internal.sourceType === 'local' ? '本地文件' : `网络资料${sourceHost(task) ? ` · ${sourceHost(task)}` : ''}`}{task.internal.fileSize != null ? ` · ${(task.internal.fileSize / 1024 / 1024).toFixed(1)} MB` : ''}</p>
+      <p className="card-meta">{task.internal.sourceType === 'local' ? '本地文件' : `网络资料${sourceHost(task) ? ` · ${sourceHost(task)}` : ''}`}{task.internal.fileSize != null ? ` · ${(task.internal.fileSize / 1024 / 1024).toFixed(1)} MB` : ''}</p>
       <div className="company-dimensions"><span>{task.internal.uploadEligible ? '原始资料可上传' : task.internal.sourceType === 'local' ? '原始材料超过上传上限' : '保留原始链接'}</span></div>
       {task.error && <div className="industry-error" role="alert">{task.error}</div>}
-      {task.publication?.url && <a className="company-title" href={task.publication.url} target="_blank" rel="noreferrer">逐字稿<ArrowUpRight size={18}/></a>}
-      {task.publication?.minutesUrl && <a href={task.publication.minutesUrl} target="_blank" rel="noreferrer">会议纪要</a>}
-      <p>目录：{task.internal.directoryName ?? "内部解析资料（历史）"}</p>
-      {task.publication?.sourceMaterialUrl && <a href={task.publication.sourceMaterialUrl} target="_blank" rel="noreferrer">原始资料</a>}
-      {task.notification?.status === 'sent' && <p>飞书机器人已通知</p>}
-      {task.notification?.status === 'failed' && <p role="alert">{task.notification.error}<button className="secondary" onClick={async () => {
+      <p className="card-caption">目录：{task.internal.directoryName ?? "内部解析资料（历史）"}</p>
+      {(task.publication?.url || task.publication?.minutesUrl || task.publication?.sourceMaterialUrl) && <div className="material-actions">
+        {task.publication?.url && <a className="material-action material-action-primary" href={task.publication.url} target="_blank" rel="noreferrer">逐字稿<ArrowUpRight size={15}/></a>}
+        {task.publication?.minutesUrl && <a className="material-action" href={task.publication.minutesUrl} target="_blank" rel="noreferrer">会议纪要<ArrowUpRight size={15}/></a>}
+        {task.publication?.sourceMaterialUrl && <a className="material-action" href={task.publication.sourceMaterialUrl} target="_blank" rel="noreferrer">原始资料<ArrowUpRight size={15}/></a>}
+      </div>}
+      {task.notification?.status === 'sent' && <p className="card-caption">飞书机器人已通知</p>}
+      {task.notification?.status === 'failed' && <div className="card-alert" role="alert"><AlertCircle size={15}/><span>{task.notification.error}</span><button onClick={async () => {
         try {
           await api(`/${task.id}/notify`, { method: 'POST', body: '{}' });
           await load();
         } catch (cause) {
           setError(cause.message);
         }
-      }}>重试通知</button></p>}
+      }}>重试通知</button></div>}
       <footer>
         <button onClick={() => onOpen(task)}>AI 会话详情 ↗</button>
         {['failed', 'interrupted'].includes(task.status) && <button onClick={() => onRetry(task)}>重试</button>}

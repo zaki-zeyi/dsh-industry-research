@@ -9,13 +9,13 @@
 
 /* UI polish: briefing cards, internal-material cards, and configuration panels. */
 .industry-content:has(.briefing-overview) .industry-cards{
-  grid-template-columns:repeat(auto-fill,minmax(330px,1fr));
+  grid-template-columns:repeat(auto-fill,minmax(420px,1fr));
   gap:16px
 }
 
-.industry-content:has(.briefing-overview) .industry-company{
+.industry-content:has(.briefing-overview) .briefing-card{
   display:flex;
-  min-height:270px;
+  min-height:315px;
   flex-direction:column;
   padding:22px 22px 0;
   border-color:#dde6da;
@@ -23,11 +23,13 @@
   box-shadow:0 1px 2px #1e35230a
 }
 
-.industry-content:has(.briefing-overview) .industry-company .company-top{
-  margin-bottom:17px
+.industry-content:has(.briefing-overview) .briefing-card .company-top{
+  flex:0 0 auto;
+  margin:0 0 18px
 }
 
-.industry-content:has(.briefing-overview) .industry-company h2{
+.industry-content:has(.briefing-overview) .briefing-card h2{
+  display:-webkit-box;
   max-width:30ch;
   margin:0;
   color:#213b2c;
@@ -35,35 +37,58 @@
   font-weight:650;
   line-height:1.55;
   letter-spacing:-.25px;
-  overflow-wrap:anywhere
+  overflow:hidden;
+  overflow-wrap:anywhere;
+  text-overflow:ellipsis;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2
 }
 
-.industry-content:has(.briefing-overview) .industry-company>p{
+.industry-content:has(.briefing-overview) .briefing-card .card-meta{
   margin:9px 0 0;
   color:#77887a;
   font-size:11px;
   line-height:1.65
 }
 
-.industry-content:has(.briefing-overview) .industry-company>a{
+.industry-content:has(.briefing-overview) .briefing-signals{
+  min-height:0;
+  margin:14px 0 0
+}
+
+.industry-content:has(.briefing-overview) .briefing-signals>span{
+  max-width:100%;
+  overflow:visible;
+  text-overflow:clip;
+  white-space:normal
+}
+
+.industry-content:has(.briefing-overview) .briefing-action{
   display:inline-flex;
   width:max-content;
   max-width:100%;
   align-items:center;
   gap:5px;
-  margin-top:17px;
+  margin-top:16px;
   padding:8px 11px;
-  border:1px solid #d7e3d5;
+  border:1px solid #315b43;
   border-radius:6px;
-  background:#f8fbf5;
-  color:#426445;
+  background:#315b43;
+  color:#fff;
   font-size:11px;
   font-weight:600;
   text-decoration:none;
   overflow-wrap:anywhere
 }
 
-.industry-content:has(.briefing-overview) .industry-company>footer{
+.industry-content:has(.briefing-overview) .card-caption{
+  margin:13px 0 0;
+  color:#87958a;
+  font-size:10px;
+  line-height:1.6
+}
+
+.industry-content:has(.briefing-overview) .briefing-card>footer{
   width:calc(100% + 44px);
   margin:auto -22px 0;
   padding:13px 20px;
@@ -71,19 +96,19 @@
   border-top:1px solid #e7ece3
 }
 
-.industry-content:has(.briefing-overview) .industry-company>footer button{
+.industry-content:has(.briefing-overview) .briefing-card>footer button{
   color:#4e6d54;
   font-weight:600
 }
 
 .industry-content:has(input[aria-label="搜索内部资料"]) .industry-cards{
-  grid-template-columns:repeat(auto-fill,minmax(360px,1fr));
+  grid-template-columns:repeat(auto-fill,minmax(420px,1fr));
   gap:16px
 }
 
 .industry-content:has(input[aria-label="搜索内部资料"]) .industry-company{
   display:flex;
-  min-height:300px;
+  min-height:340px;
   flex-direction:column;
   padding:22px 22px 0;
   border-color:#dde6da;
@@ -116,15 +141,23 @@
 
 .industry-content:has(input[aria-label="搜索内部资料"]) .company-dimensions{
   min-height:0;
-  margin:14px 0
+  margin:14px 0 0
 }
 
-.industry-content:has(input[aria-label="搜索内部资料"]) .industry-company>a{
+.material-actions{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(88px,1fr));
+  gap:8px;
+  margin-top:15px
+}
+
+.material-action{
   display:inline-flex;
+  min-height:40px;
   align-items:center;
+  justify-content:center;
   gap:5px;
-  margin-top:12px;
-  padding:9px 11px;
+  padding:8px 10px;
   border:1px solid #dce7d9;
   border-radius:6px;
   background:#f7faf4;
@@ -132,19 +165,24 @@
   font-size:11px;
   font-weight:600;
   text-decoration:none;
-  overflow-wrap:anywhere
+  white-space:nowrap
 }
 
-.industry-content:has(input[aria-label="搜索内部资料"]) .industry-company>a.company-title{
-  width:max-content;
-  margin-top:15px;
-  background:#315b43;
+.material-action.material-action-primary{
   border-color:#315b43;
+  background:#315b43;
   color:#fff
 }
 
+.industry-content:has(input[aria-label="搜索内部资料"]) .card-caption{
+  margin:13px 0 0;
+  color:#87958a;
+  font-size:10px;
+  line-height:1.6
+}
+
 .industry-content:has(input[aria-label="搜索内部资料"]) .industry-company .industry-error{
-  margin:12px -7px 0;
+  margin:12px 0 0;
   padding:11px 12px;
   align-items:flex-start;
   flex-wrap:wrap;
@@ -159,6 +197,36 @@
   border:1px solid #e5c7b8;
   border-radius:5px;
   background:#fffaf7
+}
+
+.card-alert{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr);
+  gap:7px 8px;
+  margin-top:13px;
+  padding:11px 12px;
+  border:1px solid #ecd9cd;
+  border-radius:6px;
+  background:#fff7f2;
+  color:#9a6654;
+  font-size:10px;
+  line-height:1.65
+}
+
+.card-alert>svg{
+  margin-top:2px;
+  color:#b77b64
+}
+
+.card-alert button{
+  grid-column:2;
+  width:max-content;
+  padding:5px 8px;
+  border:1px solid #e5c7b8;
+  border-radius:5px;
+  background:#fff;
+  color:#9a6654;
+  font-size:10px
 }
 
 .industry-content:has(input[aria-label="搜索内部资料"]) .industry-company>footer{
