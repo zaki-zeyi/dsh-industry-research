@@ -3,8 +3,9 @@ import { test, expect } from '@playwright/test';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGQAAAABJRU5ErkJggg==', 'base64');
 const future = () => new Date(Date.now() + 600000).toISOString();
 
-test('重新绑定走换号模式，更换应用走同账号模式', async ({ page }) => {
+test('绑定飞书、更换应用与重新绑定是三个独立入口和二维码', async ({ page }) => {
   let registrationFlow = null;
+  let serial = 0;
   const registrationPosts = [];
   const boundState = {
     bound: true,
@@ -27,11 +28,12 @@ test('重新绑定走换号模式，更换应用走同账号模式', async ({ pa
     if (route.request().method() === 'POST') {
       const body = route.request().postDataJSON();
       registrationPosts.push(body);
+      serial++;
       registrationFlow = {
-        flowId: '22222222-2222-4222-8222-222222222222',
+        flowId: `${serial}`.repeat(8) + '-2222-4222-8222-222222222222',
         status: 'awaiting_scan',
         updatingApp: false,
-        authorizationUrl: 'https://open.feishu.cn/page/cli?user_code=fixture',
+        authorizationUrl: `https://open.feishu.cn/page/cli?user_code=fixture-${serial}`,
         expiresAt: future(),
       };
       return route.fulfill({ json: registrationFlow });
@@ -40,21 +42,35 @@ test('重新绑定走换号模式，更换应用走同账号模式', async ({ pa
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: '重新绑定', exact: true }).click();
-  const dialog = page.getByRole('dialog');
-  await expect(dialog).toContainText('已绑定飞书：原飞书账号');
-  await dialog.getByRole('button', { name: '重新绑定', exact: true }).click();
+  const entryActions = page.getByRole('main').locator('.industry-top');
+  await expect(entryActions.getByRole('button', { name: '绑定飞书', exact: true })).toBeVisible();
+  await expect(entryActions.getByRole('button', { name: '更换应用', exact: true })).toBeVisible();
+  await expect(entryActions.getByRole('button', { name: '重新绑定', exact: true })).toBeVisible();
+  await entryActions.getByRole('button', { name: '重新绑定', exact: true }).click();
   await expect.poll(() => registrationPosts.length).toBe(1);
   expect(registrationPosts[0]).toEqual({ refresh: false, replaceApp: true, accountRebind: true });
   await expect(page.getByRole('heading', { name: '重新绑定飞书账号并应用', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: '打开飞书重新绑定页面' })).toBeVisible();
+  const rebindQr = await page.getByRole('img', { name: '飞书重新绑定与应用绑定二维码' }).getAttribute('src');
   await page.screenshot({ path: 'artifacts/feishu-account-rebind.png', fullPage: true });
 
   await page.getByRole('button', { name: '取消', exact: true }).click();
-  await page.getByRole('button', { name: '更换应用', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '绑定飞书', exact: true }).click();
   await expect.poll(() => registrationPosts.length).toBe(2);
   expect(registrationPosts[1]).toEqual({ refresh: false, replaceApp: true, accountRebind: false });
+  await expect(page.getByRole('heading', { name: '扫码登录并绑定应用', exact: true })).toBeVisible();
+  const bindQr = await page.getByRole('img', { name: '飞书账号登录与应用绑定二维码' }).getAttribute('src');
+  expect(bindQr).not.toBe(rebindQr);
+  await page.screenshot({ path: 'artifacts/feishu-bind-qr.png', fullPage: true });
+
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '更换应用', exact: true }).click();
+  await expect.poll(() => registrationPosts.length).toBe(3);
+  expect(registrationPosts[2]).toEqual({ refresh: false, replaceApp: true, accountRebind: false });
   await expect(page.getByRole('heading', { name: '更换飞书应用', exact: true })).toBeVisible();
+  const replaceQr = await page.getByRole('img', { name: '飞书更换应用二维码' }).getAttribute('src');
+  expect(replaceQr).not.toBe(bindQr);
+  expect(replaceQr).not.toBe(rebindQr);
   await page.screenshot({ path: 'artifacts/feishu-app-replace.png', fullPage: true });
 });
 
@@ -108,7 +124,6 @@ test('应用登记完成后立即发起个人授权，不退回到旧状态错�
 
   await page.goto('/');
   await page.getByRole('button', { name: '重新绑定', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: '重新绑定', exact: true }).click();
   await expect(page.getByRole('img', { name: '飞书重新绑定与应用绑定二维码' })).toBeVisible();
 
   registrationCompleted = true;
@@ -144,7 +159,7 @@ test('已有有效授权二维码时重新打开只恢复流程，不重复发�
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: '绑定飞书', exact: true }).click();
+  await page.getByRole('button', { name: '更新全量信息库', exact: true }).first().click();
   await expect(page.getByRole('img', { name: '绑定飞书授权二维码' })).toBeVisible();
   await page.waitForTimeout(1500);
   expect(posts).toEqual([]);
@@ -185,7 +200,7 @@ test('插件内提供仅供当前profile使用的Bearer兼容登录', async ({ p
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: '绑定飞书', exact: true }).click();
+  await page.getByRole('button', { name: '更新全量信息库', exact: true }).first().click();
   await expect(page.getByRole('button', { name: '使用兼容登录修复', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: '使用兼容登录修复', exact: true }).click();
   await expect.poll(() => posts.some(body => body.compatibility === true)).toBe(true);
