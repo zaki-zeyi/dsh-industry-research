@@ -3,7 +3,7 @@
 插件包名 `dsh-industry-research`，页签名「行研工作台」。
 
 1. `npm ci` 安装依赖，`npm run acceptance` 验收，`npm run plugin:pack` 打包。
-2. 解压 `artifacts/dsh-industry-research-0.7.0-desktop.zip`，在 DSH「添加插件」填写解压后包含 package.json 的目录。安装后保留该目录。
+2. 解压 `artifacts/dsh-industry-research-0.7.1-desktop.zip`，在 DSH「添加插件」填写解压后包含 package.json 的目录。安装后保留该目录。
 3. 安装并启用，按宿主提示重新加载。macOS / Windows 支持 x64、arm64；Windows 建议使用较短路径。
 4. 网页版通过 `dsh plugin --profile <你的profile> add <tgz绝对路径>` 安装；使用配置好的 DSH 网页宿主运行。
 5. 宿主需有模型和检索工具；其运行环境需安装 Lark CLI。

@@ -60,9 +60,9 @@ npm run plugin:pack
 
 运行 `npm run plugin:pack` 后生成：
 
-- `artifacts/dsh-industry-research-0.7.0-desktop.zip`
-- `artifacts/dsh-industry-research-0.7.0.tgz`
-- `artifacts/dsh-industry-research-0.7.0/` 可直接安装目录
+- `artifacts/dsh-industry-research-0.7.1-desktop.zip`
+- `artifacts/dsh-industry-research-0.7.1.tgz`
+- `artifacts/dsh-industry-research-0.7.1/` 可直接安装目录
 
 在 DSH 桌面版「添加插件」中填写上述解压目录的绝对路径，按宿主提示启用或重新加载。Windows 和 macOS 使用同一个 ZIP；网页版可以使用 DSH CLI 安装 tgz。详见 [安装说明](docs/plugin-install.md)。
 
