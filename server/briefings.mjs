@@ -48,6 +48,16 @@ export function scheduleTiming(plan, now = Date.now()) {
   if (next <= now) next += (plan.kind === 'weekly' ? 7 : 1) * 86400000;
   return { nextRunAt: new Date(next).toISOString(), todayTimePassed };
 }
+export function previousScheduleRun(plan, now = Date.now()) {
+  const [hour, minute] = plan.time.split(':').map(Number);
+  const shanghai = new Date(now + 8 * 3600000);
+  const currentWeekday = shanghai.getUTCDay();
+  const targetWeekday = plan.weekday === 7 ? 0 : plan.weekday;
+  let daysBack = plan.kind === 'weekly' ? (currentWeekday - targetWeekday + 7) % 7 : 0;
+  let previous = Date.UTC(shanghai.getUTCFullYear(), shanghai.getUTCMonth(), shanghai.getUTCDate() - daysBack, hour - 8, minute);
+  if (previous > now) previous -= (plan.kind === 'weekly' ? 7 : 1) * 86400000;
+  return new Date(previous).toISOString();
+}
 export class BriefingSchedules {
   constructor(service, host, url) { this.service=service;this.host=host;this.chain=Promise.resolve();this.endpointFile=service.nativeSessions?resolve(service.nativeSessions.workRoot,'briefing-endpoint.json'):null;if(this.endpointFile){mkdirSync(service.nativeSessions.workRoot,{recursive:true});writeFileSync(this.endpointFile,JSON.stringify({url}));} }
   get(kind) {
@@ -70,12 +80,43 @@ export class BriefingSchedules {
     if(sessionId&&v.enabled)await this.service.nativeSessions.bindSession(sessionId);
     const persist=()=>this.service.store.saveSetting('briefing-schedule',{...old,sessionId,plans,records});
     if(records[v.kind]){await this.host.schedule.delete({sessionId,id:records[v.kind].id});delete records[v.kind];}
+    const previousPlan=plans[v.kind];
+    const activationChanged=!previousPlan?.activatedAt||previousPlan.time!==v.time||previousPlan.weekday!==v.weekday||(!previousPlan.enabled&&v.enabled);
     plans[v.kind]={...v,enabled:false};persist();
     if(v.enabled){
       const prompt=`使用终端 Node.js 读取 ${this.endpointFile} 的 url 字段，向该 url 加 /api/briefings/trigger/${v.kind} 发起 POST，Content-Type application/json，body {}。这会创建独立调研会话。不要自行调研。失败在此会话说明原因；成功后保持安静，报告会话及飞书机器人通知用户。`;
       records[v.kind]=await this.host.schedule.create(sessionId,{title:'行研'+labelFor(v.kind),prompt,[v.kind]:{time:v.time+':00',time_zone:'Asia/Shanghai',...(v.kind==='weekly'?{weekdays:[v.weekday]}:{})}});
     }
-    plans[v.kind]=v;persist();return this.get(v.kind);
+    plans[v.kind]={...v,...(v.enabled?{activatedAt:activationChanged?new Date().toISOString():previousPlan.activatedAt}:{})};persist();return this.get(v.kind);
   }
-  async trigger(kind){const s=this.get(kind);if(!s.enabled)throw Object.assign(new Error('定时任务未启用'),{status:409});const date=new Date(Date.now()+8*3600000).toISOString().slice(0,10);const key=`briefing:${kind}:${date}`;const prior=this.service.store.request(key);if(prior)return this.service.require(prior.task_id);return this.service.createAuthorized(briefingTask({...s.research,kind}),key);}
+  async trigger(kind,{scheduledFor=Date.now()}={}){const s=this.get(kind);if(!s.enabled)throw Object.assign(new Error('定时任务未启用'),{status:409});const when=scheduledFor instanceof Date?scheduledFor:new Date(scheduledFor);const date=new Date(when.getTime()+8*3600000).toISOString().slice(0,10);const key=`briefing:${kind}:${date}`;const prior=this.service.store.request(key);if(prior)return this.service.require(prior.task_id);return this.service.createAuthorized(briefingTask({...s.research,kind},when),key);}
+  async catchUpMissed(now = Date.now()) {
+    const saved=this.service.store.setting('briefing-schedule');if(!saved)return [];
+    const plans={...saved.plans};
+    let migrated=false;
+    for(const kind of ['daily','weekly']){
+      const plan=plans[kind];if(!plan?.enabled)continue;
+      if(!plan.activatedAt){plans[kind]={...plan,activatedAt:new Date(now).toISOString()};migrated=true;}
+    }
+    if(migrated)this.service.store.saveSetting('briefing-schedule',{...saved,plans});
+    const created=[];
+    for(const kind of ['daily','weekly']){
+      const plan=plans[kind];if(!plan?.enabled)continue;
+      const slot=previousScheduleRun(plan,now);
+      if(Date.parse(plan.activatedAt)>Date.parse(slot))continue;
+      const date=new Date(Date.parse(slot)+8*3600000).toISOString().slice(0,10);
+      if(this.service.store.request(`briefing:${kind}:${date}`))continue;
+      try{
+        created.push(await this.trigger(kind,{scheduledFor:Date.parse(slot)}));
+        const latest=this.service.store.setting('briefing-schedule')??{};
+        if(latest.catchUpErrors?.[kind]){delete latest.catchUpErrors[kind];this.service.store.saveSetting('briefing-schedule',latest);}
+      }
+      catch(error){
+        const current=this.service.store.setting('briefing-schedule')??{};
+        current.catchUpErrors={...(current.catchUpErrors??{}),[kind]:{slot,error:String(error?.message??error).slice(0,500),attemptedAt:new Date().toISOString()}};
+        this.service.store.saveSetting('briefing-schedule',current);
+      }
+    }
+    return created;
+  }
 }

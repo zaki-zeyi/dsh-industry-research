@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync,readFileSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {resolve} from 'node:path';
-import {reportWindow,briefingTask,BriefingSchedules,scheduleTiming} from '../server/briefings.mjs';
+import {reportWindow,briefingTask,BriefingSchedules,scheduleTiming,previousScheduleRun} from '../server/briefings.mjs';
 import {startRuntime} from '../server/runtime.mjs';
 import {mockHost} from './fixtures/fake-native-host.mjs';
 import {until} from './helpers.mjs';
@@ -22,6 +22,11 @@ test('FR02 定时任务显示下一次执行；当天时间已过时不补跑',(
  assert.deepEqual(scheduleTiming({kind:'daily',time:'09:00',weekday:5},before),{nextRunAt:'2026-11-04T01:00:00.000Z',todayTimePassed:false});
  assert.deepEqual(scheduleTiming({kind:'daily',time:'09:00',weekday:5},after),{nextRunAt:'2026-11-05T01:00:00.000Z',todayTimePassed:true});
  assert.deepEqual(scheduleTiming({kind:'weekly',time:'09:00',weekday:5},Date.parse('2026-11-06T01:30:00Z')),{nextRunAt:'2026-11-13T01:00:00.000Z',todayTimePassed:true});
+});
+test('PRD1687 最近一次定时时间计算按北京时间日报和每周周报',()=>{
+ assert.equal(previousScheduleRun({kind:'daily',time:'09:00',weekday:5},Date.parse('2026-11-04T01:30:00Z')),'2026-11-04T01:00:00.000Z');
+ assert.equal(previousScheduleRun({kind:'weekly',time:'09:00',weekday:5},Date.parse('2026-11-06T01:30:00Z')),'2026-11-06T01:00:00.000Z');
+ assert.equal(previousScheduleRun({kind:'weekly',time:'09:00',weekday:5},Date.parse('2026-11-08T01:30:00Z')),'2026-11-06T01:00:00.000Z');
 });
 async function setup(updated=false,receiptExtras={}){
  const dir=mkdtempSync(resolve(tmpdir(),'briefings-')),host=mockHost();const records=new Map();
@@ -81,6 +86,22 @@ test('最新PRD 机器人按任务绑定身份通知，无更新/报告链接，
  await f.service.notifications.send(t.id);assert.equal(f.messages.length,1);assert.equal(f.service.require(t.id).runs.length,1);
  }finally{await f.close();}
  const f2=await setup(true);try{const t=await f2.service.createAuthorized(briefingTask(input));await until(()=>f2.service.require(t.id).notification?.status==='sent');assert.ok(f2.messages[0].args.some(a=>a.includes('https://example.feishu.cn/docx/Report123')));}finally{await f2.close();}
+});
+
+test('PRD1687 DSH服务重启错过定时时间后补发一次，已有任务和配置生效前时段不重复触发',async()=>{
+ const f=await setup();try{
+  const schedules=f.service.briefingSchedules;
+  const research={companies:['后摩智能'],dimensions:['融资'],sources:['公司官网'],requirements:''};
+  await schedules.save({kind:'daily',time:'09:00',enabled:true,research});
+  const saved=f.service.store.setting('briefing-schedule');
+  saved.plans.daily.activatedAt='2026-11-03T00:00:00.000Z';f.service.store.saveSetting('briefing-schedule',saved);
+  const first=await schedules.catchUpMissed(Date.parse('2026-11-04T01:30:00Z'));
+  assert.equal(first.length,1);assert.equal(first[0].briefing.kind,'daily');
+  assert.equal(f.service.require(first[0].id).briefing.window.end,'2026-11-03T16:00:00.000Z');
+  const again=await schedules.catchUpMissed(Date.parse('2026-11-04T01:40:00Z'));assert.equal(again.length,0);
+  const late=f.service.store.setting('briefing-schedule');late.plans.daily.activatedAt='2026-11-04T01:20:00.000Z';f.service.store.saveSetting('briefing-schedule',late);
+  const beforeActivation=await schedules.catchUpMissed(Date.parse('2026-11-04T01:30:00Z'));assert.equal(beforeActivation.length,0);
+ }finally{await f.close();}
 });
 
 test('通知拒绝在绑定账号切换后发送，不回退其他用户',async()=>{const f=await setup();try{f.service.binding.json=async()=>({appId:'cli_other',identities:{user:{available:true,openId:'ou_other'}}});const t=await f.service.createAuthorized(briefingTask(input));await until(()=>f.service.require(t.id).notification?.status==='failed');assert.equal(f.messages.length,0);assert.equal(f.service.require(t.id).status,'ready');}finally{await f.close();}});

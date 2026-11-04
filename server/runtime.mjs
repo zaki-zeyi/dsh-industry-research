@@ -55,6 +55,7 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     service.internalNotifications = new InternalMaterialNotifications(service);
     if (nativeSessions) await nativeSessions.reconcileWorkspace();
     service.recover();
+    if (service.briefingSchedules) void service.briefingSchedules.catchUpMissed().catch(() => {});
 
     server.on('request', createApp(service, { dist, libraryRun, health: { application: 'industry-research', dataIdentity: dataIdentity(dataDir), transport: researcher.transport ?? 'json' } }));
     terminalSockets = attachTerminalWebSocket(server, terminals);
