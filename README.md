@@ -1,6 +1,6 @@
 # dsh-industry-research · 行研工作台
 
-基于飞书《行研平台prd轻量化》修订版 1872 实现的 DeepSeek Harness 插件。复用本机既有调研工作台的宿主适配与授权代码，在独立命名空间内提供公司全量信息库。
+基于飞书《行研平台prd轻量化》修订版 1896 实现的 DeepSeek Harness 插件。复用本机既有调研工作台的宿主适配与授权代码，在独立命名空间内提供公司全量信息库。
 
 - 默认 17 家公司、5 个维度、16 个信源，支持全网查询与自定义；新增维度和信源持久保存。
 - 编辑任务 Prompt，绑定飞书后启动 DSH 标准模式原生会话；所有任务共享插件工作区。
@@ -76,4 +76,4 @@ https://github.com/zaki-zeyi/dsh-industry-research
 
 自动测试验证配置持久化、宿主会话、交付回执、索引、错误恢复与界面交互。真实扫码授权、企业审批、付费信源可访问性和实际调研内容质量需要真实环境验收。Agent 声称完成时须交付每家公司的真实文档链接；平台校验回执结构及链接稳定性，不逐条审计远端事实。增量去重和文档内高亮由 Agent 执行。
 
-[PRD 快照](docs/prd-lightweight-1872.md) · [架构](docs/architecture.md) · [飞书授权自动恢复](docs/feishu-auth-recovery.md) · [验收记录](docs/acceptance-report.md)
+[PRD 快照](docs/prd-lightweight-1896.md) · [架构](docs/architecture.md) · [飞书授权自动恢复](docs/feishu-auth-recovery.md) · [验收记录](docs/acceptance-report.md)
