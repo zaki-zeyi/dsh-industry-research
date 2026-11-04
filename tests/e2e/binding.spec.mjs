@@ -103,6 +103,36 @@ test('未绑定时入口只提供绑定飞书，并生成初始绑定二维码',
   await expect(page.getByRole('img', { name: '飞书账号登录与应用绑定二维码' })).toBeVisible();
 });
 
+test('应用登记轮询短暂失败后，新状态到达会清除旧错误提示', async ({ page }) => {
+  let polls = 0;
+  const awaiting = {
+    flowId: '77777777-7777-4777-8777-777777777777',
+    status: 'awaiting_scan',
+    updatingApp: false,
+    authorizationUrl: 'https://open.feishu.cn/page/cli?user_code=retry',
+    expiresAt: future(),
+  };
+  await page.route('**/api/feishu-binding**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.includes('/qr/')) return route.fulfill({ status: 200, contentType: 'image/png', body: png });
+    return route.fulfill({ json: { bound: false, available: true, appId: 'cli_pollretry123', appName: '重试测试应用' } });
+  });
+  await page.route('**/api/feishu-registration**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.includes('/qr/')) return route.fulfill({ status: 200, contentType: 'image/png', body: png });
+    if (route.request().method() === 'POST') return route.fulfill({ json: awaiting });
+    polls++;
+    if (polls === 1) return route.fulfill({ status: 503, json: { error: '轮询暂时失败' } });
+    return route.fulfill({ json: awaiting });
+  });
+
+  await page.goto('/');
+  await page.getByRole('main').locator('.industry-top').getByRole('button', { name: '绑定飞书', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('轮询暂时失败');
+  await expect(page.getByRole('alert')).toHaveCount(0, { timeout: 5000 });
+  await expect(page.getByRole('img', { name: '飞书账号登录与应用绑定二维码' })).toBeVisible();
+});
+
 test('应用登记完成后立即发起个人授权，不退回到旧状态错误', async ({ page }) => {
   let registrationCompleted = false;
   let bindingMode = 'bound';

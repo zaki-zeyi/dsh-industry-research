@@ -4,13 +4,14 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { ServiceError } from './service.mjs';
 import { larkRecoveryForError } from './lark-health.mjs';
+import { registerFeishuApp } from './feishu-register-app.mjs';
 
 export function registrationUrl(value) {
   try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && !u.port && ['open.feishu.cn', 'open.larksuite.com'].includes(u.hostname) && ['/page/cli', '/page/launcher'].includes(u.pathname) && Boolean(u.searchParams.get('user_code')); } catch { return false; }
 }
 const active = flow => flow && ['initializing', 'awaiting_scan', 'saving'].includes(flow.status);
 export class FeishuRegistration {
-  constructor(binding, registerApp = async options => (await import('@larksuiteoapi/node-sdk')).registerApp(options)) { this.binding = binding; this.registerApp = registerApp; }
+  constructor(binding, registerApp = registerFeishuApp) { this.binding = binding; this.registerApp = registerApp; }
   get busy() { return Boolean(active(this.flow)); }
   snapshot() {
     const f = this.flow; if (!f) return { status: 'idle' };
@@ -123,6 +124,7 @@ export class FeishuRegistration {
       f.recovery = error?.code === 'access_denied'
         ? { code: 'LARK_APP_AUTHORIZATION_DENIED', action: 'register_app', automatic: false, message: '已取消应用授权，可重新扫码；原绑定仍保留。' }
         : larkRecoveryForError(error);
+      f.failureCode ??= f.recovery.code;
       f.error = f.recovery.message;
     } finally { clearTimeout(f.timer); }
   }

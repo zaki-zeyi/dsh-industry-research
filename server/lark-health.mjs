@@ -73,6 +73,7 @@ function errorText(error) {
   return [
     error?.code,
     error?.message,
+    error?.description,
     error?.stderr,
     error?.stdout,
     error?.cause?.code,
@@ -155,6 +156,6 @@ export function larkRecoveryForError(error) {
     'LARK_AUTHORIZATION_PENDING',
     'authorize',
     false,
-    '尚未确认飞书授权，或授权服务暂时不可用；扫描最新二维码后可再次检查。',
+    '飞书网页可能已完成配置，但本地尚未收到最终应用凭据。原绑定已保留；请检查网络后重新获取二维码并扫码确认。',
   );
 }
