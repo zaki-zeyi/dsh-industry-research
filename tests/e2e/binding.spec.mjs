@@ -284,3 +284,16 @@ test('凭据保存失败可在原流程重试，无需再获取扫码二维码',
  await page.getByRole('button',{name:'重试保存，无需扫码',exact:true}).click();
  await expect.poll(()=>saves).toBe(1);await expect(page.getByRole('dialog')).toContainText('已绑定飞书：原飞书账号');expect(registrations).toBe(1);
 });
+
+
+test('更换应用前先补充原账号身份授权，通过后才生成应用选择二维码',async({page})=>{
+ let reads=0,identityReady=false,registrationPosts=0;
+ const bound={bound:true,available:true,appId:'cli_old123',appName:'旧应用',userName:'原账号'};
+ const auth={bound:false,available:true,appId:'cli_old123',flowId:'66666666-6666-4666-8666-666666666666',authorizationUrl:'https://accounts.feishu.cn/device?code=fixture',expiresAt:new Date(Date.now()+600000).toISOString(),autoCompleting:true};
+ await page.route('**/api/feishu-binding',route=>{if(route.request().method()==='POST')return route.fulfill({json:auth});reads++;return route.fulfill({json:reads===1||identityReady?bound:{...auth,recovery:{code:'LARK_SCOPE_MISSING',action:'authorize',automatic:true,message:'请补充账号身份权限'}}});});
+ await page.route('**/api/feishu-binding/qr/*',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGQAAAABJRU5ErkJggg==','base64')}));
+ await page.route('**/api/feishu-registration',route=>{if(route.request().method()==='POST')registrationPosts++;return route.fulfill({json:{status:'failed',flowId:'55555555-5555-4555-8555-555555555555',error:'应用选择测试',expiresAt:new Date(Date.now()+600000).toISOString()}});});
+ await page.goto('/');await page.getByRole('button',{name:'更换应用',exact:true}).click();
+ await expect(page.getByRole('img',{name:'绑定飞书授权二维码'})).toBeVisible();expect(registrationPosts).toBe(0);
+ identityReady=true;await expect.poll(()=>registrationPosts).toBe(1);await expect(page.getByRole('heading',{name:'更换飞书应用',exact:true})).toBeVisible();
+});

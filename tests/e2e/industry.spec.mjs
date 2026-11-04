@@ -85,3 +85,10 @@ test('PRD1622 网页无宿主路径桥接时提示，不复制文件，网络来
  await d.getByRole('button',{name:'选择本地文件'}).click();await expect(d.getByRole('alert')).toContainText('DSH 桌面版');await expect(d.getByRole('button',{name:'启动',exact:true})).toBeDisabled();
  await d.getByLabel('网络链接').check();await d.getByLabel('网络资料链接').fill('https://example.com/another.mp4');await expect(d.getByRole('button',{name:'启动',exact:true})).toBeEnabled();await d.getByRole('button',{name:'关闭内部资料解析'}).click();
 });
+
+
+test('PRD1957 平台日志显示所选应用与账号校验失败事件',async({page})=>{
+ await page.route('**/api/runtime-logs?*',route=>route.fulfill({json:{items:[{seq:1,at:'2026-11-04T09:00:00.000Z',level:'error',event:'feishu.application.validation_failed',details:{targetAppId:'cli_new123',previousAppId:'cli_old123',code:'LARK_STABLE_IDENTITY_REQUIRED'}}]}}));
+ await page.goto('/');await page.getByRole('button',{name:'平台日志',exact:true}).click();await expect(page.getByRole('heading',{name:'平台日志',exact:true})).toBeVisible();
+ await expect(page.getByText('所选应用已保留，账号校验未完成')).toBeVisible();await expect(page.locator('.runtime-log-row')).toContainText('cli_new123');
+});

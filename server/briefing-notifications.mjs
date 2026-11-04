@@ -24,7 +24,9 @@ export class BriefingNotifications {
       if(response.ok!==true)throw Object.assign(new Error('unconfirmed notification'), { stderr: JSON.stringify(response) });
       const messageId=response.data?.message_id??response.message_id;
       t.notification={...t.notification,status:'sent',sentAt:new Date().toISOString(),...(messageId?{messageId:String(messageId)}:{})};s.save(t);
+      s.store?.runtimeLog?.('feishu.notification.sent',{taskId:t.id,appId:application.appId});
     } catch (error) {
+      s.store?.runtimeLog?.('feishu.notification.failed',{taskId:t.id,appId:(t.notificationApp??t.feishuApp)?.appId},'error');
       const failure = notificationFailure(error);
       t.notification={...t.notification,status:'failed',error:failure.message,diagnostic:failure.diagnostic};s.save(t);
     }

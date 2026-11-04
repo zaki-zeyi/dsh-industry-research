@@ -40,7 +40,9 @@ export class InternalMaterialNotifications {
       const messageId = response.data?.message_id ?? response.message_id;
       task.notification = { ...task.notification, status: 'sent', sentAt: new Date().toISOString(), ...(messageId ? { messageId: String(messageId) } : {}) };
       service.save(task);
+      service.store?.runtimeLog?.('feishu.notification.sent',{taskId:task.id,appId:application.appId});
     } catch (error) {
+      service.store?.runtimeLog?.('feishu.notification.failed',{taskId:task.id,appId:(task.notificationApp??task.feishuApp)?.appId},'error');
       const failure = notificationFailure(error);
       task.notification = {
         ...task.notification,

@@ -42,7 +42,7 @@ test('PRD1907 过期授权需重新发起，不接受非官方URL与假二维码
 });
 
 test('PRD1872 申请平台所需全部生态权限，但不申请目录读取/搜索权限', async () => {
-  const writeScopes = 'auth:user.id:read docx:document:create docx:document:write_only docx:document:readonly docs:document:import docs:document.media:upload docs:document.media:download drive:drive.metadata:readonly drive:file:upload drive:file:download space:folder:create offline_access';
+  const writeScopes = 'auth:user.id:read contact:user.basic_profile:readonly docx:document:create docx:document:write_only docx:document:readonly docs:document:import docs:document.media:upload docs:document.media:download drive:drive.metadata:readonly drive:file:upload drive:file:download space:folder:create offline_access';
   assert.ok(!requiredScopes.includes('space:document:retrieve')); assert.ok(!requiredScopes.includes('search:docs:read'));
   for (const scope of ['docs:document.media:upload','docs:document.media:download','drive:file:upload','drive:file:download']) assert.ok(requiredScopes.includes(scope));
   const loggedIn = new FeishuBinding({ run: async () => status(true, writeScopes) });

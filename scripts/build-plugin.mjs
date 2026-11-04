@@ -68,6 +68,6 @@ try {
   const zipSha256 = createHash('sha256').update(readFileSync(resolve(root, 'artifacts', zipFilename))).digest('hex');
   writeFileSync(resolve(root, 'artifacts', `${zipFilename}.sha256`), `${zipSha256}  ${zipFilename}\n`);
   writeFileSync(resolve(root, 'artifacts', 'desktop-install-path.txt'), `${directoryPath}\n`);
-  writeFileSync(resolve(root, 'artifacts/plugin-release.json'), JSON.stringify({ name: manifest.name, version: manifest.version, filename: packed.filename, size: packed.size, sha256, bundled: packed.bundled, prdRevision: 1917, prdSnapshot: 'docs/prd-update-1917.md', targets: ['win32-x64', 'win32-arm64', 'darwin-x64', 'darwin-arm64'], directory, zipFilename, zipSha256 }, null, 2));
+  writeFileSync(resolve(root, 'artifacts/plugin-release.json'), JSON.stringify({ name: manifest.name, version: manifest.version, filename: packed.filename, size: packed.size, sha256, bundled: packed.bundled, prdRevision: 1957, prdSnapshot: 'docs/prd-update-1957.md', targets: ['win32-x64', 'win32-arm64', 'darwin-x64', 'darwin-arm64'], directory, zipFilename, zipSha256 }, null, 2));
   console.log(`桌面弹窗填写：${directoryPath}\n桌面解压包：${zipFilename}\n安装包：${archive}\nSHA256：${sha256}`);
 } finally { rmSync(stage, { recursive: true, force: true }); }

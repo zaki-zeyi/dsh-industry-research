@@ -21,6 +21,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     next();
   });
   app.use(express.json({ limit: '32kb' }));
+  app.get('/api/runtime-logs', (req, res, next) => { try { const query = z.object({limit:z.coerce.number().int().min(1).max(200).optional(),before:z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()}).parse(req.query); res.setHeader('Cache-Control','no-store'); res.json({items:service.store.runtimeLogs(query)}); } catch(e) { next(e); } });
   app.get('/api/industry/preferences', (_req, res) => res.json(preferences(service.store)));
   app.put('/api/industry/preferences', (req, res, next) => { try { res.json(service.store.saveSetting('industry-preferences', preferencesSchema.parse(req.body))); } catch (e) { next(e); } });
   app.get('/api/industry/library', async (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); const root = service.feishuSettings(), app = service.binding?.applicationSnapshot?.(); res.json(req.query.refresh === 'true' ? await refreshLibrary(service.store, root, app, libraryRun, { command: service.binding?.command }) : library(service.store, root, app)); } catch (e) { next(libraryReadError(e)); } });
