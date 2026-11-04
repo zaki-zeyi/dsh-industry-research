@@ -5,7 +5,8 @@ import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startRuntime } from '../server/runtime.mjs';
 import { analysisInputSchema, analysisKey, analysisLibrary, analysisTaskInput, mergeAnalysisDelivery, parseAnalysisManifest, refreshAnalysisLibrary } from '../server/analysis.mjs';
-import { analysisDefaultPrompt } from '../server/analysis-defaults.mjs';
+import { analysisDefaultPrompt, cleanAnalysisTitle } from '../server/analysis-defaults.mjs';
+import { analysisReportSchema } from '../server/agent-delivery.mjs';
 import { libraryKey } from '../server/industry.mjs';
 import { mockHost } from './fixtures/fake-native-host.mjs';
 import { until } from './helpers.mjs';
@@ -155,4 +156,15 @@ test('AC-AN-05 报告索引、维度、资料不足与文档链接必须完整�
   assert.throws(() => mergeAnalysisDelivery(store, task, { ...delivery, report: { ...report, insufficient: ['未选择公司'] } }), /资料不足公司必须属于本次选择范围/);
   assert.equal(mergeAnalysisDelivery(store, task, delivery).url, report.url);
   assert.equal(analysisLibrary(store, task.feishuRoot, task.feishuApp).manifestUrl, delivery.analysisManifestUrl);
+});
+
+test('AC-AN-06 报告标题不展示内部任务 UUID', () => {
+  const id = '82f1ca04-7b3b-477f-80de-ee1a33d51f8d';
+  const clean = '友商分析 · 光羽芯辰 × 后摩智能 × 芯动力科技';
+  assert.equal(cleanAnalysisTitle(`${clean} · ${id}`), clean);
+  assert.equal(cleanAnalysisTitle(`${clean} - ${id.toUpperCase()}`), clean);
+  assert.equal(cleanAnalysisTitle(`${clean}（${id}）`), clean);
+  assert.equal(cleanAnalysisTitle(clean), clean);
+  const parsed = analysisReportSchema.parse({ title: `${clean} · ${id}`, url: url('TitleReport'), companies: ['后摩智能', '光羽芯辰'], dimensions: ['技术路线'], updatedAt: '2026-11-03T18:00:00+08:00', insufficient: [] });
+  assert.equal(parsed.title, clean);
 });

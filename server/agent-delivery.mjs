@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { folderTokenSchema } from './feishu-folder.mjs';
+import { cleanAnalysisTitle } from './analysis-defaults.mjs';
 
 const feishuUrl = (value, auth = false) => {
   try {
@@ -12,7 +13,7 @@ const feishuUrl = (value, auth = false) => {
 export const companyReceiptSchema = z.object({ name: z.string().trim().min(1).max(120), url: z.string().max(2000).refine(v => feishuUrl(v), '必须是飞书文档链接'), updatedAt: z.string().datetime({ offset: true }).transform(v => new Date(v).toISOString()).optional(), dimensions: z.array(z.string().min(1).max(120)).max(60), conflicts: z.number().int().min(0).max(100000).default(0), added: z.number().int().min(0).max(100000).default(0) }).strict();
 const reportLabel = z.string().trim().min(1).max(120).refine(v => !/[\x00-\x1f\x7f]/.test(v), '名称不能包含控制字符');
 export const analysisReportSchema = z.object({
-  title: z.string().trim().min(1).max(200),
+  title: z.string().trim().min(1).max(200).transform(cleanAnalysisTitle),
   url: z.string().max(2000).refine(v => feishuUrl(v), '必须是飞书文档链接'),
   companies: z.array(reportLabel).min(2).max(60).transform(v => [...new Set(v)]),
   dimensions: z.array(reportLabel).min(1).max(60).transform(v => [...new Set(v)]),

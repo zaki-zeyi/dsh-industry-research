@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Library, History, Plus, Search, ArrowUpRight, RefreshCw, X, Sparkles, LoaderCircle, Folder, Building2, Check, AlertCircle, GitCompare } from 'lucide-react';
 import { DEFAULT_COMPANIES } from '../server/industry-defaults.mjs';
-import { analysisDefaultPrompt } from '../server/analysis-defaults.mjs';
+import { analysisDefaultPrompt, cleanAnalysisTitle } from '../server/analysis-defaults.mjs';
 import { hostOrigin } from './host-origin.mjs';
 import './industry.css';
 import './analysis.css';
@@ -24,7 +24,7 @@ export function IndustryApp({ BindingModal, RootModal, Conversation }) {
       const [c, l, r, t] = await Promise.all([api('/config'), api('/industry/library'), api('/analysis/reports'), api('/tasks?limit=100')]);
       setConfig(c);
       if ((!syncLock.current && revision === libraryRevision.current) || !hasLibraryResult.current) { hasLibraryResult.current = true; setCompanies(l.companies); setSyncedAt(l.syncedAt ?? null); }
-      if ((!reportSyncLock.current && reportVersion === reportRevision.current) || !hasReportResult.current) { hasReportResult.current = true; setReports(r.reports); setReportsSyncedAt(r.syncedAt ?? null); }
+      if ((!reportSyncLock.current && reportVersion === reportRevision.current) || !hasReportResult.current) { hasReportResult.current = true; setReports(r.reports.map(item => ({ ...item, title: cleanAnalysisTitle(item.title) }))); setReportsSyncedAt(r.syncedAt ?? null); }
       setTasks(old => [...t.items, ...old.filter(v => !t.items.some(n => n.id === v.id))]); setCursor(old => old ?? t.nextCursor);
     } catch (e) { setError(e.message); } finally { setLoading(false); }
   }
@@ -38,7 +38,7 @@ export function IndustryApp({ BindingModal, RootModal, Conversation }) {
   async function refreshReports() {
     if (reportSyncLock.current) return;
     reportSyncLock.current = true; reportRevision.current++; setRefreshing(true); setReportSyncError('');
-    try { const r = await api('/analysis/reports?refresh=true'); hasReportResult.current = true; setReports(r.reports); setReportsSyncedAt(r.syncedAt ?? null); }
+    try { const r = await api('/analysis/reports?refresh=true'); hasReportResult.current = true; setReports(r.reports.map(item => ({ ...item, title: cleanAnalysisTitle(item.title) }))); setReportsSyncedAt(r.syncedAt ?? null); }
     catch (e) { setReportSyncError(e.message); }
     finally { reportSyncLock.current = false; setRefreshing(false); }
   }

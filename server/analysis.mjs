@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { analysisReportSchema } from './agent-delivery.mjs';
-import { ANALYSIS_FOLDER_NAME, analysisDefaultPrompt } from './analysis-defaults.mjs';
+import { ANALYSIS_FOLDER_NAME, analysisDefaultPrompt, cleanAnalysisTitle } from './analysis-defaults.mjs';
 import { library } from './industry.mjs';
 import { LibraryRefreshError, libraryReadError } from './library-errors.mjs';
 
@@ -24,7 +24,8 @@ export function analysisKey(root, app) {
 }
 
 export function analysisLibrary(store, root, app) {
-  return store.setting(analysisKey(root, app)) ?? { reports: [], folderToken: null, manifestUrl: null, syncedAt: null };
+  const current = store.setting(analysisKey(root, app)) ?? { reports: [], folderToken: null, manifestUrl: null, syncedAt: null };
+  return { ...current, reports: (current.reports ?? []).map(report => ({ ...report, title: cleanAnalysisTitle(report.title) })) };
 }
 
 export function analysisTaskInput(input) {
