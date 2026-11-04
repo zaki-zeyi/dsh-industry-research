@@ -42,7 +42,7 @@ test('PRD1907 过期授权需重新发起，不接受非官方URL与假二维码
 });
 
 test('PRD1915 缺少目录读取/搜索权限仍可绑定，授权请求不申请这两项', async () => {
-  const writeScopes = 'docx:document:create docx:document:write_only docx:document:readonly docs:document:import drive:drive.metadata:readonly space:folder:create offline_access';
+  const writeScopes = 'auth:user.id:read docx:document:create docx:document:write_only docx:document:readonly docs:document:import drive:drive.metadata:readonly space:folder:create offline_access';
   assert.ok(!requiredScopes.includes('space:document:retrieve')); assert.ok(!requiredScopes.includes('search:docs:read'));
   const loggedIn = new FeishuBinding({ run: async () => status(true, writeScopes) });
   assert.equal((await loggedIn.requireBound()).bound, true); assert.equal((await loggedIn.start()).bound, true);
@@ -113,9 +113,10 @@ test('PRD1951 重新绑定生成失败不会注销原账号，确认中不允许
 
 test('PRD1990 二维码显示授权应用，确认固定使用发起时的profile且不创建应用', async () => {
  let selected={mode:'custom',appId:'cli_personal123',profile:'research-fixture'},bound=false;const calls=[];
- const binding=new FeishuBinding({store:{setting:()=>selected},run:async args=>{
+ const binding=new FeishuBinding({store:{setting:key=>key==='feishu-application'?selected:null},run:async args=>{
   calls.push(args);assert.deepEqual(args.slice(0,2),['--profile','research-fixture']);const cmd=args.slice(2);
   if(cmd[1]==='status')return {...status(bound),appId:'cli_personal123',identities:{...status(bound).identities,bot:{appName:'个人授权应用'}}};
+  if(cmd[0]==='contact')return {ok:true,data:{user:{union_id:'on_fixture'}}};
   if(cmd[1]==='qrcode'){writeFileSync(cmd.at(-1),png);return '';}
   if(cmd.includes('--device-code')){bound=true;return {success:true};}
   return {device_code:'private-code',verification_url:'https://accounts.feishu.cn/device?code=personal',expires_in:600};

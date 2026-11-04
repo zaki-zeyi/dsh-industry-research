@@ -9,6 +9,7 @@ export function larkRecoveryForStatus(result, { missingScopes = [], accountMisma
   const user = identities.user ?? {};
   const bot = identities.bot ?? {};
   const dpop = String(result?.dpopKeyStatus ?? '').toLowerCase();
+  const dpopMessage = `${user.message ?? ''}\n${user.hint ?? ''}`;
   const tokenStatus = String(user.tokenStatus ?? '').toLowerCase();
 
   if (!result?.appId || bot.status === 'not_configured') {
@@ -20,7 +21,7 @@ export function larkRecoveryForStatus(result, { missingScopes = [], accountMisma
     );
   }
 
-  if (dpop && !['available', 'ready', 'present'].includes(dpop)) {
+  if ((dpop && !['available', 'ready', 'present'].includes(dpop)) || /DPoP|KeyStore|Keychain|key unavailable|key inconsistent|0x80090016/i.test(dpopMessage)) {
     return recovery(
       'LARK_DPOP_KEY_UNAVAILABLE',
       'authorize',

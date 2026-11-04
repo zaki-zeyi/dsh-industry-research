@@ -57,3 +57,63 @@ test('更换账号走换号模式，更换应用走同账号模式', async ({ pa
   await expect(page.getByRole('heading', { name: '更换飞书应用', exact: true })).toBeVisible();
   await page.screenshot({ path: 'artifacts/feishu-app-replace.png', fullPage: true });
 });
+
+test('应用登记完成后立即发起个人授权，不退回到旧状态错误', async ({ page }) => {
+  let registrationCompleted = false;
+  let bindingMode = 'bound';
+  const bindingPosts = [];
+  const boundState = {
+    bound: true,
+    available: true,
+    appId: 'cli_fixture123',
+    appName: '测试行研应用',
+    userName: '原飞书账号',
+    notificationReady: true,
+  };
+  const authorizationState = {
+    bound: false,
+    available: true,
+    appId: 'cli_next123',
+    appName: '新行研应用',
+    flowId: '33333333-3333-4333-8333-333333333333',
+    authorizationUrl: 'https://accounts.feishu.cn/device?code=fixture',
+    expiresAt: future(),
+    autoCompleting: true,
+  };
+  const registrationFlow = {
+    flowId: '22222222-2222-4222-8222-222222222222',
+    status: 'awaiting_scan',
+    updatingApp: false,
+    authorizationUrl: 'https://open.feishu.cn/page/cli?user_code=fixture',
+    expiresAt: future(),
+  };
+
+  await page.route('**/api/feishu-binding**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.includes('/qr/')) return route.fulfill({ status: 200, contentType: 'image/png', body: png });
+    if (route.request().method() === 'POST' && url.pathname === '/api/feishu-binding') {
+      bindingPosts.push(route.request().postDataJSON());
+      bindingMode = 'authorizing';
+      return route.fulfill({ json: authorizationState });
+    }
+    return route.fulfill({ json: bindingMode === 'bound' ? boundState : authorizationState });
+  });
+
+  await page.route('**/api/feishu-registration**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.includes('/qr/')) return route.fulfill({ status: 200, contentType: 'image/png', body: png });
+    if (route.request().method() === 'POST') return route.fulfill({ json: registrationFlow });
+    return route.fulfill({ json: { ...registrationFlow, status: registrationCompleted ? 'completed' : 'awaiting_scan' } });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: '更换账号', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '更换账号', exact: true }).click();
+  await expect(page.getByRole('img', { name: '飞书更换账号与应用绑定二维码' })).toBeVisible();
+
+  registrationCompleted = true;
+  await expect.poll(() => bindingPosts.length).toBe(1);
+  expect(bindingPosts[0]).toEqual({ rebind: false, auto: true });
+  await expect(page.getByRole('img', { name: '绑定飞书授权二维码' })).toBeVisible();
+  await expect(page.getByRole('dialog')).toContainText('扫码后会自动完成授权并关闭窗口');
+});

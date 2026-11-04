@@ -9,7 +9,7 @@ import { agentDeliverySchema } from './agent-delivery.mjs';
 import { ServiceError } from './service.mjs';
 import { applicationSchema, cliFor } from './feishu-application.mjs';
 import { larkRecoveryForError, larkRecoveryForStatus } from './lark-health.mjs';
-export const requiredScopes = ['docx:document:create', 'docx:document:write_only', 'docx:document:readonly', 'docs:document:import', 'drive:drive.metadata:readonly', 'space:folder:create', 'offline_access'];
+export const requiredScopes = ['auth:user.id:read', 'docx:document:create', 'docx:document:write_only', 'docx:document:readonly', 'docs:document:import', 'drive:drive.metadata:readonly', 'space:folder:create', 'offline_access'];
 export const requiredTenantScopes = ['im:message:send_as_bot'];
 export class FeishuBinding {
   constructor({ command, run, store, registerApp } = {}) {
@@ -31,17 +31,97 @@ export class FeishuBinding {
   applicationSnapshot() {
     const application = this.store?.setting('feishu-application') ?? { mode: 'default' };
     const account = this.store?.setting?.('feishu-account');
-    if (!account || (application.appId && account.appId !== application.appId)) return application;
+    const accountMatches = account && (!application.appId || !account.appId || account.appId === application.appId);
+    if (!accountMatches) return application;
     return {
       ...application,
       ownerOpenId: application.ownerOpenId ?? account.openId,
       ...(!application.ownerName && account.userName ? { ownerName: account.userName } : {}),
     };
   }
+  pendingApplicationOperation() {
+    return this.store?.setting?.('feishu-pending-application') ?? null;
+  }
+  async stageApplication(application, mode = 'any') {
+    if (!['same', 'different', 'any'].includes(mode)) throw new Error('invalid binding account mode');
+    if (!this.store?.transaction || !this.store?.deleteSetting) throw new Error('binding storage unavailable');
+    const previousApplication = this.store.setting('feishu-application') ?? { mode: 'default' };
+    const previousAccount = this.store.setting('feishu-account');
+    const samePreviousAccount = previousAccount && (!previousApplication.appId || previousAccount.appId === previousApplication.appId);
+    const previousOpenId = samePreviousAccount ? previousAccount.openId : previousApplication.ownerOpenId;
+    let previousUnionId = samePreviousAccount ? previousAccount.unionId : previousApplication.ownerUnionId;
+    if (mode !== 'any' && !previousUnionId && previousOpenId) {
+      const previousState = await this.inspectStatus(previousApplication, { allowAccountChange: true });
+      if (previousState.bound) previousUnionId = (await this.withStableIdentity(previousState, previousApplication)).unionId;
+    }
+    const pending = {
+      mode,
+      ...(previousOpenId ? { previousOpenId } : {}),
+      ...(previousUnionId ? { previousUnionId } : {}),
+      previousApplication,
+      ...(previousAccount ? { previousAccount } : {}),
+      createdAt: new Date().toISOString(),
+    };
+    this.store.transaction(() => {
+      this.store.saveSetting('feishu-pending-application', pending);
+      this.store.saveSetting('feishu-application', application);
+      this.store.deleteSetting('feishu-account');
+    });
+    return pending;
+  }
+  clearPendingApplicationOperation() {
+    this.store?.deleteSetting?.('feishu-pending-application');
+  }
+  restorePendingApplicationOperation() {
+    const pending = this.pendingApplicationOperation();
+    if (!pending || !this.store?.transaction || !this.store?.deleteSetting) return false;
+    this.store.transaction(() => {
+      if (pending.previousApplication) this.store.saveSetting('feishu-application', pending.previousApplication);
+      else this.store.deleteSetting('feishu-application');
+      if (pending.previousAccount) this.store.saveSetting('feishu-account', pending.previousAccount);
+      else this.store.deleteSetting('feishu-account');
+      this.store.deleteSetting('feishu-pending-application');
+    });
+    return true;
+  }
+  commitPendingApplicationOperation(state) {
+    const pending = this.pendingApplicationOperation();
+    if (!pending) return;
+    const currentApplication = this.applicationSnapshot();
+    const sameApp = pending.previousApplication?.appId && pending.previousApplication.appId === currentApplication.appId;
+    const previousIdentity = pending.previousUnionId || (sameApp ? pending.previousOpenId : undefined);
+    const currentIdentity = state.unionId || (sameApp ? state.openId : undefined);
+    const sameAccount = previousIdentity && currentIdentity === previousIdentity;
+    const differentAccount = previousIdentity && currentIdentity !== previousIdentity;
+    if (pending.mode !== 'any' && (!previousIdentity || !currentIdentity)) {
+      this.restorePendingApplicationOperation();
+      const error = new ServiceError(409, '无法确认当前个人飞书账号的稳定身份，本次未切换应用或账号。请先恢复当前飞书授权后重试。');
+      error.code = 'LARK_STABLE_IDENTITY_REQUIRED';
+      error.recovery = { code: error.code, action: 'authorize', automatic: true, message: error.message };
+      throw error;
+    }
+    if (pending.mode === 'same' && previousIdentity && !sameAccount) {
+      this.restorePendingApplicationOperation();
+      const error = new ServiceError(409, '更换应用必须使用当前绑定的飞书账号。本次未切换应用，请使用当前账号重新扫码，或改用“更换账号”。');
+      error.code = 'LARK_REPLACE_APP_ACCOUNT_CHANGED';
+      error.recovery = { code: error.code, action: 'register_app', automatic: false, message: error.message };
+      throw error;
+    }
+    if (pending.mode === 'different' && previousIdentity && !differentAccount) {
+      this.restorePendingApplicationOperation();
+      const error = new ServiceError(409, '更换账号需要使用与原账号不同的飞书账号。本次未切换账号，请重新扫码或改用“更换应用”。');
+      error.code = 'LARK_REBIND_SAME_ACCOUNT';
+      error.recovery = { code: error.code, action: 'rebind_app', automatic: false, message: error.message };
+      throw error;
+    }
+    this.rememberVerifiedAccount(state, this.applicationSnapshot());
+    this.clearPendingApplicationOperation();
+  }
   rememberVerifiedAccount(state, application) {
     if (!state?.openId || !this.store?.saveSetting) return;
     const verified = {
       openId: state.openId,
+      ...(state.unionId ? { unionId: state.unionId } : {}),
       appId: state.appId ?? application.appId ?? '',
       userName: state.userName ?? '',
       verifiedAt: new Date().toISOString(),
@@ -49,7 +129,7 @@ export class FeishuBinding {
     this.store.saveSetting('feishu-account', verified);
     const current = this.store.setting('feishu-application');
     if (current?.mode === 'custom' && (!verified.appId || current.appId === verified.appId)) {
-      this.store.saveSetting('feishu-application', { ...current, ownerOpenId: state.openId });
+      this.store.saveSetting('feishu-application', { ...current, ownerOpenId: state.openId, ...(state.unionId ? { ownerUnionId: state.unionId } : {}) });
     }
   }
   async applicationInfo() {
@@ -83,6 +163,18 @@ export class FeishuBinding {
   }
   selectedArgs(args, application = this.applicationSnapshot()) { cliFor(application); return application?.profile ? ['--profile', application.profile, ...args] : args; }
   async json(args, application = this.applicationSnapshot()) { const raw = await this.run(this.selectedArgs(args, application)); return typeof raw === 'string' ? JSON.parse(raw) : raw; }
+  async withStableIdentity(state, application) {
+    if (!state?.bound || state.unionId) return state;
+    try {
+      const raw = await this.json(['contact', '+get-user', '--as', 'user', '--json'], application);
+      const payload = raw?.data ?? raw;
+      const user = payload?.user ?? payload;
+      const unionId = String(user?.union_id ?? user?.unionId ?? '');
+      return /^on_[A-Za-z0-9_-]+$/.test(unionId) ? { ...state, unionId } : state;
+    } catch {
+      return state;
+    }
+  }
 
   async inspectStatus(application = this.applicationSnapshot(), { allowAccountChange = false } = {}) {
     try {
@@ -139,7 +231,13 @@ export class FeishuBinding {
   }
   async startOnce(rebind = false) {
     const application = this.applicationSnapshot();
-    const state = await this.inspectStatus(application); if (state.bound && !rebind) return state;
+    const pending = this.pendingApplicationOperation();
+    let state = await this.inspectStatus(application, { allowAccountChange: Boolean(pending) });
+    if (state.bound && pending) state = await this.withStableIdentity(state, application);
+    if (state.bound) {
+      this.commitPendingApplicationOperation(state);
+      if (!rebind) return state;
+    }
     if (!rebind && this.flow && this.flow.expires > Date.now()) return this.publicFlow();
     this.clear();
     try {
@@ -149,7 +247,7 @@ export class FeishuBinding {
       if (!agentDeliverySchema.safeParse({ status: 'awaiting_authorization', authorizationUrl: url }).success || typeof data.device_code !== 'string' || !data.device_code) throw new Error('invalid flow');
       const expiresIn = Number(data.expires_in ?? 600); if (!Number.isFinite(expiresIn) || expiresIn <= 0) throw new Error('invalid expiry');
       const directory = mkdtempSync(resolve(tmpdir(), 'research-feishu-binding-')), qrPath = resolve(directory, 'qrcode.png');
-      this.flow = { id: randomUUID(), deviceCode: data.device_code, url, rebind, application, appId: state.appId ?? application.appId, appName: state.appName, expires: Date.now() + Math.min(expiresIn, 1800) * 1000, directory, qrPath };
+      this.flow = { id: randomUUID(), deviceCode: data.device_code, url, rebind, pending, application, appId: state.appId ?? application.appId, appName: state.appName, expires: Date.now() + Math.min(expiresIn, 1800) * 1000, directory, qrPath };
       await this.run(this.selectedArgs(['auth', 'qrcode', url, '--output', qrPath], application), { cwd: directory }); return this.publicFlow();
     } catch (failure) {
       this.clear();
@@ -205,12 +303,14 @@ export class FeishuBinding {
         throw error;
       }
       flow.child = null;
-      const state = flow.rebind
+      let state = flow.rebind || flow.pending
         ? await this.inspectStatus(flow.application, { allowAccountChange: true })
         : await this.requireBound(flow.application);
       if (!state.bound) throw new ServiceError(409, state.error);
       if (flow.appId && state.appId !== flow.appId) throw new ServiceError(409, '授权应用已发生变化，请重新扫码，未完成绑定');
-      this.rememberVerifiedAccount(state, flow.application);
+      state = await this.withStableIdentity(state, flow.application);
+      if (flow.pending) this.commitPendingApplicationOperation(state);
+      else this.rememberVerifiedAccount(state, flow.application);
       this.clear();
       return flow.rebind ? this.status() : state;
     })().finally(() => { flow.child = null; this.completing = null; }); return this.completing;

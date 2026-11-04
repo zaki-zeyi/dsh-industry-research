@@ -6,6 +6,7 @@ test('飞书授权状态按可恢复原因分类且不暴露底层信息',()=>{
   const base={appId:'cli_fixture123',dpopKeyStatus:'available',identities:{bot:{status:'ready'},user:{available:true,verified:true,tokenStatus:'valid'}}};
   assert.equal(larkRecoveryForStatus(base),null);
   assert.equal(larkRecoveryForStatus({...base,dpopKeyStatus:'missing'}).action,'authorize');
+  assert.equal(larkRecoveryForStatus({...base,dpopKeyStatus:undefined,identities:{...base.identities,user:{...base.identities.user,available:false,verified:false,message:'User identity missing',hint:'DPoP key unavailable in this sandbox'}}}).code,'LARK_DPOP_KEY_UNAVAILABLE');
   assert.equal(larkRecoveryForStatus({...base,identities:{...base.identities,user:{...base.identities.user,tokenStatus:'expired'}}}).code,'LARK_USER_AUTH_EXPIRED');
   assert.equal(larkRecoveryForStatus(base,{missingScopes:['docx:document:create']}).code,'LARK_SCOPE_MISSING');
   assert.equal(larkRecoveryForStatus(base,{accountMismatch:true}).code,'LARK_ACCOUNT_MISMATCH');

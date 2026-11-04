@@ -31,8 +31,8 @@ export class FeishuRegistration {
       expires: Date.now() + 600000,
       directory: mkdtempSync(resolve(tmpdir(), 'research-feishu-app-')),
       targetAppId,
+      replaceApp,
       accountRebind,
-      previousOwnerOpenId: selected?.ownerOpenId,
     };
     f.qrPath = resolve(f.directory, 'qrcode.png'); this.flow = f;
     f.timer = setTimeout(() => { if (active(f)) { f.controller.abort(); f.status = 'expired'; f.error = '二维码已过期，请重新扫码登录并选择应用'; } }, 600000); f.timer.unref?.();
@@ -65,8 +65,6 @@ export class FeishuRegistration {
         } });
       if (this.flow !== f || f.controller.signal.aborted) return;
       if (!f.url || !qrWork || !/^cli_[A-Za-z0-9]{5,100}$/.test(result.client_id ?? '') || typeof result.client_secret !== 'string' || !/^[\x21-\x7e]{1,512}$/.test(result.client_secret) || !/^ou_[A-Za-z0-9_-]+$/.test(result.user_info?.open_id ?? '') || (result.user_info?.tenant_brand && result.user_info.tenant_brand !== 'feishu')) throw new Error('invalid app result');
-      if (f.accountRebind && f.previousOwnerOpenId && result.user_info.open_id === f.previousOwnerOpenId) throw Object.assign(new Error('account not changed'), { code: 'account_not_changed' });
-      if (!f.accountRebind && f.previousOwnerOpenId && result.user_info.open_id !== f.previousOwnerOpenId) throw Object.assign(new Error('account changed'), { code: 'account_changed' });
       if (f.targetAppId && result.client_id !== f.targetAppId) throw new Error('updated app id mismatch');
       await qrWork;
       if (this.flow !== f || f.controller.signal.aborted || f.expires <= Date.now()) return;
@@ -76,13 +74,16 @@ export class FeishuRegistration {
         await this.binding.run(['profile', 'add', '--name', profile, '--app-id', result.client_id, '--app-secret-stdin', '--brand', 'feishu'], { input: result.client_secret + '\n' });
         if (this.flow !== f || f.controller.signal.aborted) return;
         // Do not select the app until both the official page and local credential storage succeed.
-        this.binding.store.saveSetting('feishu-application', { mode: 'custom', appId: result.client_id, profile, ownerOpenId: result.user_info.open_id });
-        this.binding.store.saveSetting('feishu-account', {
-          openId: result.user_info.open_id,
+        // The account used to manage an application is not necessarily the
+        // account used for personal authorization. Keep it as metadata and
+        // verify the personal identity only after `auth login` completes.
+        const operationMode = f.accountRebind ? 'different' : (f.replaceApp || f.targetAppId ? 'same' : 'any');
+        await this.binding.stageApplication({
+          mode: 'custom',
           appId: result.client_id,
-          userName: '',
-          verifiedAt: new Date().toISOString(),
-        });
+          profile,
+          registeredByOpenId: result.user_info.open_id,
+        }, operationMode);
         this.binding.clear(); f.appId = result.client_id; f.status = 'completed';
       } finally { this.binding.configuring = false; }
     } catch (error) {
@@ -121,11 +122,7 @@ export class FeishuRegistration {
       f.status = error?.code === 'expired_token' ? 'expired' : 'failed';
       f.recovery = error?.code === 'access_denied'
         ? { code: 'LARK_APP_AUTHORIZATION_DENIED', action: 'register_app', automatic: false, message: '已取消应用授权，可重新扫码；原绑定仍保留。' }
-        : error?.code === 'account_not_changed'
-          ? { code: 'LARK_REBIND_SAME_ACCOUNT', action: 'register_app', automatic: false, message: '检测到与原绑定相同的飞书账号。重新绑定账号时请改用另一个账号；如需保留当前账号，请使用“更换应用”。' }
-          : error?.code === 'account_changed'
-            ? { code: 'LARK_REPLACE_APP_ACCOUNT_CHANGED', action: 'register_app', automatic: false, message: '更换应用必须使用当前绑定的飞书账号。如需更换账号，请使用“重新绑定账号”。' }
-            : larkRecoveryForError(error);
+        : larkRecoveryForError(error);
       f.error = f.recovery.message;
     } finally { clearTimeout(f.timer); }
   }
