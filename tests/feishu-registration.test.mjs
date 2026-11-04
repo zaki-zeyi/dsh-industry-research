@@ -29,7 +29,7 @@ test('FR02 更新已有自定义应用时直接携带 appId，进入权限差异
   f.reg.cancel();
  }finally{await f.close();}
 });
-test('FR02 重新绑定账号必须换账号，更换应用必须保留当前账号',async()=>{
+test('FR02 更换账号必须换账号，更换应用必须保留当前账号',async()=>{
  const f=setup();try{
   f.store.saveSetting('feishu-application',{mode:'custom',appId:'cli_existing123',profile:'research-existing',ownerOpenId:'ou_scanned'});
   f.reg.start({replaceApp:true,accountRebind:true});

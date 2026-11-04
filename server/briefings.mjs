@@ -89,7 +89,7 @@ export class BriefingSchedules {
     }
     plans[v.kind]={...v,...(v.enabled?{activatedAt:activationChanged?new Date().toISOString():previousPlan.activatedAt}:{})};persist();return this.get(v.kind);
   }
-  async trigger(kind,{scheduledFor=Date.now()}={}){const s=this.get(kind);if(!s.enabled)throw Object.assign(new Error('定时任务未启用'),{status:409});const when=scheduledFor instanceof Date?scheduledFor:new Date(scheduledFor);const date=new Date(when.getTime()+8*3600000).toISOString().slice(0,10);const key=`briefing:${kind}:${date}`;const prior=this.service.store.request(key);if(prior)return this.service.require(prior.task_id);return this.service.createAuthorized(briefingTask({...s.research,kind},when),key);}
+  async trigger(kind,{scheduledFor=Date.now()}={}){const s=this.get(kind);if(!s.enabled)throw Object.assign(new Error('定时任务未启用'),{status:409});const when=scheduledFor instanceof Date?scheduledFor:new Date(scheduledFor);const date=new Date(when.getTime()+8*3600000).toISOString().slice(0,10);const key=`briefing:${kind}:${date}`;const prior=this.service.store.request(key);if(prior)return this.service.require(prior.task_id);return this.service.createAuthorized(briefingTask({...s.research,kind},when),key,{scheduled:{kind,scheduledFor:when.toISOString()}});}
   async catchUpMissed(now = Date.now()) {
     const saved=this.service.store.setting('briefing-schedule');if(!saved)return [];
     const plans={...saved.plans};

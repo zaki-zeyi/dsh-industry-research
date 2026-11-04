@@ -30,6 +30,8 @@ test('FR04 本地资料大小、URL安全校验与默认逐字稿Prompt', () => 
     assert.equal(local.internal.uploadEligible, true);
     assert.equal(local.internal.fileSize, 7);
     assert.match(local.prompt, /【时间】【说话人】/);
+    assert.match(local.prompt, /逐字稿正文严格使用/);
+    assert.match(local.prompt, /\*\*吴泽艺（Zaki）\*\* 00:18:20/);
     assert.match(local.prompt, /【逐字稿】/);
     assert.match(local.prompt, /重点核对融资日期/);
 
@@ -76,6 +78,8 @@ test('FR04 飞书交付Prompt复用双目录、限制上传并回传原始资料
     assert.match(prompt, /超过 100MB，禁止上传/);
     assert.match(prompt, /回执必须补充 sourceTitle/);
     assert.match(prompt, /sourceTitle.*资料真实标题或文件名/);
+    assert.match(prompt, /逐字稿正文严格使用/);
+    assert.match(prompt, /\*\*吴泽艺（Zaki）\*\* 00:18:20/);
     assert.match(prompt, /sourceMaterialUrl/);
     assert.match(prompt, /逐字稿文档标题严格使用/);
     assert.match(prompt, /会议纪要文档标题严格使用/);
