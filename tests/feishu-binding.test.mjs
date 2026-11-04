@@ -41,7 +41,7 @@ test('PRD1907 过期授权需重新发起，不接受非官方URL与假二维码
   const bad=new FeishuBinding({run:async args=>args[1]==='status'?status(false):{device_code:'secret',verification_url:'https://evil.example/authorize'}}); await assert.rejects(bad.start(),/无法发起/);
 });
 
-test('PRD1837 申请平台所需全部生态权限，但不申请目录读取/搜索权限', async () => {
+test('PRD1838 申请平台所需全部生态权限，但不申请目录读取/搜索权限', async () => {
   const writeScopes = 'auth:user.id:read docx:document:create docx:document:write_only docx:document:readonly docs:document:import docs:document.media:upload docs:document.media:download drive:drive.metadata:readonly drive:file:upload drive:file:download space:folder:create offline_access';
   assert.ok(!requiredScopes.includes('space:document:retrieve')); assert.ok(!requiredScopes.includes('search:docs:read'));
   for (const scope of ['docs:document.media:upload','docs:document.media:download','drive:file:upload','drive:file:download']) assert.ok(requiredScopes.includes(scope));
@@ -157,6 +157,26 @@ test('本机DPoP或用户授权失效时返回可自动执行的恢复动作',as
   });
   result={...result,dpopKeyStatus:'available',identities:{...result.identities,user:{...result.identities.user,available:true,verified:true,tokenStatus:'valid'}}};
   state=await binding.status();assert.equal(state.bound,true);
+ }finally{binding.close();}
+});
+
+test('PRD1838 插件专用profile可切换Bearer兼容登录，不传全局dpop参数',async()=>{
+ const calls=[];const selected={mode:'custom',appId:'cli_compat123',profile:'research-compat'};
+ const binding=new FeishuBinding({store:{setting:key=>key==='feishu-application'?selected:null},run:async args=>{
+  calls.push(args);const cmd=args.slice(2);
+  if(cmd[0]==='config')return {ok:true};
+  if(cmd[0]==='auth'&&cmd[1]==='logout')return {ok:true,loggedOut:true};
+  if(cmd[0]==='auth'&&cmd[1]==='status')return {appId:'cli_compat123',dpopKeyStatus:'missing',identities:{bot:{status:'ready',available:true,verified:true},user:{available:false,verified:false,tokenStatus:'needs_refresh'}}};
+  if(cmd[0]==='auth'&&cmd[1]==='qrcode'){writeFileSync(cmd.at(-1),png);return '';}
+  return {device_code:'private-compatible',verification_url:'https://accounts.feishu.cn/device?code=compatible',expires_in:600};
+ }});
+ try{
+  const flow=await binding.start({rebind:true,compatibility:true});
+  assert.equal(flow.compatibilityMode,true);
+  const config=calls.find(args=>args.slice(2,5).join(' ')==='config set dpop');
+  assert.deepEqual(config.slice(0,2),['--profile','research-compat']);
+  assert.equal(config[5],'disabled');
+  assert.ok(calls.some(args=>args.slice(2,5).join(' ')==='auth logout --json'));
  }finally{binding.close();}
 });
 

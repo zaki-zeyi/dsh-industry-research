@@ -150,3 +150,44 @@ test('已有有效授权二维码时重新打开只恢复流程，不重复发�
   expect(posts).toEqual([]);
   await expect(page.getByRole('dialog')).toContainText('扫码后会自动完成授权并关闭窗口');
 });
+
+test('插件内提供仅供当前profile使用的Bearer兼容登录', async ({ page }) => {
+  const posts = [];
+  const unavailable = {
+    bound: false,
+    available: true,
+    appId: 'cli_fixture123',
+    appName: '测试行研应用',
+    recovery: {
+      code: 'LARK_DPOP_KEY_UNAVAILABLE',
+      action: 'authorize',
+      automatic: true,
+      message: '本机飞书登录密钥不可用，将自动重新发起扫码授权；完成扫码后会自动恢复。',
+    },
+  };
+  const compatibilityFlow = {
+    ...unavailable,
+    flowId: '55555555-5555-4555-8555-555555555555',
+    authorizationUrl: 'https://accounts.feishu.cn/device?code=compatibility',
+    expiresAt: future(),
+    autoCompleting: true,
+    compatibilityMode: true,
+  };
+  await page.route('**/api/feishu-binding**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.includes('/qr/')) return route.fulfill({ status: 200, contentType: 'image/png', body: png });
+    if (route.request().method() === 'POST') {
+      const body = route.request().postDataJSON();
+      posts.push(body);
+      return route.fulfill({ json: body.compatibility ? compatibilityFlow : unavailable });
+    }
+    return route.fulfill({ json: unavailable });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: '绑定飞书', exact: true }).click();
+  await expect(page.getByRole('button', { name: '使用兼容登录修复', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '使用兼容登录修复', exact: true }).click();
+  await expect.poll(() => posts.some(body => body.compatibility === true)).toBe(true);
+  await expect(page.getByRole('img', { name: '绑定飞书授权二维码' })).toBeVisible();
+});

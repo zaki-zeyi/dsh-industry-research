@@ -219,22 +219,28 @@ export class FeishuBinding {
     }
     return state;
   }
-  async start({ rebind = false } = {}) {
+  async start({ rebind = false, compatibility = false } = {}) {
     if (this.registration.busy || this.configuring) throw new ServiceError(409, '飞书应用配置正在处理中，请稍后再试');
     if (this.completing) {
       if (this.flow) return this.publicFlow();
       throw new ServiceError(409, '授权确认正在处理中，请稍后再重新绑定');
     }
     if (this.starting) {
-      if (this.startingRebind !== rebind) throw new ServiceError(409, '授权二维码正在生成，请稍后再试');
+      if (this.startingRebind !== rebind || this.startingCompatibility !== compatibility) throw new ServiceError(409, '授权二维码正在生成，请稍后再试');
       return this.starting;
     }
     this.startingRebind = rebind;
-    this.starting = this.startOnce(rebind).finally(() => { this.starting = null; }); return this.starting;
+    this.startingCompatibility = compatibility;
+    this.starting = this.startOnce(rebind, compatibility).finally(() => { this.starting = null; }); return this.starting;
   }
-  async startOnce(rebind = false) {
+  async startOnce(rebind = false, compatibility = false) {
     const application = this.applicationSnapshot();
     const pending = this.pendingApplicationOperation();
+    if (compatibility) {
+      if (!application.profile) throw new ServiceError(400, '当前应用没有独立的飞书 CLI profile，无法启用兼容登录');
+      await this.run(this.selectedArgs(['config', 'set', 'dpop', 'disabled'], application));
+      try { await this.run(this.selectedArgs(['auth', 'logout', '--json'], application)); } catch {}
+    }
     let state = await this.inspectStatus(application, { allowAccountChange: Boolean(pending) });
     if (state.bound && pending) state = await this.withStableIdentity(state, application);
     if (state.bound) {
@@ -250,7 +256,7 @@ export class FeishuBinding {
       if (!agentDeliverySchema.safeParse({ status: 'awaiting_authorization', authorizationUrl: url }).success || typeof data.device_code !== 'string' || !data.device_code) throw new Error('invalid flow');
       const expiresIn = Number(data.expires_in ?? 600); if (!Number.isFinite(expiresIn) || expiresIn <= 0) throw new Error('invalid expiry');
       const directory = mkdtempSync(resolve(tmpdir(), 'research-feishu-binding-')), qrPath = resolve(directory, 'qrcode.png');
-      this.flow = { id: randomUUID(), deviceCode: data.device_code, url, rebind, pending, application, appId: state.appId ?? application.appId, appName: state.appName, expires: Date.now() + Math.min(expiresIn, 1800) * 1000, directory, qrPath };
+      this.flow = { id: randomUUID(), deviceCode: data.device_code, url, rebind, compatibility, pending, application, appId: state.appId ?? application.appId, appName: state.appName, expires: Date.now() + Math.min(expiresIn, 1800) * 1000, directory, qrPath };
       await this.run(this.selectedArgs(['auth', 'qrcode', url, '--output', qrPath], application), { cwd: directory }); return this.publicFlow();
     } catch (failure) {
       this.clear();
@@ -268,6 +274,7 @@ export class FeishuBinding {
     return {
       bound: false,
       rebind: this.flow.rebind,
+      compatibilityMode: this.flow.compatibility,
       appId: this.flow.appId,
       appName: this.flow.appName,
       flowId: this.flow.id,
