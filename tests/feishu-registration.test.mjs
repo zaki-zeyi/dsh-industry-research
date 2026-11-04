@@ -95,7 +95,7 @@ test('FR02 更换账号授权成新账号后切换应用与个人身份',async()
   assert.equal(f.binding.pendingApplicationOperation(),null);
  }finally{await f.close();}
 });
-test('FR02 更新已有应用发布后SDK回调丢失时复用现有profile完成，不要求重新下发密钥',async()=>{
+test('PRD1917 登记失败不能用旧个人授权冒充权限更新成功',async()=>{
  const f=setup();try{
   const app={mode:'custom',appId:'cli_existing123',profile:'research-existing',ownerOpenId:'ou_scanned'};
   f.store.saveSetting('feishu-application',app);
@@ -103,10 +103,10 @@ test('FR02 更新已有应用发布后SDK回调丢失时复用现有profile完�
   f.reg.start();const pending=f.sdk.pending.at(-1);
   pending.options.onStatusChange({status:'polling'});
   pending.reject(Object.assign(new Error('registration response interrupted'),{code:'ERR_NETWORK'}));
-  await until(()=>f.reg.snapshot().status==='completed');
+  await until(()=>f.reg.snapshot().status==='failed');
   const done=f.reg.snapshot();
-  assert.equal(done.appId,'cli_existing123');
-  assert.equal(done.remoteStatus,'confirmed_existing_profile');
+  assert.equal(done.failureCode,'ERR_NETWORK');
+  assert.equal(f.store.setting('feishu-application').permissionUpdatedAt,undefined);
   assert.equal(f.store.setting('feishu-application').profile,'research-existing');
   assert.equal(f.cli.calls.filter(c=>c.args[0]==='profile').length,0);
  }finally{await f.close();}

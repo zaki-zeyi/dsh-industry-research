@@ -189,7 +189,13 @@ test('应用登记完成后立即发起个人授权，不退回到旧状态错�
   await expect.poll(() => bindingPosts.length).toBe(1);
   expect(bindingPosts[0]).toEqual({ rebind: false, auto: true });
   await expect(page.getByRole('img', { name: '绑定飞书授权二维码' })).toBeVisible();
-  await expect(page.getByRole('dialog')).toContainText('扫码后会自动完成授权并关闭窗口');
+  await expect(page.getByRole('dialog')).toContainText('扫码后会自动完成授权，并展示绑定的账号和应用信息');
+  bindingMode = 'bound';
+  await expect(page.getByRole('dialog')).toContainText('已绑定飞书：原飞书账号');
+  await expect(page.getByRole('dialog').getByRole('button', { name: '更换应用', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog').getByRole('button', { name: '重新绑定', exact: true })).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: '完成', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
 test('已有有效授权二维码时重新打开只恢复流程，不重复发起绑定', async ({ page }) => {
@@ -222,7 +228,7 @@ test('已有有效授权二维码时重新打开只恢复流程，不重复发�
   await expect(page.getByRole('img', { name: '绑定飞书授权二维码' })).toBeVisible();
   await page.waitForTimeout(1500);
   expect(posts).toEqual([]);
-  await expect(page.getByRole('dialog')).toContainText('扫码后会自动完成授权并关闭窗口');
+  await expect(page.getByRole('dialog')).toContainText('扫码后会自动完成授权，并展示绑定的账号和应用信息');
 });
 
 test('插件内提供仅供当前profile使用的Bearer兼容登录', async ({ page }) => {

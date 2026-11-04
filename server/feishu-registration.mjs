@@ -16,7 +16,7 @@ export class FeishuRegistration {
   snapshot() {
     const f = this.flow; if (!f) return { status: 'idle' };
     if (active(f) && f.expires <= Date.now()) { f.controller.abort(); f.status = 'expired'; f.error = '二维码已过期，请重新扫码登录并选择应用'; }
-    return { flowId: f.id, status: f.status, updatingApp: Boolean(f.targetAppId), ...(f.appId || f.targetAppId ? { appId: f.appId ?? f.targetAppId } : {}), ...(f.url ? { authorizationUrl: f.url } : {}), expiresAt: new Date(f.expires).toISOString(), ...(f.remoteStatus ? { remoteStatus: f.remoteStatus } : {}), ...(f.failureCode ? { failureCode: f.failureCode } : {}), ...(f.error ? { error: f.error } : {}), ...(f.recovery ? { recovery: f.recovery } : {}) };
+    return { flowId: f.id, status: f.status, phase: f.phase ?? 'registration', updatingApp: Boolean(f.targetAppId), ...(f.appId || f.targetAppId ? { appId: f.appId ?? f.targetAppId } : {}), ...(f.url ? { authorizationUrl: f.url } : {}), expiresAt: new Date(f.expires).toISOString(), ...(f.remoteStatus ? { remoteStatus: f.remoteStatus } : {}), ...(f.failureCode ? { failureCode: f.failureCode } : {}), ...(f.error ? { error: f.error } : {}), ...(f.recovery ? { recovery: f.recovery } : {}) };
   }
   start({ refresh = false, replaceApp = false, accountRebind = false } = {}) {
     if (!this.binding.store) throw new ServiceError(503, '当前服务未启用飞书绑定配置');
@@ -69,7 +69,7 @@ export class FeishuRegistration {
       if (f.targetAppId && result.client_id !== f.targetAppId) throw new Error('updated app id mismatch');
       await qrWork;
       if (this.flow !== f || f.controller.signal.aborted || f.expires <= Date.now()) return;
-      f.status = 'saving'; this.binding.configuring = true;
+      f.phase = 'credential_storage'; f.status = 'saving'; this.binding.configuring = true;
       try {
         const profile = `research-${randomUUID()}`;
         await this.binding.run(['profile', 'add', '--name', profile, '--app-id', result.client_id, '--app-secret-stdin', '--brand', 'feishu'], { input: result.client_secret + '\n' });
@@ -78,6 +78,7 @@ export class FeishuRegistration {
         // The account used to manage an application is not necessarily the
         // account used for personal authorization. Keep it as metadata and
         // verify the personal identity only after `auth login` completes.
+        f.phase = 'account_staging';
         const operationMode = f.accountRebind ? 'different' : (f.replaceApp || f.targetAppId ? 'same' : 'any');
         await this.binding.stageApplication({
           mode: 'custom',
@@ -91,39 +92,16 @@ export class FeishuRegistration {
       if (this.flow !== f || f.controller.signal.aborted) return;
       const failureCode = String(error?.code ?? error?.cause?.code ?? '').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80);
       if (failureCode) f.failureCode = failureCode;
-      const terminal = /^(access_denied|expired_token|abort)$/i.test(failureCode);
-      if (f.targetAppId && f.remoteStatus === 'polling' && !terminal) {
-        try {
-          const application = this.binding.applicationSnapshot();
-          if (application.mode !== 'custom' || application.appId !== f.targetAppId || !application.profile) throw new Error('existing application profile unavailable');
-          const state = await this.binding.status(application);
-          if (!state.bound || state.appId !== f.targetAppId) throw new Error('existing application is no longer authorized');
-          this.binding.store.saveSetting('feishu-application', {
-            ...application,
-            ownerOpenId: application.ownerOpenId ?? state.openId,
-            permissionUpdatedAt: new Date().toISOString(),
-          });
-          this.binding.store.saveSetting('feishu-account', {
-            openId: state.openId,
-            appId: f.targetAppId,
-            userName: state.userName ?? '',
-            verifiedAt: new Date().toISOString(),
-          });
-          this.binding.clear();
-          f.appId = f.targetAppId;
-          f.status = 'completed';
-          f.remoteStatus = 'confirmed_existing_profile';
-          delete f.error;
-          delete f.recovery;
-          return;
-        } catch {
-          // Fall through to the normal recoverable failure below.
-        }
-      }
+      // A working old user token does not prove that newly requested bot
+      // permissions were granted. Only the registration result confirms that.
       f.status = error?.code === 'expired_token' ? 'expired' : 'failed';
       f.recovery = error?.code === 'access_denied'
         ? { code: 'LARK_APP_AUTHORIZATION_DENIED', action: 'register_app', automatic: false, message: '已取消应用授权，可重新扫码；原绑定仍保留。' }
-        : larkRecoveryForError(error);
+        : error?.recovery ?? larkRecoveryForError(error);
+      if (f.recovery.code === 'LARK_AUTHORIZATION_PENDING') {
+        const messages = { credential_storage: '飞书已返回应用凭据，但本机保存失败。请检查本机 Lark CLI 与凭据存储后重试；原绑定仍保留。', account_staging: '应用凭据已保存，但账号切换准备失败；原绑定仍保留，请恢复原账号授权后重试。' };
+        if (messages[f.phase]) f.recovery = { code: 'LARK_' + f.phase.toUpperCase() + '_FAILED', action: 'retry', automatic: false, message: messages[f.phase] };
+      }
       f.failureCode ??= f.recovery.code;
       f.error = f.recovery.message;
     } finally { clearTimeout(f.timer); }

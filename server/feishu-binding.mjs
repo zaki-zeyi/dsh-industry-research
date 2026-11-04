@@ -89,8 +89,10 @@ export class FeishuBinding {
     if (!pending) return;
     const currentApplication = this.applicationSnapshot();
     const sameApp = pending.previousApplication?.appId && pending.previousApplication.appId === currentApplication.appId;
-    const previousIdentity = pending.previousUnionId || (sameApp ? pending.previousOpenId : undefined);
-    const currentIdentity = state.unionId || (sameApp ? state.openId : undefined);
+    // Compare identifiers only within the same namespace. open_id is app-scoped.
+    const useOpenId = sameApp && pending.previousOpenId && state.openId;
+    const previousIdentity = useOpenId ? pending.previousOpenId : pending.previousUnionId;
+    const currentIdentity = useOpenId ? state.openId : state.unionId;
     const sameAccount = previousIdentity && currentIdentity === previousIdentity;
     const differentAccount = previousIdentity && currentIdentity !== previousIdentity;
     if (pending.mode !== 'any' && (!previousIdentity || !currentIdentity)) {
@@ -198,6 +200,9 @@ export class FeishuBinding {
   }
   async status(application = this.applicationSnapshot(), options = {}) {
     const state = await this.inspectStatus(application, options);
+    if (state.bound && this.pendingApplicationOperation()) return {
+      ...state, bound: false, error: '个人授权已收到，正在校验账号并提交绑定。',
+    };
     if (!this.flow || state.bound) return state;
     return {
       ...state,
