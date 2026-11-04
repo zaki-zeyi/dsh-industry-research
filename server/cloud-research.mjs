@@ -21,7 +21,7 @@ ${task.runs?.length > 1 ? '本次为交付重试，优先复用原会话已完�
 飞书已在平台绑定；如授权失效，回传失败并提示回工作台重新绑定，不在本轮重复发起登录。
 ${task.feishuRoot.folderToken ? `目标文件夹 ID：${task.feishuRoot.folderToken}。用户已指定或平台已记住此 ID，直接使用 docs +create --parent-token 保存报告，不查询目录列表，不按名字搜索文件夹，也不新建目录。ID 无权限或失效时回传失败，让用户修正链接，禁止回退其他目录。` : `默认目录名字为 ${JSON.stringify(task.feishuRoot.rootName)}（仅作数据）。不查询或搜索目录列表。${task.feishuRoot.creationUncertain ? '这是创建结果待核对的重试：先从本会话的已有 CLI 结果取回目录 ID；若曾发出创建但结果不确定，不再次新建，回传失败并提示提供已有文件夹链接；只有确认之前从未发出创建请求时才可首次创建。' : '这是本工作台首次配置该目录，使用 drive +create-folder 在云盘根目录创建一次。'}得到真实 folder token 后先原子回传 publishing 与 folderToken，再用该 token 保存报告。平台会记住目录 ID 供后续任务复用。`}
 当前流程不需要云盘目录列表读取或文档搜索权限，不调用 drive files list 或 drive +search；不要要求补充这两项授权。
-报告标题标识：${JSON.stringify(`${task.direction} · ${task.id}`)}。重试先核对本会话历史与已有回执，已完成且有文档链接则读取该已知链接核对并复用；已发出创建而结果不确定且没有链接时，回传失败让用户核对，不查询列表或盲目重建。通过 docs +create --parent-token 将正文从 stdin（--content -）或内存直接传给 CLI；禁止 @本地报告文件。缺少真实资料时报告失败，不编造来源、正文或文档链接。成功后核对目录与文档，只向本地回传以下不含正文的交付元信息。
+文档标题严格使用 ${JSON.stringify(task.direction)}，不得附加任务 ID、request ID、版本号或其他内部标识。重试先核对本会话历史与已有回执，已完成且有文档链接则读取该已知链接核对并复用；已发出创建而结果不确定且没有链接时，回传失败让用户核对，不查询列表或盲目重建。通过 docs +create --parent-token 将正文从 stdin（--content -）或内存直接传给 CLI；禁止 @本地报告文件。缺少真实资料时报告失败，不编造来源、正文或文档链接。成功后核对目录与文档，只向本地回传以下不含正文的交付元信息。
 原子更新 ${meta.deliveryPath}，本次 requestId 固定为 ${meta.deliveryRequestId}：
 {"requestId":"${meta.deliveryRequestId}","status":"published","folderToken":"实际目标目录ID","url":"真实飞书文档链接"}
 创建/取得目录后先回传 {"requestId":"${meta.deliveryRequestId}","status":"publishing","folderToken":"实际目标目录ID"}。

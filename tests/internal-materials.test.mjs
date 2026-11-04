@@ -35,7 +35,10 @@ test('FR04 本地资料大小、URL安全校验与默认逐字稿Prompt', () => 
 
     const network = prepareInternalMaterial({ sourceType: 'url', source: 'https://example.com/interview?id=1' });
     assert.equal(network.internal.sourceType, 'url');
+    assert.equal(network.internal.sourceLabel, 'interview');
     assert.equal(network.internal.uploadEligible, false);
+    const feishuDoc = prepareInternalMaterial({ sourceType: 'url', source: 'https://tenant.feishu.cn/docx/LhZUdP9uqoRMEAxJtetc5Ny6neb' });
+    assert.equal(feishuDoc.internal.sourceLabel, '网络资料');
     assert.throws(() => prepareInternalMaterial({ sourceType: 'url', source: 'file:///private/secret' }), /http/);
     assert.throws(() => prepareInternalMaterial({ sourceType: 'local', source: resolve(dir, 'missing.m4a') }), /不存在/);
     assert.throws(() => internalMaterialInputSchema.parse({ sourceType: 'local', source: file, extra: true }));
@@ -72,6 +75,9 @@ test('FR04 飞书交付Prompt复用双目录、限制上传并回传原始资料
     assert.match(prompt, /原始资料.*sourceFolder/);
     assert.match(prompt, /超过 100MB，禁止上传/);
     assert.match(prompt, /sourceMaterialUrl/);
+    assert.match(prompt, /逐字稿文档标题严格使用/);
+    assert.match(prompt, /会议纪要文档标题严格使用/);
+    assert.ok(!prompt.includes('task_internal'));
     assert.ok(!prompt.includes('fixture-secret'));
   } finally {
     rmSync(dir, { recursive: true, force: true });

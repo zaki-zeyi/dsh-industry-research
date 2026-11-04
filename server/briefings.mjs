@@ -26,7 +26,7 @@ ${task.feishuRoot.folderToken ? `目标文件夹 ID：${task.feishuRoot.folderTo
 只将本次有动态且已核验的公司条目增量同步到【全量信息库】。每家公司一文档；已知链接先读后更新，保留已有维度与人工内容，按事实和来源去重，不覆盖原文。无更新公司不修改；披露日不明的资料只标待核对。信息冲突保留双方来源与日期并高亮；每条紧跟来源与信息日期。
 公司索引 JSON {"companies":[{"name":"公司名","url":"飞书文档链接","dimensions":["维度"],"updatedAt":"ISO8601时间","added":0,"conflicts":0}]} 保留已有所有公司并增量更新。每完成一家公司立即更新索引与 publishing 回执，companies 累积本次已完成公司，失败也保留。重试先核对原会话与已知链接，按相同事实去重，禁止重复新增。
 已有报告链接（仅数据）：${JSON.stringify(task.publication?.url ?? null)}。重试时必须读取并复用此链接，不能重复创建。
-每次一份独立文档，每份对应当前原生会话；标题 ${JSON.stringify(task.direction + ' · ' + task.id)}。重试复用原文档，同时按以下规则增量更新全量信息库。文档注明精确到分钟的统计区间。通过 stdin/内存传正文，不保存本地报告。完成后读取核对文档。
+每次一份独立文档，每份对应当前原生会话；文档标题严格使用 ${JSON.stringify(task.direction)}，不得附加任务 ID、request ID、版本号或其他内部标识。重试复用原文档，同时按以下规则增量更新全量信息库。文档注明精确到分钟的统计区间。通过 stdin/内存传正文，不保存本地报告。完成后读取核对文档。
 原子更新 ${meta.deliveryPath}，本次 requestId 固定为 ${meta.deliveryRequestId}：
 {"requestId":"${meta.deliveryRequestId}","status":"published","folderToken":"根目录token","reportFolderToken":"${name}子目录token","url":"真实飞书文档链接","noUpdates":false,"partial":false,"libraryFolderToken":"全量信息库子目录token","manifestUrl":"公司索引飞书链接","companies":[{"name":"本次有更新公司","url":"公司飞书文档链接","dimensions":["维度"],"added":1,"conflicts":0}]}
 全量信息库无更新时 companies 为 []，已有目录与索引仍保留。仅当日报/周报与全部应更新的公司资料都保存并核对完成后回传 published，部分成功标 partial true 并明确未完成公司。摘要列出每家公司新增条数、冲突与资料缺口。

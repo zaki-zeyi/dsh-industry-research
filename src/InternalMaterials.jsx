@@ -15,6 +15,17 @@ const statusLabel = task => task.stage === 'waiting_save'
   ? '等待保存（其他任务正在写入）'
   : ({ ready: '已完成', failed: '失败', interrupted: '已中断', running: '解析中', queued: '排队中' })[task.status] ?? task.status;
 
+function sourceDisplay(task) {
+  const label = task.internal.sourceLabel ?? '';
+  if (task.internal.sourceType === 'url' && /^[A-Za-z0-9_-]{20,}$/.test(label)) return '网络资料';
+  return label || (task.internal.sourceType === 'url' ? '网络资料' : '本地资料');
+}
+
+function sourceHost(task) {
+  if (task.internal.sourceType !== 'url') return '';
+  try { return new URL(task.internal.source).hostname; } catch { return ''; }
+}
+
 export function InternalMaterials({ config, onCreate, onOpen, onRetry }) {
   const [items, setItems] = useState([]);
   const [error, setError] = useState('');
@@ -55,7 +66,8 @@ export function InternalMaterials({ config, onCreate, onOpen, onRetry }) {
 
   const visible = items.filter(task =>
     task.direction.toLowerCase().includes(query.toLowerCase())
-    || task.internal.sourceLabel.toLowerCase().includes(query.toLowerCase()));
+    || sourceDisplay(task).toLowerCase().includes(query.toLowerCase())
+    || task.internal.source.toLowerCase().includes(query.toLowerCase()));
 
   return <section className="industry-content">
     <p className="industry-eyebrow">INTERNAL INTELLIGENCE / 04</p>
@@ -76,8 +88,8 @@ export function InternalMaterials({ config, onCreate, onOpen, onRetry }) {
     {loading && <div className="industry-empty"><LoaderCircle className="spin"/>正在读取内部资料…</div>}
     {!loading && visible.length > 0 && <div className="industry-cards">{visible.map(task => <article className="industry-company" key={task.id}>
       <div className="company-top"><span className="company-monogram"><FileText size={18}/></span><span className={'task-status ' + task.status}>{statusLabel(task)}</span></div>
-      <h2>{task.internal.sourceLabel}</h2>
-      <p>{task.internal.sourceType === 'local' ? '本地文件' : '网络资料'}{task.internal.fileSize != null ? ` · ${(task.internal.fileSize / 1024 / 1024).toFixed(1)} MB` : ''}</p>
+      <h2>{sourceDisplay(task)}</h2>
+      <p>{task.internal.sourceType === 'local' ? '本地文件' : `网络资料${sourceHost(task) ? ` · ${sourceHost(task)}` : ''}`}{task.internal.fileSize != null ? ` · ${(task.internal.fileSize / 1024 / 1024).toFixed(1)} MB` : ''}</p>
       <div className="company-dimensions"><span>{task.internal.uploadEligible ? '原始资料可上传' : task.internal.sourceType === 'local' ? '原始材料超过上传上限' : '保留原始链接'}</span></div>
       {task.error && <div className="industry-error" role="alert">{task.error}</div>}
       {task.publication?.url && <a className="company-title" href={task.publication.url} target="_blank" rel="noreferrer">逐字稿<ArrowUpRight size={18}/></a>}
