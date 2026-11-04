@@ -35,12 +35,29 @@ ${task.feishuRoot.folderToken ? `目标文件夹 ID：${task.feishuRoot.folderTo
 const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 export const scheduleInput = z.object({ daily: clock, weekly: clock, weekday: z.number().int().min(1).max(7), enabled: z.boolean(), research: industryInputSchema }).strict();
 export const singleScheduleInput = z.object({kind:z.enum(['daily','weekly']),time:clock,weekday:z.number().int().min(1).max(7).default(5),enabled:z.boolean(),research:industryInputSchema}).strict();
+export function scheduleTiming(plan, now = Date.now()) {
+  const [hour, minute] = plan.time.split(':').map(Number);
+  const shanghai = new Date(now + 8 * 3600000);
+  const currentWeekday = shanghai.getUTCDay();
+  const targetWeekday = plan.weekday === 7 ? 0 : plan.weekday;
+  let days = plan.kind === 'weekly' ? (targetWeekday - currentWeekday + 7) % 7 : 0;
+  let next = Date.UTC(shanghai.getUTCFullYear(), shanghai.getUTCMonth(), shanghai.getUTCDate() + days, hour - 8, minute);
+  const today = Date.UTC(shanghai.getUTCFullYear(), shanghai.getUTCMonth(), shanghai.getUTCDate(), hour - 8, minute);
+  const todayApplies = plan.kind === 'daily' || targetWeekday === currentWeekday;
+  const todayTimePassed = todayApplies && today <= now;
+  if (next <= now) next += (plan.kind === 'weekly' ? 7 : 1) * 86400000;
+  return { nextRunAt: new Date(next).toISOString(), todayTimePassed };
+}
 export class BriefingSchedules {
   constructor(service, host, url) { this.service=service;this.host=host;this.chain=Promise.resolve();this.endpointFile=service.nativeSessions?resolve(service.nativeSessions.workRoot,'briefing-endpoint.json'):null;if(this.endpointFile){mkdirSync(service.nativeSessions.workRoot,{recursive:true});writeFileSync(this.endpointFile,JSON.stringify({url}));} }
   get(kind) {
     const saved=this.service.store.setting('briefing-schedule')??{};
     const research={companies:DEFAULT_COMPANIES,...preferences(this.service.store),requirements:''};
-    const plans=Object.fromEntries(['daily','weekly'].map(k=>[k,{kind:k,time:saved[k]??'09:00',weekday:saved.weekday??5,enabled:saved.enabled??false,research:saved.research??research,...saved.plans?.[k]}]));
+    const plans=Object.fromEntries(['daily','weekly'].map(k=>{
+      const plan={kind:k,time:saved[k]??'09:00',weekday:saved.weekday??5,enabled:saved.enabled??false,research:saved.research??research,...saved.plans?.[k]};
+      const timing=plan.enabled?scheduleTiming(plan):{nextRunAt:null,todayTimePassed:false};
+      return [k,{...plan,...timing}];
+    }));
     const all={...saved,daily:plans.daily.time,weekly:plans.weekly.time,weekday:plans.weekly.weekday,enabled:plans.daily.enabled||plans.weekly.enabled,research:saved.research??research,plans,available:Boolean(this.host?.schedule)};
     return kind?{...plans[kind],available:all.available}:all;
   }

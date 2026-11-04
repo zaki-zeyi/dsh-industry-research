@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync,readFileSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {resolve} from 'node:path';
-import {reportWindow,briefingTask,BriefingSchedules} from '../server/briefings.mjs';
+import {reportWindow,briefingTask,BriefingSchedules,scheduleTiming} from '../server/briefings.mjs';
 import {startRuntime} from '../server/runtime.mjs';
 import {mockHost} from './fixtures/fake-native-host.mjs';
 import {until} from './helpers.mjs';
@@ -16,6 +16,12 @@ test('FR02 北京时间完整自然日：跨年、闰月、UTC日界、前七个
  assert.equal(reportWindow('weekly',new Date('2027-01-01T01:00:00Z')).display,'2026-12-25 00:00 至 2026-12-31 23:59（北京时间）');
  assert.equal(reportWindow('weekly',new Date('2026-11-06T01:00:00Z')).display,'2026-10-30 00:00 至 2026-11-05 23:59（北京时间）');
  assert.throws(()=>briefingTask({...input,kind:'research'}));assert.throws(()=>briefingTask({...input,companies:[]}));
+});
+test('FR02 定时任务显示下一次执行；当天时间已过时不补跑',()=>{
+ const before=Date.parse('2026-11-04T00:30:00Z'),after=Date.parse('2026-11-04T01:30:00Z');
+ assert.deepEqual(scheduleTiming({kind:'daily',time:'09:00',weekday:5},before),{nextRunAt:'2026-11-04T01:00:00.000Z',todayTimePassed:false});
+ assert.deepEqual(scheduleTiming({kind:'daily',time:'09:00',weekday:5},after),{nextRunAt:'2026-11-05T01:00:00.000Z',todayTimePassed:true});
+ assert.deepEqual(scheduleTiming({kind:'weekly',time:'09:00',weekday:5},Date.parse('2026-11-06T01:30:00Z')),{nextRunAt:'2026-11-13T01:00:00.000Z',todayTimePassed:true});
 });
 async function setup(updated=false,receiptExtras={}){
  const dir=mkdtempSync(resolve(tmpdir(),'briefings-')),host=mockHost();const records=new Map();
