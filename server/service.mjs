@@ -22,7 +22,11 @@ export class ResearchService {
   event(id, type, data) { const e = this.store.event(id, type, data); this.bus.emit(id, e); return e; }
   save(task) { this.store.save(task); this.event(task.id, 'state', { status: task.status, stage: task.stage, publication: task.publication.status }); }
   feishuSettings(application = this.binding?.applicationSnapshot?.()) {
-    const settings = { ...(this.store.setting('feishu') ?? { rootName: '行研工作台' }), ...(application?.profile ? { applicationProfile: application.profile } : {}) };
+    const settings = {
+      ...(this.store.setting('feishu') ?? { rootName: '行研工作台' }),
+      ...(application?.profile ? { applicationProfile: application.profile } : {}),
+      ...(application?.ownerOpenId ? { applicationOwnerOpenId: application.ownerOpenId } : {}),
+    };
     const cached = !settings.folderToken && this.store.setting(folderCacheKey(settings));
     return cached?.folderToken ? { ...settings, folderToken: cached.folderToken } : settings;
   }

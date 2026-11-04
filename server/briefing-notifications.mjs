@@ -1,3 +1,5 @@
+import { notificationApplicationMatches, notificationFailure } from './notification-errors.mjs';
+
 export class BriefingNotifications {
   constructor(service) { this.service=service; this.active=new Map(); }
   send(id) {
@@ -10,6 +12,7 @@ export class BriefingNotifications {
     try {
       const recipient=t.notificationRecipient,application=t.notificationApp??t.feishuApp;
       if(!/^ou_[A-Za-z0-9]+$/.test(recipient??''))throw new Error('未取得本任务绑定用户，请重新绑定飞书后重试通知');
+      if(!notificationApplicationMatches(application,s.binding.applicationSnapshot?.()))throw new Error('current binding application changed');
       const identity=await s.binding.json(['auth','status','--json'],application);
       if(identity.identities?.user?.openId!==recipient||identity.identities.user.available!==true||(application.appId&&identity.appId!==application.appId))throw new Error('绑定身份已改变');
       if(identity.identities?.bot?.available!==true||identity.identities?.bot?.verified!==true)throw new Error('机器人身份不可用');
@@ -20,8 +23,9 @@ export class BriefingNotifications {
       if(response.ok!==true)throw new Error('飞书机器人未确认消息发送成功，请检查机器人权限及可用范围');
       const messageId=response.data?.message_id??response.message_id;
       t.notification={...t.notification,status:'sent',sentAt:new Date().toISOString(),...(messageId?{messageId:String(messageId)}:{})};s.save(t);
-    } catch {
-      t.notification={...t.notification,status:'failed',error:'飞书机器人未发送成功。请重新绑定应用并确认已开通“发送消息”权限（im:message:send_as_bot），且机器人可用范围包含当前绑定用户；报告和会话已保留，可重试通知。'};s.save(t);
+    } catch (error) {
+      const failure = notificationFailure(error);
+      t.notification={...t.notification,status:'failed',error:failure.message,diagnostic:failure.diagnostic};s.save(t);
     }
     return t;
   }

@@ -2,7 +2,7 @@ import React, {useEffect,useState} from 'react';
 import {AlertCircle,ArrowUpRight,CalendarDays} from 'lucide-react';
 async function api(path,options={}) { const r=await fetch('/api/briefings'+path,{...options,headers:{'Content-Type':'application/json'}});const v=await r.json();if(!r.ok)throw new Error(v.error);return v; }
 const statusLabel = task => task.stage==='waiting_save' ? '等待保存（其他任务正在写入）' : ({ready:'已完成',failed:'失败',interrupted:'已中断',queued:'排队中',running:'调研中'})[task.status] ?? task.status;
-export function Briefings({kind,config,onGenerate,onSchedule,onOpen,onRetry}) {
+export function Briefings({kind,config,onGenerate,onSchedule,onOpen,onRetry,onFixNotification}) {
  const [items,setItems]=useState([]),[error,setError]=useState(''),[query,setQuery]=useState('');
  async function load(){try{setItems((await api('?kind='+kind)).items);setError('');}catch(e){setError(e.message);}}
  useEffect(()=>{let live=true;const run=async()=>{try{const v=await api('?kind='+kind);if(live)setItems(v.items);}catch(e){if(live)setError(e.message);}};run();const t=setInterval(run,4000);return()=>{live=false;clearInterval(t);};},[kind]);
@@ -14,7 +14,7 @@ export function Briefings({kind,config,onGenerate,onSchedule,onOpen,onRetry}) {
   {(t.publication.partial||t.publication.noUpdates)&&<div className="company-dimensions briefing-signals">{t.publication.partial&&<span>部分资料获取成功，缺口见文档</span>}{t.publication.noUpdates&&<span>本{kind==='daily'?'日':'周'}无更新</span>}</div>}
   {t.publication.status==='published'&&<a className="briefing-action" href={t.publication.url} target="_blank" rel="noreferrer">打开飞书{name}<ArrowUpRight size={16}/></a>}
   {t.notification?.status==='sent'&&<p className="card-caption">飞书机器人已通知</p>}
-  {t.notification?.status==='failed'&&<div className="card-alert" role="alert"><AlertCircle size={15}/><span>{t.notification.error}</span><button onClick={async()=>{try{await api('/'+t.id+'/notify',{method:'POST',body:'{}'});await load();}catch(e){setError(e.message);}}}>重试通知</button></div>}
+  {t.notification?.status==='failed'&&<div className="card-alert" role="alert"><AlertCircle size={15}/><span>{t.notification.error}</span><div className="card-alert-actions"><button onClick={()=>onFixNotification?.()}>修复机器人权限</button><button onClick={async()=>{try{await api('/'+t.id+'/notify',{method:'POST',body:'{}'});await load();}catch(e){setError(e.message);}}}>重试通知</button></div></div>}
   <footer><button onClick={()=>onOpen(t)}>AI 会话详情 ↗</button>{['failed','interrupted'].includes(t.status)&&<button onClick={()=>onRetry(t)}>重试</button>}</footer>
 </article>)}</div>{!items.length&&<div className="industry-empty"><h2>暂无{name}记录</h2><p>生成报告后，每份报告和对应 AI 会话都会保存在这里。</p></div>}</section>;
 }

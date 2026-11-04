@@ -37,6 +37,7 @@ test('PRD1956 自动目录缓存按应用隔离，恢复默认配置仍复用原
   f.store.saveSetting(folderCacheKey({rootName:'行研工作台'}),{folderToken:'defaultFolder'});assert.equal(f.service.feishuSettings().folderToken,'defaultFolder');
   await b.configureApplication({mode:'custom',appId:'cli_custom123',appSecret:'credential-secret'});const root=f.service.feishuSettings();assert.equal(root.folderToken,undefined);assert.equal(root.applicationProfile,b.applicationSnapshot().profile);
   f.store.saveSetting(folderCacheKey(root),{folderToken:'customFolder'});assert.equal(f.service.feishuSettings().folderToken,'customFolder');assert.equal(f.service.feishuSettings({mode:'default'}).folderToken,'defaultFolder');
+  assert.notEqual(folderCacheKey({rootName:'行研工作台',applicationProfile:'research-custom',applicationOwnerOpenId:'ou_old'}),folderCacheKey({rootName:'行研工作台',applicationProfile:'research-custom',applicationOwnerOpenId:'ou_new'}));
   await b.configureApplication({mode:'default'});assert.equal(f.service.feishuSettings().folderToken,'defaultFolder');
  }finally{b.close();await f.close();}
 });

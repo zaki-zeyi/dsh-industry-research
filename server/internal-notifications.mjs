@@ -1,4 +1,5 @@
 import { internalNotificationText } from './internal-materials.mjs';
+import { notificationApplicationMatches, notificationFailure } from './notification-errors.mjs';
 
 export class InternalMaterialNotifications {
   constructor(service) {
@@ -21,6 +22,7 @@ export class InternalMaterialNotifications {
       const recipient = task.notificationRecipient;
       const application = task.notificationApp ?? task.feishuApp;
       if (!/^ou_[A-Za-z0-9]+$/.test(recipient ?? '')) throw new Error('missing recipient');
+      if (!notificationApplicationMatches(application, service.binding.applicationSnapshot?.())) throw new Error('current binding application changed');
       const identity = await service.binding.json(['auth', 'status', '--json'], application);
       if (identity.identities?.user?.openId !== recipient
         || identity.identities.user.available !== true
@@ -36,11 +38,13 @@ export class InternalMaterialNotifications {
       const messageId = response.data?.message_id ?? response.message_id;
       task.notification = { ...task.notification, status: 'sent', sentAt: new Date().toISOString(), ...(messageId ? { messageId: String(messageId) } : {}) };
       service.save(task);
-    } catch {
+    } catch (error) {
+      const failure = notificationFailure(error);
       task.notification = {
         ...task.notification,
         status: 'failed',
-        error: '飞书机器人未发送成功。请重新绑定应用并确认已开通“发送消息”权限（im:message:send_as_bot），且机器人可用范围包含当前绑定用户；解析文档和原始资料链接已保留，可重试通知。',
+        error: failure.message,
+        diagnostic: failure.diagnostic,
       };
       service.save(task);
     }

@@ -18,12 +18,40 @@ export class FeishuBinding {
     this.command = command ?? (existsSync(local) ? local : 'lark-cli');
     this.run = run ?? ((args, options = {}) => new Promise((resolveRun, reject) => {
       const launch = larkLaunch(this.command, args);
-      const child = execFile(launch.command, launch.args, { timeout: options.timeoutMs ?? 15000, maxBuffer: 128 * 1024, cwd: options.cwd, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }, (error, stdout) => error ? reject(error) : resolveRun(stdout));
+      const child = execFile(launch.command, launch.args, { timeout: options.timeoutMs ?? 15000, maxBuffer: 128 * 1024, cwd: options.cwd, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }, (error, stdout, stderr) => {
+        if (!error) return resolveRun(stdout);
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+      });
       options.onSpawn?.(child);
       child.stdin?.on('error', () => {}); child.stdin?.end(options.input ?? '');
     }));
   }
-  applicationSnapshot() { return this.store?.setting('feishu-application') ?? { mode: 'default' }; }
+  applicationSnapshot() {
+    const application = this.store?.setting('feishu-application') ?? { mode: 'default' };
+    const account = this.store?.setting?.('feishu-account');
+    if (!account || (application.appId && account.appId !== application.appId)) return application;
+    return {
+      ...application,
+      ownerOpenId: application.ownerOpenId ?? account.openId,
+      ...(!application.ownerName && account.userName ? { ownerName: account.userName } : {}),
+    };
+  }
+  rememberVerifiedAccount(state, application) {
+    if (!state?.openId || !this.store?.saveSetting) return;
+    const verified = {
+      openId: state.openId,
+      appId: state.appId ?? application.appId ?? '',
+      userName: state.userName ?? '',
+      verifiedAt: new Date().toISOString(),
+    };
+    this.store.saveSetting('feishu-account', verified);
+    const current = this.store.setting('feishu-application');
+    if (current?.mode === 'custom' && (!verified.appId || current.appId === verified.appId)) {
+      this.store.saveSetting('feishu-application', { ...current, ownerOpenId: state.openId });
+    }
+  }
   async applicationInfo() {
     const app = this.applicationSnapshot();
     if (app.mode === 'custom') return { mode: 'custom', appId: app.appId, hasSecret: true };
@@ -35,20 +63,28 @@ export class FeishuBinding {
     if (this.registration.busy || this.starting || this.completing || this.configuring) throw new ServiceError(409, '飞书授权或配置正在处理中，请稍后再试');
     this.configuring = true;
     try {
-      if (data.mode === 'default') { this.store.saveSetting('feishu-application', { mode: 'default' }); this.clear(); return this.applicationInfo(); }
+      if (data.mode === 'default') {
+        this.store.saveSetting('feishu-application', { mode: 'default' });
+        this.store.deleteSetting?.('feishu-account');
+        this.clear();
+        return this.applicationInfo();
+      }
       const prior = this.applicationSnapshot();
       if (!data.appSecret && prior.mode === 'custom' && prior.appId === data.appId) return this.applicationInfo();
       if (!data.appSecret) throw new ServiceError(400, '首次配置或更换 App ID 时，请填写 App Secret');
       const profile = `research-${randomUUID()}`;
       try { await this.run(['profile', 'add', '--name', profile, '--app-id', data.appId, '--app-secret-stdin', '--brand', 'feishu'], { input: data.appSecret + '\n' }); }
       catch { throw new ServiceError(503, '飞书应用配置失败，请检查应用凭据、Lark CLI 和本机安全存储'); }
-      this.store.saveSetting('feishu-application', { mode: 'custom', appId: data.appId, profile }); this.clear(); return this.applicationInfo();
+      this.store.saveSetting('feishu-application', { mode: 'custom', appId: data.appId, profile });
+      this.store.deleteSetting?.('feishu-account');
+      this.clear();
+      return this.applicationInfo();
     } finally { this.configuring = false; }
   }
   selectedArgs(args, application = this.applicationSnapshot()) { cliFor(application); return application?.profile ? ['--profile', application.profile, ...args] : args; }
   async json(args, application = this.applicationSnapshot()) { const raw = await this.run(this.selectedArgs(args, application)); return typeof raw === 'string' ? JSON.parse(raw) : raw; }
 
-  async inspectStatus(application = this.applicationSnapshot()) {
+  async inspectStatus(application = this.applicationSnapshot(), { allowAccountChange = false } = {}) {
     try {
       const result = await this.json(['auth', 'status', '--json', '--verify'], application);
       if (application?.mode === 'custom' && result.appId !== application.appId) return { bound: false, available: true, error: 'Lark CLI 返回的应用与所选应用不一致，请重新配置，未使用默认应用代替' };
@@ -58,7 +94,7 @@ export class FeishuBinding {
       const user = result.identities?.user, scopes = new Set((user?.scope ?? '').split(/[ ,]+/));
       const authenticated = user?.available === true && user?.verified === true;
       const missingScopes = requiredScopes.filter(s => !scopes.has(s));
-      const accountMismatch = authenticated && application.ownerOpenId && user.openId !== application.ownerOpenId;
+      const accountMismatch = !allowAccountChange && authenticated && application.ownerOpenId && user.openId !== application.ownerOpenId;
       const recovery = larkRecoveryForStatus(result, { missingScopes, accountMismatch });
       if (accountMismatch) return { ...metadata, bound: false, available: true, error: '个人授权账号与扫码绑定应用的账号不一致，请使用同一账号授权，或重新扫码登录并绑定新账号的应用', recovery };
       const bound = authenticated && missingScopes.length === 0;
@@ -68,8 +104,8 @@ export class FeishuBinding {
       return { bound: false, available: false, error: failure.message, recovery: failure };
     }
   }
-  async status(application = this.applicationSnapshot()) {
-    const state = await this.inspectStatus(application);
+  async status(application = this.applicationSnapshot(), options = {}) {
+    const state = await this.inspectStatus(application, options);
     if (!this.flow || state.bound) return state;
     return {
       ...state,
@@ -169,8 +205,14 @@ export class FeishuBinding {
         throw error;
       }
       flow.child = null;
-      const state = await this.requireBound(flow.application);
-      if (flow.appId && state.appId !== flow.appId) throw new ServiceError(409, '授权应用已发生变化，请重新扫码，未完成绑定'); this.clear(); return state;
+      const state = flow.rebind
+        ? await this.inspectStatus(flow.application, { allowAccountChange: true })
+        : await this.requireBound(flow.application);
+      if (!state.bound) throw new ServiceError(409, state.error);
+      if (flow.appId && state.appId !== flow.appId) throw new ServiceError(409, '授权应用已发生变化，请重新扫码，未完成绑定');
+      this.rememberVerifiedAccount(state, flow.application);
+      this.clear();
+      return flow.rebind ? this.status() : state;
     })().finally(() => { flow.child = null; this.completing = null; }); return this.completing;
   }
   autoComplete(id) {

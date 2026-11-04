@@ -219,7 +219,6 @@
 }
 
 .card-alert button{
-  grid-column:2;
   width:max-content;
   padding:5px 8px;
   border:1px solid #e5c7b8;
@@ -227,6 +226,13 @@
   background:#fff;
   color:#9a6654;
   font-size:10px
+}
+
+.card-alert-actions{
+  grid-column:2;
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px
 }
 
 .industry-content:has(input[aria-label="搜索内部资料"]) .industry-company>footer{

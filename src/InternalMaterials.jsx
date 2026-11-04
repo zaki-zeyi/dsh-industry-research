@@ -28,7 +28,7 @@ function sourceHost(task) {
   try { return new URL(task.internal.source).hostname; } catch { return ''; }
 }
 
-export function InternalMaterials({ config, onCreate, onOpen, onRetry }) {
+export function InternalMaterials({ config, onCreate, onOpen, onRetry, onFixNotification }) {
   const [items, setItems] = useState([]);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
@@ -101,14 +101,14 @@ export function InternalMaterials({ config, onCreate, onOpen, onRetry }) {
         {task.publication?.sourceMaterialUrl && <a className="material-action" href={task.publication.sourceMaterialUrl} target="_blank" rel="noreferrer">原始资料<ArrowUpRight size={15}/></a>}
       </div>}
       {task.notification?.status === 'sent' && <p className="card-caption">飞书机器人已通知</p>}
-      {task.notification?.status === 'failed' && <div className="card-alert" role="alert"><AlertCircle size={15}/><span>{task.notification.error}</span><button onClick={async () => {
+      {task.notification?.status === 'failed' && <div className="card-alert" role="alert"><AlertCircle size={15}/><span>{task.notification.error}</span><div className="card-alert-actions"><button onClick={() => onFixNotification?.()}>修复机器人权限</button><button onClick={async () => {
         try {
           await api(`/${task.id}/notify`, { method: 'POST', body: '{}' });
           await load();
         } catch (cause) {
           setError(cause.message);
         }
-      }}>重试通知</button></div>}
+      }}>重试通知</button></div></div>}
       <footer>
         <button onClick={() => onOpen(task)}>AI 会话详情 ↗</button>
         {['failed', 'interrupted'].includes(task.status) && <button onClick={() => onRetry(task)}>重试</button>}

@@ -12,6 +12,7 @@ test('PRD2036 官方扫码选择/创建应用，凭据仅stdin，不修改默认
   const opts=f.sdk.pending[0].options;assert.equal(opts.appId,undefined);assert.notEqual(opts.createOnly,true);assert.equal(opts.addons.preset,false);assert.ok(!opts.addons.scopes.user.includes('space:document:retrieve'));assert.ok(!opts.addons.scopes.user.includes('search:docs:read'));assert.ok(!opts.addons.scopes.user.includes('offline_access'));assert.deepEqual(opts.addons.scopes.tenant,['im:message:send_as_bot']);
   assert.equal((await f.binding.status()).userName,'默认用户');await assert.rejects(f.binding.requireBound(),e=>e.status===428);await assert.rejects(f.binding.configureApplication({mode:'default'}),e=>e.status===409);
   f.sdk.approve();await until(()=>f.reg.snapshot().status==='completed');const info=f.reg.snapshot();assert.equal(info.appId,'cli_scanned123');assert.ok(!JSON.stringify(info).includes('fixture-secret'));const call=f.cli.calls.find(c=>c.args[0]==='profile');assert.equal(call.options.input,'fixture-secret\n');assert.ok(!call.args.join(' ').includes('fixture-secret'));assert.ok(!call.args.includes('--use'));assert.ok(!JSON.stringify(f.store.setting('feishu-application')).includes('fixture-secret'));assert.equal(f.binding.applicationSnapshot().ownerOpenId,'ou_scanned');assert.equal((await f.binding.status()).bound,false);
+  assert.equal(f.store.setting('feishu-account').openId,'ou_scanned');
   const auth=await f.binding.start();assert.equal((await f.binding.complete(auth.flowId)).bound,true);assert.equal((await f.binding.status({mode:'default'})).userName,'默认用户');
  }finally{await f.close();}
 });
@@ -23,6 +24,22 @@ test('FR02 更新已有自定义应用时直接携带 appId，进入权限差异
   const pending=f.sdk.pending.at(-1);assert.equal(pending.options.appId,'cli_existing123');assert.equal(new URL(flow.authorizationUrl).searchParams.get('clientID'),'cli_existing123');
   pending.options.onStatusChange({status:'polling'});assert.equal(f.reg.snapshot().remoteStatus,'polling');
   f.reg.cancel();
+  const replaceFlow=f.reg.start({replaceApp:true});assert.equal(replaceFlow.updatingApp,false);assert.equal(replaceFlow.appId,undefined);
+  assert.equal(f.sdk.pending.at(-1).options.appId,undefined);
+  f.reg.cancel();
+ }finally{await f.close();}
+});
+test('FR02 重新绑定账号必须换账号，更换应用必须保留当前账号',async()=>{
+ const f=setup();try{
+  f.store.saveSetting('feishu-application',{mode:'custom',appId:'cli_existing123',profile:'research-existing',ownerOpenId:'ou_scanned'});
+  f.reg.start({replaceApp:true,accountRebind:true});
+  f.sdk.pending.at(-1).resolve({client_id:'cli_next123',client_secret:'fixture-secret',user_info:{open_id:'ou_scanned',tenant_brand:'feishu'}});
+  await until(()=>f.reg.snapshot().status==='failed');
+  assert.equal(f.reg.snapshot().recovery.code,'LARK_REBIND_SAME_ACCOUNT');
+  f.reg.start({replaceApp:true});
+  f.sdk.pending.at(-1).resolve({client_id:'cli_next123',client_secret:'fixture-secret',user_info:{open_id:'ou_other',tenant_brand:'feishu'}});
+  await until(()=>f.reg.snapshot().status==='failed');
+  assert.equal(f.reg.snapshot().recovery.code,'LARK_REPLACE_APP_ACCOUNT_CHANGED');
  }finally{await f.close();}
 });
 test('FR02 更新已有应用发布后SDK回调丢失时复用现有profile完成，不要求重新下发密钥',async()=>{

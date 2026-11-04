@@ -30,6 +30,7 @@ export class Store {
   document(id) { const r = this.db.prepare('SELECT body FROM demo_documents WHERE id=?').get(id); return r ? JSON.parse(r.body) : null; }
   setting(key) { const r = this.db.prepare('SELECT body FROM settings WHERE key=?').get(key); return r ? JSON.parse(r.body) : null; }
   saveSetting(key, value) { this.db.prepare('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body').run(key, JSON.stringify(value)); return value; }
+  deleteSetting(key) { this.db.prepare('DELETE FROM settings WHERE key=?').run(key); }
   close() { this.db.close(); }
   saveTerminal(meta) { this.db.prepare('INSERT INTO terminals VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(meta.id, meta.taskId, JSON.stringify(meta)); }
   terminal(id) { const row = this.db.prepare('SELECT body FROM terminals WHERE id=?').get(id); return row ? JSON.parse(row.body) : null; }
