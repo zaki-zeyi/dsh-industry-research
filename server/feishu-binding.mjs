@@ -9,7 +9,7 @@ import { agentDeliverySchema } from './agent-delivery.mjs';
 import { ServiceError } from './service.mjs';
 import { applicationSchema, cliFor } from './feishu-application.mjs';
 import { larkRecoveryForError, larkRecoveryForStatus } from './lark-health.mjs';
-export const requiredScopes = ['auth:user.id:read', 'docx:document:create', 'docx:document:write_only', 'docx:document:readonly', 'docs:document:import', 'drive:drive.metadata:readonly', 'space:folder:create', 'offline_access'];
+export const requiredScopes = ['auth:user.id:read', 'docx:document:create', 'docx:document:write_only', 'docx:document:readonly', 'docs:document:import', 'docs:document.media:upload', 'docs:document.media:download', 'drive:drive.metadata:readonly', 'drive:file:upload', 'drive:file:download', 'space:folder:create', 'offline_access'];
 export const requiredTenantScopes = ['im:message:send_as_bot'];
 export class FeishuBinding {
   constructor({ command, run, store, registerApp } = {}) {
@@ -221,7 +221,10 @@ export class FeishuBinding {
   }
   async start({ rebind = false } = {}) {
     if (this.registration.busy || this.configuring) throw new ServiceError(409, '飞书应用配置正在处理中，请稍后再试');
-    if (this.completing) throw new ServiceError(409, '授权确认正在处理中，请稍后再重新绑定');
+    if (this.completing) {
+      if (this.flow) return this.publicFlow();
+      throw new ServiceError(409, '授权确认正在处理中，请稍后再重新绑定');
+    }
     if (this.starting) {
       if (this.startingRebind !== rebind) throw new ServiceError(409, '授权二维码正在生成，请稍后再试');
       return this.starting;

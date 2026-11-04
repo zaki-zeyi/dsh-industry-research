@@ -41,9 +41,10 @@ test('PRD1907 过期授权需重新发起，不接受非官方URL与假二维码
   const bad=new FeishuBinding({run:async args=>args[1]==='status'?status(false):{device_code:'secret',verification_url:'https://evil.example/authorize'}}); await assert.rejects(bad.start(),/无法发起/);
 });
 
-test('PRD1915 缺少目录读取/搜索权限仍可绑定，授权请求不申请这两项', async () => {
-  const writeScopes = 'auth:user.id:read docx:document:create docx:document:write_only docx:document:readonly docs:document:import drive:drive.metadata:readonly space:folder:create offline_access';
+test('PRD1837 申请平台所需全部生态权限，但不申请目录读取/搜索权限', async () => {
+  const writeScopes = 'auth:user.id:read docx:document:create docx:document:write_only docx:document:readonly docs:document:import docs:document.media:upload docs:document.media:download drive:drive.metadata:readonly drive:file:upload drive:file:download space:folder:create offline_access';
   assert.ok(!requiredScopes.includes('space:document:retrieve')); assert.ok(!requiredScopes.includes('search:docs:read'));
+  for (const scope of ['docs:document.media:upload','docs:document.media:download','drive:file:upload','drive:file:download']) assert.ok(requiredScopes.includes(scope));
   const loggedIn = new FeishuBinding({ run: async () => status(true, writeScopes) });
   assert.equal((await loggedIn.requireBound()).bound, true); assert.equal((await loggedIn.start()).bound, true);
   let grant;
@@ -98,7 +99,7 @@ test('PRD1951 已绑定也可并发幂等重新绑定，新二维码替换旧流
     assert.ok(!JSON.stringify(fresh).includes('private-'));assert.equal((await binding.complete(fresh.flowId)).userName,'新账号');assert.equal((await binding.status()).userName,'新账号');assert.ok(!calls.some(a=>a.includes('logout')));
   }finally{binding.close();}
 });
-test('PRD1951 重新绑定生成失败不会注销原账号，确认中不允许替换流程',async()=>{
+test('PRD1951 重新绑定生成失败不会注销原账号，确认中重复请求恢复同一流程',async()=>{
  let fail=true,finish;const binding=new FeishuBinding({run:async args=>{
   if(args[1]==='status')return status(true);
   if(args[1]==='qrcode'){if(fail)throw new Error('private-error');writeFileSync(args.at(-1),png);return '';}
@@ -107,7 +108,7 @@ test('PRD1951 重新绑定生成失败不会注销原账号，确认中不允许
  }});
  try{
   await assert.rejects(binding.start({rebind:true}),e=>e.status===503&&!e.message.includes('private'));assert.equal((await binding.status()).bound,true);
-  fail=false;const flow=await binding.start({rebind:true});const completed=binding.complete(flow.flowId);await assert.rejects(binding.start({rebind:true}),e=>e.status===409);assert.equal(binding.flow.id,flow.flowId);finish();assert.equal((await completed).bound,true);
+  fail=false;const flow=await binding.start({rebind:true});const completed=binding.complete(flow.flowId);const duplicate=await binding.start({rebind:true});assert.equal(duplicate.flowId,flow.flowId);assert.equal(duplicate.autoCompleting,false);assert.equal(binding.flow.id,flow.flowId);finish();assert.equal((await completed).bound,true);
  }finally{binding.close();}
 });
 
@@ -171,6 +172,9 @@ test('扫码仍在等待时不阻塞页面，后台完成授权并自动切回�
   const completed=binding.autoComplete(flow.flowId);
   while(!finish)await new Promise(resolve=>setTimeout(resolve,5));
   assert.equal(binding.flow.autoCompleting,true);
+  const duplicate=await binding.start({rebind:true});
+  assert.equal(duplicate.flowId,flow.flowId);
+  assert.equal(duplicate.autoCompleting,true);
   const polling=await binding.status();
   assert.equal(polling.flowId,flow.flowId);
   assert.equal(polling.autoCompleting,true);
