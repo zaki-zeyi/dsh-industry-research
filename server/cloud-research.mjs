@@ -1,6 +1,7 @@
 import { briefingCloudPrompt } from './briefings.mjs';
 import { industryCloudPrompt } from './industry-prompt.mjs';
 import { internalMaterialCloudPrompt } from './internal-materials.mjs';
+import { analysisCloudPrompt } from './analysis-prompt.mjs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readFileSync } from 'node:fs';
 import { cliFor } from './feishu-application.mjs';
@@ -12,6 +13,7 @@ function writeGuard(meta){return meta.writeClientPath?`【并行调研与保存�
 function cloudContent(task, meta) {
   if (task.briefing) return briefingCloudPrompt(task, meta);
   if (task.internal) return internalMaterialCloudPrompt(task, meta);
+  if (task.analysis) return analysisCloudPrompt(task, meta);
   if (task.industry) return industryCloudPrompt(task, meta);
   const cli = cliFor(task.feishuApp);
   return task.prompt + '\n\n' + `飞书操作固定使用 lark-cli，所有飞书命令（包括授权状态、文档、目录与 skills）必须使用这个配置，不得切换或回退默认应用。
@@ -41,6 +43,7 @@ export async function waitCloudDelivery(sessions, meta, { signal, timeoutMs = RE
     if (receipt?.requestId === meta.deliveryRequestId) {
       if (receipt.folderToken && meta.targetFolderToken && receipt.folderToken !== meta.targetFolderToken) throw new Error('交付目录与指定文件夹不一致，请在原会话核对');
       if (receipt.status === 'published' && !receipt.folderToken) throw new Error('飞书交付缺少实际目标目录 ID，请在原会话核对');
+      if (receipt.status === 'published' && receipt.report && !receipt.analysisFolderToken) throw new Error('友商分析交付缺少分析目录 ID，请在原会话核对');
       if (receipt.status === 'published' && sessions.get(meta.id).activity === 'waiting_input') return { cloudDelivery: receipt };
       if (receipt.status === 'failed') throw new Error(receipt.error);
     }

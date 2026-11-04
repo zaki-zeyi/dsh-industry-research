@@ -19,7 +19,7 @@ import { mkdirSync, openSync, closeSync, readFileSync, unlinkSync, writeFileSync
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 export function dataIdentity(path) { return createHash('sha256').update(resolve(path)).digest('hex'); }
-export async function startRuntime({ env = process.env, port = Number(env.PORT ?? 3088), dataDir = resolve(env.DATA_DIR ?? './data'), dist = fileURLToPath(new URL('../dist', import.meta.url)), host, binding, libraryRun } = {}) {
+export async function startRuntime({ env = process.env, port = Number(env.PORT ?? 3088), dataDir = resolve(env.DATA_DIR ?? './data'), dist = fileURLToPath(new URL('../dist', import.meta.url)), host, binding, libraryRun, analysisRun } = {}) {
   dataDir = resolve(dataDir);
   mkdirSync(dataDir, { recursive: true });
   const lock = resolve(dataDir, '.runtime.lock');
@@ -57,7 +57,7 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     service.recover();
     if (service.briefingSchedules) void service.briefingSchedules.catchUpMissed().catch(() => {});
 
-    server.on('request', createApp(service, { dist, libraryRun, health: { application: 'industry-research', dataIdentity: dataIdentity(dataDir), transport: researcher.transport ?? 'json' } }));
+    server.on('request', createApp(service, { dist, libraryRun, analysisRun, health: { application: 'industry-research', dataIdentity: dataIdentity(dataDir), transport: researcher.transport ?? 'json' } }));
     terminalSockets = attachTerminalWebSocket(server, terminals);
   } catch (error) {
     server.close(); await service?.close(); service?.binding?.close(); await terminals?.close(); nativeSessions?.close(); store?.close(); release(); throw error;

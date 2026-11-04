@@ -2,6 +2,7 @@ import {CloudWrites} from './cloud-writes.mjs';
 import { briefingInput, briefingKey } from './briefings.mjs';
 import { RESEARCH_TIMEOUT_MS } from './cloud-research.mjs';
 import { industryInputSchema, preferences, DEFAULT_COMPANIES, library, mergeCompanyDelivery } from './industry.mjs';
+import { analysisInputSchema, analysisLibrary, mergeAnalysisDelivery, missingAnalysisSources } from './analysis.mjs';
 import { EventEmitter } from 'node:events';
 import { z } from 'zod';
 import { folderSettings, folderCacheKey } from './feishu-folder.mjs';
@@ -11,7 +12,7 @@ import { promptFor, reportSchema } from './report.mjs';
 import { agentDeliverySchema, agentPublication } from './agent-delivery.mjs';
 import { ServiceError } from './service-error.mjs';
 
-export const createSchema = z.object({ direction: z.string().trim().min(2, '调研方向至少填写两个字').max(200), sources: z.string().trim().min(1).max(2000).default('web'), prompt: z.string().trim().min(10).max(14000).optional(), industry: industryInputSchema.optional(), briefing: briefingInput.extend({ window: z.object({start:z.string(),end:z.string(),display:z.string()}) }).optional(), internal: internalMaterialMetadataSchema.optional() });
+export const createSchema = z.object({ direction: z.string().trim().min(2, '调研方向至少填写两个字').max(200), sources: z.string().trim().min(1).max(2000).default('web'), prompt: z.string().trim().min(10).max(14000).optional(), industry: industryInputSchema.optional(), analysis: analysisInputSchema.optional(), briefing: briefingInput.extend({ window: z.object({start:z.string(),end:z.string(),display:z.string()}) }).optional(), internal: internalMaterialMetadataSchema.optional() }).refine(value => !(value.industry && value.analysis), '任务不能同时包含公司调研和友商分析配置');
 const creationPermit = Symbol('feishu-bound');
 export { ServiceError } from './service-error.mjs';
 export class ResearchService {
@@ -64,7 +65,13 @@ export class ResearchService {
     if (key) { const prior = this.store.request(key); if (prior) { if (prior.input !== serialized) throw new ServiceError(409, '该请求标识已用于不同的任务'); return this.require(prior.task_id); } }
     if (data.internal?.workflowVersion === 1534) data.internal.research = { companies: [...new Set([...DEFAULT_COMPANIES, ...library(this.store, this.feishuSettings(), this.binding?.applicationSnapshot?.()).companies.map(c => c.name)])], dimensions: preferences(this.store).dimensions };
     const id = newId(); const now = new Date().toISOString(); const application = this.binding?.applicationSnapshot?.() ?? { mode: 'default' }; const root = this.feishuSettings(application);
-    const task = { id, industry: data.industry, briefing: data.briefing, internal: data.internal, ...(metadata.scheduled ? { scheduled: metadata.scheduled } : {}), feishuApp: application, cloudOnly: Boolean(this.cloudOnly), feishuRoot: root, autoUpload: this.researcher.transport === 'dsh-native' && this.publisher.kind === 'agent', ai: this.researcher.transport === 'dsh-native' ? { agent: 'dsh-native', configuration: 'host' } : this.aiSettings?.snapshot() ?? { agent: 'codex' }, direction: data.direction, sources: data.sources, prompt: data.prompt ?? promptFor(data.direction, data.sources, root.rootName, root.folderUrl), mode: this.mode, terminalMode: this.researcher.transport === 'pty', nativeSession: this.researcher.transport === 'dsh-native', status: 'queued', stage: 'queued', createdAt: now, updatedAt: now, runs: [], reports: [], report: null, draft: '', error: null, publication: { ...(this.publisher.kind === 'agent' ? { owner: 'agent' } : {}), target: this.publisher.kind === 'agent' ? 'feishu' : this.publisher.kind ?? (this.mode === 'demo' ? 'demo' : 'feishu'), status: 'pending', documentId: null, url: null, writtenBlocks: 0 } };
+    if (data.analysis && !this.cloudOnly) throw new ServiceError(409, '友商分析需要在 DSH 原生会话中运行，并将报告保存到飞书');
+    const sourceLibrary = data.analysis ? library(this.store, root, application) : null;
+    if (data.analysis) {
+      const missing = missingAnalysisSources(sourceLibrary, data.analysis.companies);
+      if (missing.length) throw new ServiceError(409, `以下公司尚无全量信息库报告：${missing.join('、')}，请先更新全量信息库`);
+    }
+    const task = { id, industry: data.industry, analysis: data.analysis, analysisSources: sourceLibrary, analysisIndex: data.analysis ? analysisLibrary(this.store, root, application) : undefined, briefing: data.briefing, internal: data.internal, ...(metadata.scheduled ? { scheduled: metadata.scheduled } : {}), feishuApp: application, cloudOnly: Boolean(this.cloudOnly), feishuRoot: root, autoUpload: this.researcher.transport === 'dsh-native' && this.publisher.kind === 'agent', ai: this.researcher.transport === 'dsh-native' ? { agent: 'dsh-native', configuration: 'host' } : this.aiSettings?.snapshot() ?? { agent: 'codex' }, direction: data.direction, sources: data.sources, prompt: data.prompt ?? promptFor(data.direction, data.sources, root.rootName, root.folderUrl), mode: this.mode, terminalMode: this.researcher.transport === 'pty', nativeSession: this.researcher.transport === 'dsh-native', status: 'queued', stage: 'queued', createdAt: now, updatedAt: now, runs: [], reports: [], report: null, draft: '', error: null, publication: { ...(this.publisher.kind === 'agent' ? { owner: 'agent' } : {}), target: this.publisher.kind === 'agent' ? 'feishu' : this.publisher.kind ?? (this.mode === 'demo' ? 'demo' : 'feishu'), status: 'pending', documentId: null, url: null, writtenBlocks: 0 } };
     this.store.transaction(() => { this.store.save(task); this.store.event(id, 'user', task.prompt); if (key) this.store.saveRequest(key, serialized, id); });
     this.enqueue(id, 'research'); return this.require(id);
   }
@@ -88,6 +95,13 @@ export class ResearchService {
         if (t.briefing) { t.briefingLibrary = this.store.setting(briefingKey(t)) ?? {}; t.industryLibrary = library(this.store, t.feishuRoot, t.feishuApp); }
         if (t.internal) { t.internalFolders = this.store.setting(internalFolderKey(t)) ?? {}; t.industryLibrary = library(this.store, t.feishuRoot, t.feishuApp); this.save(t); }
         if (t.industry) { t.industryLibrary = library(this.store, t.feishuRoot, t.feishuApp); this.save(t); }
+        if (t.analysis) {
+          t.analysisSources = library(this.store, t.feishuRoot, t.feishuApp);
+          const missing = missingAnalysisSources(t.analysisSources, t.analysis.companies);
+          if (missing.length) throw new Error(`以下公司尚无全量信息库报告：${missing.join('、')}`);
+          t.analysisIndex = analysisLibrary(this.store, t.feishuRoot, t.feishuApp);
+          this.save(t);
+        }
         if (t.cloudOnly) { await this.binding.requireBound(t.feishuApp ?? { mode: 'default' }); const pendingRoot=this.store.setting(folderCacheKey(t.feishuRoot));if(this.researcher.transport!=='dsh-native'||(pendingRoot?.owner&&!pendingRoot.folderToken&&pendingRoot.owner!==t.id&&!this.active.has(pendingRoot.owner)))this.prepareCloudRoot(t); this.save(t); }
         const report = await this.researcher.run(t, {
           signal,
@@ -105,9 +119,15 @@ export class ResearchService {
           this.rememberCloudFolder(t, delivery);
           this.rememberBriefing(t, delivery);
           this.rememberInternalMaterial(t, delivery);
-          mergeCompanyDelivery(this.store, t, delivery);
-          if (t.industry && t.industry.companies.some(name => !delivery.companies?.some(c => c.name === name))) throw new Error('部分公司未交付，已保存完成的公司，请重试补齐');
-          if (t.internal && !delivery.reportFolderToken) throw new Error('内部资料交付缺少【内部解析资料】目录');
+          if (t.analysis) {
+            if (!delivery.report) throw new Error('友商分析未交付报告元信息');
+            if (delivery.url !== delivery.report.url) throw new Error('友商分析回执中的报告链接不一致');
+            t.analysisReport = mergeAnalysisDelivery(this.store, t, delivery);
+          } else {
+            mergeCompanyDelivery(this.store, t, delivery);
+            if (t.industry && t.industry.companies.some(name => !delivery.companies?.some(c => c.name === name))) throw new Error('部分公司未交付，已保存完成的公司，请重试补齐');
+            if (t.internal && !delivery.reportFolderToken) throw new Error('内部资料交付缺少【内部解析资料】目录');
+          }
           t.publication = agentPublication(delivery); t.status = 'ready'; t.stage = 'done';
           run.status = 'completed'; run.endedAt = new Date().toISOString(); this.save(t);
           this.cloudWrites.release(id);
@@ -229,12 +249,25 @@ export class ResearchService {
     const delivery = agentDeliverySchema.parse(input);
     if (t.cloudOnly) {
       const meta = this.store.terminal(terminalId); if (!meta || delivery.requestId !== meta.deliveryRequestId) return;
-      try { this.cloudWrites.assertOwner(t); this.rememberCloudFolder(t, delivery); this.rememberBriefing(t, delivery); this.rememberInternalMaterial(t, delivery); mergeCompanyDelivery(this.store, t, delivery); } catch { return; }
+      try {
+        this.cloudWrites.assertOwner(t);
+        this.rememberCloudFolder(t, delivery);
+        this.rememberBriefing(t, delivery);
+        this.rememberInternalMaterial(t, delivery);
+        if (t.analysis) {
+          if (delivery.report) {
+            if (delivery.url !== delivery.report.url) return;
+            t.analysisReport = mergeAnalysisDelivery(this.store, t, delivery);
+          } else if (delivery.status === 'published') return;
+        } else {
+          mergeCompanyDelivery(this.store, t, delivery);
+        }
+      } catch { return; }
       // A legacy 10-minute timeout may have rejected a valid receipt containing
       // source timestamps. Recover only a completed, matching delivery within
       // the new 30-minute limit, never a cancelled or genuinely overdue run.
       const run = t.runs.at(-1), elapsed = Date.parse(meta.lastTurnCompletedAt) - Date.parse(run?.startedAt);
-      if (t.status === 'failed' && /超时|超过 30 分钟/.test(t.error ?? '') && meta.activity === 'waiting_input' && meta.lastTurnReason === 'completed' && elapsed >= 0 && elapsed <= RESEARCH_TIMEOUT_MS && delivery.status === 'published' && delivery.folderToken && (!t.industry || t.industry.companies.every(name => delivery.companies?.some(c => c.name === name)))) {
+      if (!t.analysis && t.status === 'failed' && /超时|超过 30 分钟/.test(t.error ?? '') && meta.activity === 'waiting_input' && meta.lastTurnReason === 'completed' && elapsed >= 0 && elapsed <= RESEARCH_TIMEOUT_MS && delivery.status === 'published' && delivery.folderToken && (!t.industry || t.industry.companies.every(name => delivery.companies?.some(c => c.name === name)))) {
         t.status = 'ready'; t.error = null; run.status = 'completed'; run.endedAt = meta.lastTurnCompletedAt;
         this.event(id, 'system', '已核对原会话有效交付，完成时间未超过 30 分钟，恢复完成状态；未重新调研。');
       }

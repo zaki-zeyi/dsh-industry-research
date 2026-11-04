@@ -58,14 +58,16 @@ export function parseLibraryManifest(content) {
   if (new Set(companies.map(c => c.name)).size !== companies.length || new Set(companies.map(c => c.url)).size !== companies.length) throw new LibraryRefreshError('LIBRARY_DUPLICATES', '公司索引存在重复公司或文档，请在原会话核对；本地已同步记录保留');
   return companies.map(c => ({ ...c, updatedAt: new Date(c.updatedAt).toISOString() }));
 }
-export async function refreshLibrary(store, root, app, run = promisify(execFile), { command } = {}) {
+const defaultExec = promisify(execFile);
+export async function refreshLibrary(store, root, app, run = defaultExec, { command } = {}) {
   const key = libraryKey(root, app), current = library(store, root, app);
   if (!current.manifestUrl) return current;
   const args = [...(app?.profile ? ['--profile', app.profile] : []), 'docs', '+fetch', '--doc', current.manifestUrl, '--doc-format', 'markdown', '--as', 'user'];
   const local = resolve(homedir(), '.local/bin/lark-cli');
   let stdout;
   try {
-    const launch = larkLaunch(command ?? (existsSync(local) ? local : 'lark-cli'), args);
+    const executable = command ?? (existsSync(local) ? local : 'lark-cli');
+    const launch = run === defaultExec ? larkLaunch(executable, args) : { command: executable, args };
     ({ stdout } = await run(launch.command, launch.args, { timeout: 20000, maxBuffer: 1024 * 1024, windowsHide: true, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }));
   } catch (e) { throw libraryReadError(e); }
   let response;
