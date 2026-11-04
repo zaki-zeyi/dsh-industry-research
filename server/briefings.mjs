@@ -59,6 +59,9 @@ export function previousScheduleRun(plan, now = Date.now()) {
   return new Date(previous).toISOString();
 }
 export class BriefingSchedules {
+  // Schedule belongs to the host's optional official bundle. Resolve it on
+  // demand so installing/removing this plugin never owns that shared service.
+  get schedule() { return typeof this.host?.get === 'function' ? this.host.get('schedule') : this.host?.schedule; }
   constructor(service, host, url) { this.service=service;this.host=host;this.chain=Promise.resolve();this.endpointFile=service.nativeSessions?resolve(service.nativeSessions.workRoot,'briefing-endpoint.json'):null;if(this.endpointFile){mkdirSync(service.nativeSessions.workRoot,{recursive:true});writeFileSync(this.endpointFile,JSON.stringify({url}));} }
   get(kind) {
     const saved=this.service.store.setting('briefing-schedule')??{};
@@ -68,24 +71,24 @@ export class BriefingSchedules {
       const timing=plan.enabled?scheduleTiming(plan):{nextRunAt:null,todayTimePassed:false};
       return [k,{...plan,...timing}];
     }));
-    const all={...saved,daily:plans.daily.time,weekly:plans.weekly.time,weekday:plans.weekly.weekday,enabled:plans.daily.enabled||plans.weekly.enabled,research:saved.research??research,plans,available:Boolean(this.host?.schedule)};
+    const all={...saved,daily:plans.daily.time,weekly:plans.weekly.time,weekday:plans.weekly.weekday,enabled:plans.daily.enabled||plans.weekly.enabled,research:saved.research??research,plans,available:Boolean(this.schedule)};
     return kind?{...plans[kind],available:all.available}:all;
   }
   save(input) {const job=this.chain.then(async()=>{if(input.kind)return this.commitOne(singleScheduleInput.parse(input));const v=scheduleInput.parse(input);for(const kind of ['daily','weekly'])await this.commitOne({kind,time:v[kind],weekday:v.weekday,enabled:v.enabled,research:v.research});return this.get();});this.chain=job.catch(()=>{});return job;}
   async commitOne(v) {
-    if(!this.host?.schedule)throw Object.assign(new Error('当前宿主未启用官方 Schedule 服务'),{status:503});
+    if(!this.schedule)throw Object.assign(new Error('当前宿主未启用官方 Schedule 服务'),{status:503});
     if(v.enabled&&this.service.cloudOnly)await this.service.binding.requireBound();
     const old=this.get(),plans={...old.plans},records={...old.records};let sessionId=old.sessionId;
     if(!sessionId&&v.enabled){const created=await this.service.nativeSessions.createHostSession();sessionId=created.sessionId;const r=await this.host.sessionController.resolveAgent(sessionId);this.host.permissionPresets.set(r.agent.session,'danger-full-access');}
     if(sessionId&&v.enabled)await this.service.nativeSessions.bindSession(sessionId);
     const persist=()=>this.service.store.saveSetting('briefing-schedule',{...old,sessionId,plans,records});
-    if(records[v.kind]){await this.host.schedule.delete({sessionId,id:records[v.kind].id});delete records[v.kind];}
+    if(records[v.kind]){await this.schedule.delete({sessionId,id:records[v.kind].id});delete records[v.kind];}
     const previousPlan=plans[v.kind];
     const activationChanged=!previousPlan?.activatedAt||previousPlan.time!==v.time||previousPlan.weekday!==v.weekday||(!previousPlan.enabled&&v.enabled);
     plans[v.kind]={...v,enabled:false};persist();
     if(v.enabled){
       const prompt=`使用终端 Node.js 读取 ${this.endpointFile} 的 url 字段，向该 url 加 /api/briefings/trigger/${v.kind} 发起 POST，Content-Type application/json，body {}。这会创建独立调研会话。不要自行调研。失败在此会话说明原因；成功后保持安静，报告会话及飞书机器人通知用户。`;
-      records[v.kind]=await this.host.schedule.create(sessionId,{title:'行研'+labelFor(v.kind),prompt,[v.kind]:{time:v.time+':00',time_zone:'Asia/Shanghai',...(v.kind==='weekly'?{weekdays:[v.weekday]}:{})}});
+      records[v.kind]=await this.schedule.create(sessionId,{title:'行研'+labelFor(v.kind),prompt,[v.kind]:{time:v.time+':00',time_zone:'Asia/Shanghai',...(v.kind==='weekly'?{weekdays:[v.weekday]}:{})}});
     }
     plans[v.kind]={...v,...(v.enabled?{activatedAt:activationChanged?new Date().toISOString():previousPlan.activatedAt}:{})};persist();return this.get(v.kind);
   }
