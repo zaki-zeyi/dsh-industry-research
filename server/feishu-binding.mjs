@@ -63,7 +63,7 @@ export class FeishuBinding {
       const accountMismatch = authenticated && application.ownerOpenId && user.openId !== application.ownerOpenId;
       if (accountMismatch) return { ...metadata, bound: false, available: true, error: '个人授权账号与扫码绑定应用的账号不一致，请使用同一账号授权，或重新扫码登录并绑定新账号的应用' };
       const bound = authenticated && missingScopes.length === 0;
-      return { ...metadata, bound, authenticated, available: true, ...(bound ? { userName: String(user.userName ?? '飞书用户').slice(0, 100) } : { missingScopes, error: authenticated ? '飞书已登录，但文档与云盘权限不完整，请补充授权后开始调研' : '请绑定飞书并授权文档与云盘访问权限后开始调研' }) };
+      return { ...metadata, bound, authenticated, available: true, ...(bound ? { ...(/^ou_[A-Za-z0-9]+$/.test(user.openId ?? '') ? {openId:user.openId} : {}), userName: String(user.userName ?? '飞书用户').slice(0, 100) } : { missingScopes, error: authenticated ? '飞书已登录，但文档与云盘权限不完整，请补充授权后开始调研' : '请绑定飞书并授权文档与云盘访问权限后开始调研' }) };
     } catch { return { bound: false, available: false, error: '无法检查飞书授权，请确认已安装并配置 lark-cli，或稍后重试' }; }
   }
   async requireBound(application = this.applicationSnapshot()) { if (this.registration.busy) throw new ServiceError(428, '请先完成扫码登录和应用绑定，再启动调研'); const state = await this.status(application); if (!state.bound) throw new ServiceError(428, state.error); return state; }
@@ -91,7 +91,7 @@ export class FeishuBinding {
       const directory = mkdtempSync(resolve(tmpdir(), 'research-feishu-binding-')), qrPath = resolve(directory, 'qrcode.png');
       this.flow = { id: randomUUID(), deviceCode: data.device_code, url, rebind, application, appId: state.appId ?? application.appId, appName: state.appName, expires: Date.now() + Math.min(expiresIn, 1800) * 1000, directory, qrPath };
       observeFlow(this.store,this.flow);
-      await this.run(this.selectedArgs(['auth', 'qrcode', url, '--output', qrPath], application), { cwd: directory }); return this.publicFlow();
+      await this.run(this.selectedArgs(['auth', 'qrcode', url, '--output', './qrcode.png'], application), { cwd: directory }); return this.publicFlow();
     } catch { this.clear(); throw new ServiceError(503, '无法发起飞书绑定，请检查 lark-cli 应用配置与网络后重试'); }
   }
   publicFlow() { return { bound: false, rebind: this.flow.rebind, appId: this.flow.appId, appName: this.flow.appName, flowId: this.flow.id, authorizationUrl: this.flow.url, expiresAt: new Date(this.flow.expires).toISOString() }; }

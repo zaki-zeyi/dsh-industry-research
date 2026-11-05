@@ -2,8 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Activity, Download, RefreshCw, X } from 'lucide-react';
 import './feishu-monitor.css';
 
-const phases = { binding_validation: '绑定结果校验', app_registration: '应用扫码登记', credential_storage: '本机凭据保存', qr_generation: '二维码生成', identity_check: '身份及服务验证', authorization_start: '发起个人授权', authorization_confirm: '确认个人授权', bot_message: '机器人消息', cli_request: '飞书 CLI 调用', application: '应用配置', local_key: '本机登录密钥', user_authorization: '个人授权', document_permissions: '文档及云盘权限', account: '账号一致性', bot_identity: '机器人身份' };
+const phases = { notification_preflight: '通知发送前检查', binding_validation: '绑定结果校验', app_registration: '应用扫码登记', credential_storage: '本机凭据保存', qr_generation: '二维码生成', identity_check: '身份及服务验证', authorization_start: '发起个人授权', authorization_confirm: '确认个人授权', bot_message: '机器人消息', cli_request: '飞书 CLI 调用', application: '应用配置', local_key: '本机登录密钥', user_authorization: '个人授权', document_permissions: '文档及云盘权限', account: '账号一致性', bot_identity: '机器人身份' };
 const codes = {
+  MISSING_RECIPIENT:['任务缺少接收账号','历史任务没有账号快照，无法安全推断接收人。请重新生成报告。'],
+  RECIPIENT_UNVERIFIED:['接收账号未验证','请在原应用下验证任务保存的原账号，再重试通知。'],
+  BINDING_CHANGED:['任务与当前绑定不一致','请恢复任务原应用和原账号后重试，或使用当前绑定重新生成报告。'],
+  USER_AUTH_UNAVAILABLE:['个人授权未验证','请完成任务原应用的个人授权后重试通知。'],
+  BOT_UNAVAILABLE:['机器人身份不可用','检查任务原应用的机器人能力和凭据。'],
   OK: ['正常', ''], PROFILE_CONFLICT: ['应用配置重复', '本机已有相同 App ID 的 profile。系统会尝试更新已有配置，请结合后续凭据保存日志确认恢复结果。'],
   LOCAL_KEY_UNAVAILABLE: ['本机密钥不可用', '检查当前 Windows 用户的凭据存储与登录密钥，再重新授权。'],
   CLI_NOT_FOUND: ['未找到飞书 CLI', '确认运行插件的环境能够访问 lark-cli。'], LOCAL_STORAGE_DENIED: ['本机存储访问失败', '检查文件访问权限与系统凭据存储。'],

@@ -25,7 +25,7 @@ test('FR02 通知失败可进入当前应用的机器人权限修复',async({pag
  await page.route('**/api/briefings/11111111-1111-4111-8111-111111111111/notify',route=>route.fulfill({json:{id:'11111111-1111-4111-8111-111111111111',direction:'日报',publication:{status:'published'},briefing:{window:{display:'昨天'}},notification:{status:'failed',error:'机器人缺少权限',diagnostic:{action:'repair_bot'}}}}));
  await page.getByRole('button',{name:'重试通知',exact:true}).click();
  await expect(page.getByRole('button',{name:'修复机器人权限',exact:true})).toHaveCount(0);
- await expect.poll(()=>posts.length).toBe(1);expect(posts[0]).toEqual({refresh:false,replaceApp:false,accountRebind:false});
+ await expect.poll(()=>posts.length).toBe(1);expect(posts[0]).toEqual({refresh:false,repairBot:true});
 });
 
 

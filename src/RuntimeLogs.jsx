@@ -22,6 +22,8 @@ const labels = {
   'feishu.registration.failed':'飞书应用登记或保存失败',
   'feishu.notification.sent':'机器人消息已发送',
   'feishu.notification.failed':'机器人消息发送失败',
+  'feishu.notification.recipient_restored':'已核验并补齐任务原接收账号',
+  'feishu.notification.binding_mismatch':'任务原应用与当前绑定应用不一致',
   'runtime.started':'工作台服务已启动',
   'runtime.stopped':'工作台服务已关闭',
   'runtime.start_failed':'工作台服务启动失败',

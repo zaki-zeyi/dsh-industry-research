@@ -1,3 +1,4 @@
+import {resolve} from 'node:path';
 import { requiredScopes } from '../../server/feishu-binding.mjs';
 import { writeFileSync } from 'node:fs';
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGQAAAABJRU5ErkJggg==','base64');
@@ -12,7 +13,7 @@ export function applicationRunner({defaultBound=true,defaultUserName='默认用�
   if(!account)throw new Error('missing profile');
   if(cmd[1]==='status')return {appId:mismatch?'cli_wrong123':account.appId,identities:{bot:{status:'ready',available:true,verified:true,appName:profile?'自定义应用':'默认应用'},user:{available:account.bound,verified:account.bound,userName:account.userName,openId:account.openId??'ou_scanned',scope:requiredScopes.join(' ')}}};
   if(cmd[0]==='contact'&&cmd[1]==='+get-user')return {ok:true,data:{user:{open_id:account.openId??'ou_scanned',union_id:account.unionId??'on_scanned'}}};
-  if(cmd[1]==='qrcode'){writeFileSync(cmd.at(-1),png);return '';}
+  if(cmd[1]==='qrcode'){writeFileSync(resolve(options.cwd ?? '.',cmd.at(-1)),png);return '';}
   if(cmd.includes('--device-code')){account.bound=true;if(account.logins?.length){const login=account.logins.shift(),value=typeof login==='string'?{openId:login}:login;account.openId=value.openId;account.unionId=value.unionId??`on_${value.openId}`;account.userName=account.openId==='ou_scanned'?'自定义用户':'切换用户';}else if(!profile&&issued>1)account.userName='切换用户';return {success:true};}
   issued++;return {device_code:'private-device-'+issued,verification_url:'https://accounts.feishu.cn/device?code='+(profile?'custom-':'test-')+issued,expires_in:600};
  };

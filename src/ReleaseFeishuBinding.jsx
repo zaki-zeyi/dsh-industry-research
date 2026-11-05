@@ -34,7 +34,11 @@ export function ReleaseFeishuBinding({ onClose, onBound, onStatus, onRepaired, r
     } catch (e) { setError(e.message); }
     finally { lock.current = false; setBusy(false); }
   }
-  if (registering) return <Registration trace={trace.current} onClose={() => setRegistering(false)} onSaved={async () => { setRegistering(false); await authorize(); }}/>;
+  if (registering) return <Registration trace={trace.current} repairBot={Boolean(repair)} onClose={() => setRegistering(false)} onSaved={async () => {
+    setRegistering(false);
+    if(repair){const value=await api('/feishu-binding');setState(value);onStatus?.(value);if(value.bound&&onRepaired)await onRepaired();}
+    else await authorize();
+  }}/>;
   return <Dialog title={state?.bound ? '飞书绑定' : '绑定飞书'} onClose={onClose} busy={busy}>
     <p className="modal-intro">先扫码选择或创建飞书应用，再完成个人文档授权。</p>
     <section className="binding-application" aria-label="授权应用"><div><strong>当前应用</strong><p>{state?.appName || state?.appId || '尚未绑定应用'}</p>{state?.appName && state?.appId && <small>{state.appId}</small>}</div><button className="secondary" disabled={busy || !state} onClick={() => openRegistration('replace')}>更换应用</button></section>
@@ -44,7 +48,7 @@ export function ReleaseFeishuBinding({ onClose, onBound, onStatus, onRepaired, r
   </Dialog>;
 }
 
-function Registration({ onClose, onSaved, trace }) {
+function Registration({ onClose, onSaved, trace, repairBot = false }) {
   const [state, setState] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const lock = useRef(false), done = useRef(false), live = useRef(true);
   const lastStatus=useRef('');
@@ -60,7 +64,7 @@ function Registration({ onClose, onSaved, trace }) {
     lock.current = true; setBusy(true); setError('');
     if(refresh)trace.attempt++;
     connectionEvent(trace,'clicked','registration',{status:'started'});
-    try { await receive(await api('/feishu-registration', { refresh })); }
+    try { await receive(await api('/feishu-registration', { refresh, ...(repairBot ? {repairBot:true} : {}) })); }
     catch (e) { if (live.current) setError(e.message); }
     finally { lock.current = false; if (live.current) setBusy(false); }
   }
@@ -81,8 +85,9 @@ function Registration({ onClose, onSaved, trace }) {
     }, 1000);
     return () => { live.current = false; clearInterval(timer); };
   }, []);
-  return <Dialog title="扫码登录并绑定应用" onClose={close} busy={busy || state?.status === 'saving'}>
-    <p className="modal-intro">1. 扫码登录要使用的飞书账号。<br/>2. 在飞书页面选择已有应用或创建新应用并确认。<br/>3. 返回工作台，继续个人文档授权。</p>
+  return <Dialog title={repairBot ? '确认应用权限更新' : '扫码登录并绑定应用'} onClose={close} busy={busy || state?.status === 'saving'}>
+    {repairBot && <p className="modal-intro">在飞书确认当前应用的机器人发送消息权限并发布。此操作不更换应用或个人账号。</p>}
+    {!repairBot && <p className="modal-intro">1. 扫码登录要使用的飞书账号。<br/>2. 在飞书页面选择已有应用或创建新应用并确认。<br/>3. 返回工作台，继续个人文档授权。</p>}
     {state?.status === 'awaiting_scan' && <div className="binding-qr"><a className="doc-link" href={state.authorizationUrl} target="_blank" rel="noreferrer">打开飞书应用绑定页</a><img src={`/api/feishu-registration/qr/${state.flowId}`} alt="飞书账号登录与应用绑定二维码" onError={()=>connectionEvent(trace,'qr_error','registration',{status:'failed'})}/></div>}
     {(!state || state.status === 'initializing') && <p role="status">正在生成应用绑定二维码…</p>}{state?.status === 'saving' && <p role="status">正在保存应用配置…</p>}
     {(error || state?.error) && <div className="form-error" role="alert">{error || state.error}</div>}
