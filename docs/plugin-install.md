@@ -2,7 +2,7 @@
 
 插件包名 `dsh-industry-research`，页签名「行研工作台」。
 
-1. Windows x64 用户优先运行 `DSH-行研工作台-Windows-一键安装包-v0.7.2.exe`；安装器会安装官方 DSH（如未安装）并预装插件。
+1. Windows x64 用户优先运行 `DSH-Industry-Research-Windows-Setup-v0.7.2.exe`；安装器会安装官方 DSH（如未安装）并预装插件。
 2. 维护者流程：`npm ci` 安装依赖，`npm run acceptance` 验收，`npm run plugin:pack` 打包，再运行 `npm run bundle:windows` 生成 Windows 一键安装包。
 3. ZIP 用户解压 `artifacts/dsh-industry-research-0.7.2-desktop.zip`，在 DSH「添加插件」填写解压后包含 package.json 的目录。安装后保留该目录。
 4. 安装并启用，按宿主提示重新加载。macOS / Windows 支持 x64、arm64；Windows 建议使用较短路径。

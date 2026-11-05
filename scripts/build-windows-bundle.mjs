@@ -48,7 +48,7 @@ if (process.env.DSH_DESKTOP_INSTALLER_SHA256 && process.env.DSH_DESKTOP_INSTALLE
 const signatureStatus = process.env.SKIP_DSH_SIGNATURE_CHECK === '1' ? 'skipped' : verifyOfficialInstaller();
 const stage = resolve(artifacts, 'windows-bundle-stage');
 const nsi = resolve(artifacts, 'windows-bundle.nsi');
-const output = resolve(artifacts, `DSH-行研工作台-Windows-一键安装包-v${version}.exe`);
+const output = resolve(artifacts, `DSH-Industry-Research-Windows-Setup-v${version}.exe`);
 rmSync(stage, { recursive: true, force: true });
 rmSync(nsi, { force: true });
 rmSync(output, { force: true });

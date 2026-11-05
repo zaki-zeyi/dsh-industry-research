@@ -60,7 +60,7 @@ npm run plugin:pack
 
 Windows x64 用户优先使用一键安装包：
 
-- `artifacts/DSH-行研工作台-Windows-一键安装包-v0.7.2.exe`
+- `artifacts/DSH-Industry-Research-Windows-Setup-v0.7.2.exe`
 
 安装器会先安装官方 DeepSeek Harness（未安装时），再预装并启用行研工作台，无需 Node.js、npm 或手动添加插件。安装包内附未修改的官方 DeepSeek Harness `0.2.0-rc.2` 安装器；已有 DSH 设置、账号和调研数据会保留。
 

@@ -5,7 +5,7 @@ DSH 行研工作台 Windows 一键安装包
 
 一、安装
 --------
-1. 双击 DSH-行研工作台-Windows-一键安装包-{{PLUGIN_VERSION}}.exe。
+1. 双击 DSH-Industry-Research-Windows-Setup-v{{PLUGIN_VERSION}}.exe。
 2. 如果电脑还没有 DeepSeek Harness，安装器会先安装官方桌面端。
 3. 安装器会自动把行研工作台装进 DSH，并启动桌面端。
 4. 打开 DSH 后，在侧栏点击“行研工作台”，按页面提示绑定飞书。
