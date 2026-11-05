@@ -1,6 +1,6 @@
 {
   "name": "dsh-industry-research",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -23,6 +23,7 @@
     "plugin:check-pack": "node scripts/check-plugin-pack.mjs",
     "bundle:windows": "node scripts/build-windows-bundle.mjs",
     "bundle:plugins": "node scripts/prepare-bundled-plugins.mjs",
+    "test:installer": "node scripts/run-windows-installer-acceptance.mjs",
     "test:git-install": "node scripts/git-install-acceptance.mjs",
     "plugin:publish-git": "node scripts/publish-git-plugin.mjs"
   },

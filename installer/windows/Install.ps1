@@ -1,3 +1,9 @@
+param(
+  [switch]$Silent,
+  [switch]$NoLaunch,
+  [switch]$NoSuccessDialog
+)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -6,7 +12,9 @@ $script:LogPath = Join-Path ([System.IO.Path]::GetTempPath()) 'dsh-industry-rese
 $script:Messages = $null
 $script:TestRoot = $env:DSH_BUNDLE_TEST_ROOT
 $script:TestMode = -not [string]::IsNullOrWhiteSpace($script:TestRoot)
-$script:NoLaunch = $script:TestMode -or ($env:DSH_BUNDLE_NO_LAUNCH -eq '1')
+$script:Silent = [bool]$Silent
+$script:NoSuccessDialog = [bool]$NoSuccessDialog
+$script:NoLaunch = $script:TestMode -or ($env:DSH_BUNDLE_NO_LAUNCH -eq '1') -or [bool]$NoLaunch
 $script:LocalAppData = $env:LOCALAPPDATA
 . (Join-Path $PSScriptRoot 'Compatibility.ps1')
 
@@ -47,6 +55,7 @@ function Write-Step {
 
 function Show-Message {
   param([string]$Text, [string]$Icon = 'Information')
+  if ($script:Silent) { return }
   try {
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.MessageBox]::Show($Text, (T 'title'), 'OK', $Icon) | Out-Null
@@ -71,7 +80,7 @@ function Fail {
   $text = $text + "`r`n`r`n" + (T 'logHint') + ' ' + $script:LogPath
   Write-Host $text -ForegroundColor Red
   Write-Log $text
-  if (-not $script:TestMode) { Show-Message $text 'Error' }
+  if (-not $script:TestMode -and -not $script:Silent) { Show-Message $text 'Error' }
   exit 1
 }
 
@@ -182,6 +191,7 @@ function Install-DeepSeekHarness {
   Start-Sleep -Seconds 3
   $found = Get-DshExecutable
   if (-not [string]::IsNullOrWhiteSpace($found)) { return $found }
+  if ($script:Silent) { throw 'Silent DeepSeek Harness installation did not complete.' }
 
   Write-Step 'installerFallback'
   Write-Log 'Running DeepSeek Harness installer with the graphical wizard.'
@@ -193,6 +203,7 @@ function Install-DeepSeekHarness {
 function Ensure-DshStopped {
   $processes = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -eq 'DeepSeek Harness' })
   if ($processes.Count -eq 0) { return }
+  if ($script:Silent) { Fail 'dshRunningSilent' }
   if (-not (Ask-YesNo (T 'dshRunning'))) { Fail 'closeCancelled' }
   foreach ($process in $processes) {
     try { Stop-Process -Id $process.Id -Force -ErrorAction Stop } catch { Write-Log ('Could not stop process ' + $process.Id + ': ' + $_.Exception.Message) }
@@ -410,6 +421,18 @@ function Update-DesktopProfile {
   }
 }
 
+function Write-LaunchScript {
+  param([string]$Path, [string]$DshPath)
+  if ([string]::IsNullOrWhiteSpace($DshPath)) { return }
+  $escapedPath = $DshPath.Replace("'", "''")
+  $escapedDirectory = (Split-Path -Parent $DshPath).Replace("'", "''")
+  $lines = @(
+    '$ErrorActionPreference = ''Stop''',
+    "Start-Process -FilePath '$escapedPath' -WorkingDirectory '$escapedDirectory'"
+  )
+  [System.IO.File]::WriteAllText($Path, ($lines -join "`r`n") + "`r`n", (New-Object System.Text.UTF8Encoding($true)))
+}
+
 try {
   $script:Messages = Read-Messages
   Write-Log 'Installer started.'
@@ -450,6 +473,9 @@ try {
     })
   }
   Write-JsonFile (Join-Path $plugin.InstallRoot 'installed-plugins.json') $marker
+  if (-not $script:TestMode) {
+    Write-LaunchScript -Path (Join-Path $plugin.InstallRoot 'Launch DSH.ps1') -DshPath $dshPath
+  }
   Write-Log ('Plugin installed at ' + $plugin.Target)
   foreach ($installedPlugin in $installedPlugins) { Write-Log ('Bundled plugin ' + $installedPlugin.Name + '@' + $installedPlugin.Version + ' at ' + $installedPlugin.Target) }
   Write-Log ('Desktop profile updated at ' + $profileDir)
@@ -473,8 +499,10 @@ try {
   if (-not $script:NoLaunch) {
     Start-Process -FilePath $dshPath -WorkingDirectory (Split-Path -Parent $dshPath) | Out-Null
   }
-  if ($script:NoLaunch) { Show-Message (T 'installSuccessNoLaunch') 'Information' }
-  else { Show-Message (T 'installSuccess') 'Information' }
+  if (-not $script:NoSuccessDialog) {
+    if ($script:NoLaunch) { Show-Message (T 'installSuccessNoLaunch') 'Information' }
+    else { Show-Message (T 'installSuccess') 'Information' }
+  }
   exit 0
 } catch {
   Fail 'installFailed' ($_.Exception.Message + "`r`n" + $_.ScriptStackTrace)

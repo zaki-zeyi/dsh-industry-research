@@ -9,6 +9,7 @@
   "unsupportedArch": "当前系统是 32 位 Windows。官方 DeepSeek Harness 桌面端只提供 64 位版本，无法在 32 位系统上安装或运行。请改用 64 位 Windows 10/11。",
   "unsupportedArm64": "当前安装包仅提供 x64 版本，尚未验证 Windows on ARM（ARM64）。请改用 x64 电脑安装。",
   "dshRunning": "DeepSeek Harness 正在运行。安装插件需要先关闭它，是否现在关闭？未保存的内容请先保存。",
+  "dshRunningSilent": "DeepSeek Harness 正在运行。静默安装不会强制关闭正在使用的程序，请先保存内容并退出 DeepSeek Harness，然后重新运行安装包。",
   "closeCancelled": "已取消安装。请关闭 DeepSeek Harness 后重新运行安装包。",
   "installingPlugin": "正在安装行研工作台与精选插件...",
   "pluginMissing": "安装包内容不完整，缺少行研工作台插件文件。请重新下载完整安装包。",

@@ -20,6 +20,8 @@ DSH 行研工作台 Windows 一键安装包
 
 不需要安装 Node.js、npm，也不需要手动添加插件。
 
+重复双击安装包不会打开多个安装窗口，系统会切回已经打开的安装程序。安装和卸载不能同时进行。
+
 预装的精选插件
 --------------
 
@@ -67,11 +69,17 @@ DSH 行研工作台 Windows 一键安装包
 
 四、卸载
 --------
-打开下面的目录，双击“Uninstall.cmd”：
+打开 Windows“设置 > 应用 > 已安装的应用”，找到“DSH 行研工作台”，点击“卸载”。
+
+如果需要在没有“设置”入口的环境卸载，也可以打开下面的目录，双击“Uninstall.cmd”：
 
     %LOCALAPPDATA%\DSH Industry Research
 
-卸载只会从 DSH 配置中移除本安装包添加的行研工作台和精选插件，不会删除已有调研、账号和插件数据。DeepSeek Harness 本身请在 Windows“设置 > 应用”中卸载。
+卸载只会从 DSH 配置中移除本安装包添加的行研工作台和精选插件，不会删除已有调研、账号和插件数据。DeepSeek Harness 本身请在 Windows“设置 > 应用”中单独卸载。
+
+IT 管理员可以运行下面的命令静默卸载：
+
+    "%LOCALAPPDATA%\DSH Industry Research\Uninstall.exe" /S
 
 五、排错
 --------

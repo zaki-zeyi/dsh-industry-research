@@ -98,44 +98,188 @@ try {
 
   const script = `Unicode true
 ManifestDPIAware true
+!include "MUI2.nsh"
 !include "WinVer.nsh"
 !include "x64.nsh"
 !include "LogicLib.nsh"
-Name "DSH 行研工作台（Windows 10/11 x64）"
-Caption "DSH 行研工作台 安装程序（Windows 10/11 x64）"
-BrandingText "DSH 行研工作台 v${version}"
+
+!define PRODUCT_NAME "DSH 行研工作台"
+!define PRODUCT_VERSION "${version}"
+!define PRODUCT_PUBLISHER "DSH Industry Research"
+!define PRODUCT_URL "https://github.com/zaki-zeyi/dsh-industry-research"
+!define UNINSTALL_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{7D83B2E5-2D8F-4B2A-9D8A-3A4E1C7B6F10}"
+!define INSTALLER_MUTEX "Local\\DSH-Industry-Research-Installer-{7D83B2E5-2D8F-4B2A-9D8A-3A4E1C7B6F10}"
+!define SETUP_CAPTION "DSH 行研工作台 安装程序（Windows 10/11 x64）"
+!define UNINSTALL_CAPTION "DSH 行研工作台 卸载程序"
+Var UninstallRegistryKey
+
+!define MUI_ABORTWARNING
+!define MUI_WELCOMEPAGE_TITLE "欢迎安装 DSH 行研工作台"
+!define MUI_WELCOMEPAGE_TEXT "此向导将安装 DeepSeek Harness（如未安装）、行研工作台和精选插件。安装仅写入当前用户目录，不需要管理员权限。"
+!define MUI_FINISHPAGE_TITLE "DSH 行研工作台安装完成"
+!define MUI_FINISHPAGE_TEXT "安装已完成。你可以从开始菜单或桌面打开 DeepSeek Harness。"
+!define MUI_FINISHPAGE_NOAUTOCLOSE
+!define MUI_FINISHPAGE_RUN "$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "启动 DeepSeek Harness"
+!define MUI_FINISHPAGE_RUN_PARAMETERS "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $\\"$INSTDIR\\Launch DSH.ps1$\\""
+
+Name "\${PRODUCT_NAME}（Windows 10/11 x64）"
+Caption "\${SETUP_CAPTION}"
+UninstallCaption "\${UNINSTALL_CAPTION}"
+BrandingText "\${PRODUCT_NAME} v\${PRODUCT_VERSION}"
 OutFile "${output}"
 RequestExecutionLevel user
 SetCompressor /SOLID zlib
 ShowInstDetails show
-AutoCloseWindow true
+AutoCloseWindow false
+AllowSkipFiles off
+InstallDir "$LOCALAPPDATA\\DSH Industry Research"
+InstallDirRegKey HKCU "\${UNINSTALL_KEY}" "InstallLocation"
 VIProductVersion "${version}.0"
-VIAddVersionKey "ProductName" "DSH 行研工作台"
-VIAddVersionKey "FileDescription" "DSH 行研工作台 Windows 10/11 x64 一键安装包"
-VIAddVersionKey "FileVersion" "${version}"
+VIAddVersionKey "ProductName" "\${PRODUCT_NAME}"
+VIAddVersionKey "CompanyName" "\${PRODUCT_PUBLISHER}"
+VIAddVersionKey "FileDescription" "\${PRODUCT_NAME} Windows 10/11 x64 一键安装包"
+VIAddVersionKey "FileVersion" "\${PRODUCT_VERSION}"
+VIAddVersionKey "ProductVersion" "\${PRODUCT_VERSION}"
+VIAddVersionKey "LegalCopyright" "Copyright (c) DSH Industry Research"
+
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_LANGUAGE "SimpChinese"
+
+!define SYSTYPE_PTR p
+
+!macro ActivateOtherInstance
+  StrCpy $3 ""
+  loop:
+    FindWindow $3 "#32770" "" "" $3
+    StrCmp 0 $3 windownotfound
+    StrLen $0 "\${SETUP_CAPTION}"
+    IntOp $0 $0 + 1
+    System::Call 'USER32::GetWindowText(p r3, t.r0, i r0)'
+    StrCmp $0 "\${SETUP_CAPTION}" windowfound ""
+    StrLen $0 "\${UNINSTALL_CAPTION}"
+    IntOp $0 $0 + 1
+    System::Call 'USER32::GetWindowText(p r3, t.r0, i r0)'
+    StrCmp $0 "\${UNINSTALL_CAPTION}" windowfound loop
+  windowfound:
+    SendMessage $3 0x112 0xF120 0 /TIMEOUT=2000
+    System::Call 'USER32::SetForegroundWindow(p r3)'
+  windownotfound:
+!macroend
+
+!macro SingleInstanceMutex
+  System::Call 'KERNEL32::CreateMutex(p 0, i 1, t "\${INSTALLER_MUTEX}") p .r9 ?e'
+  StrCmp $9 0 mutexFailed createOk
+  mutexFailed:
+    SetErrorLevel 3
+    Abort
+  createOk:
+  Pop $0
+  IntCmpU $0 183 duplicate launch launch
+  duplicate:
+    IfSilent silentDuplicate
+    !insertmacro ActivateOtherInstance
+    SetErrorLevel 2
+    Abort
+  silentDuplicate:
+    SetErrorLevel 2
+    Abort
+  launch:
+!macroend
 
 Function .onInit
+  SetShellVarContext current
+  !insertmacro SingleInstanceMutex
+  StrCpy $UninstallRegistryKey "\${UNINSTALL_KEY}"
+  ReadEnvStr $0 "DSH_BUNDLE_TEST_ROOT"
+  \${If} $0 != ""
+    StrCpy $INSTDIR "$0\\LocalAppData\\DSH Industry Research"
+    StrCpy $UninstallRegistryKey "\${UNINSTALL_KEY}-Test"
+  \${EndIf}
   \${IfNot} \${AtLeastWin10}
-    MessageBox MB_OK|MB_ICONSTOP "此安装包仅支持 Windows 10 或 Windows 11（64 位）。当前系统版本过低，请升级后再安装。"
+    MessageBox MB_OK|MB_ICONSTOP "此安装包仅支持 Windows 10 或 Windows 11（64 位）。当前系统版本过低，请升级后再安装。" /SD IDOK
+    SetErrorLevel 2
     Abort
   \${EndIf}
-  \${IfNot} \${RunningX64}
-    MessageBox MB_OK|MB_ICONSTOP "此安装包包含 64 位 DeepSeek Harness 桌面端，不能在 32 位 Windows 或 ARM64 系统上安装。请使用 64 位 Windows 10/11。"
+  \${IfNot} \${IsNativeAMD64}
+    MessageBox MB_OK|MB_ICONSTOP "此安装包包含 64 位 DeepSeek Harness 桌面端，不能在 32 位 Windows 或 ARM64 系统上安装。请使用 64 位 Windows 10/11。" /SD IDOK
+    SetErrorLevel 2
     Abort
   \${EndIf}
 FunctionEnd
 
-Page instfiles
+Function un.onInit
+  SetShellVarContext current
+  !insertmacro SingleInstanceMutex
+  StrCpy $UninstallRegistryKey "\${UNINSTALL_KEY}"
+  ReadEnvStr $0 "DSH_BUNDLE_TEST_ROOT"
+  \${If} $0 != ""
+    StrCpy $INSTDIR "$0\\LocalAppData\\DSH Industry Research"
+    StrCpy $UninstallRegistryKey "\${UNINSTALL_KEY}-Test"
+  \${EndIf}
+FunctionEnd
 
 Section "Install"
   InitPluginsDir
   SetOutPath "$PLUGINSDIR\\payload"
   File /r "${stage}\\*.*"
   DetailPrint "正在配置行研工作台..."
-  ExecWait '"$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\\payload\\Install.ps1"' $0
-  IntCmp $0 0 done
-    MessageBox MB_ICONSTOP "安装未完成。请查看日志：$TEMP\\dsh-industry-research-bundle.log"
-  done:
+  StrCpy $1 "-NoLaunch -NoSuccessDialog"
+  IfSilent 0 +2
+    StrCpy $1 "$1 -Silent"
+  ExecWait '"$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\\payload\\Install.ps1" $1' $0
+  IntCmp $0 0 installSucceeded
+    SetErrorLevel $0
+    MessageBox MB_OK|MB_ICONSTOP "安装未完成。请查看日志：$TEMP\\dsh-industry-research-bundle.log" /SD IDOK
+    Abort
+  installSucceeded:
+  SetOutPath "$INSTDIR"
+  WriteUninstaller "$INSTDIR\\Uninstall.exe"
+  WriteRegStr HKCU "$UninstallRegistryKey" "DisplayName" "\${PRODUCT_NAME}"
+  WriteRegStr HKCU "$UninstallRegistryKey" "DisplayVersion" "\${PRODUCT_VERSION}"
+  WriteRegStr HKCU "$UninstallRegistryKey" "Publisher" "\${PRODUCT_PUBLISHER}"
+  WriteRegStr HKCU "$UninstallRegistryKey" "URLInfoAbout" "\${PRODUCT_URL}"
+  WriteRegStr HKCU "$UninstallRegistryKey" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "$UninstallRegistryKey" "DisplayIcon" "$INSTDIR\\Uninstall.exe"
+  WriteRegStr HKCU "$UninstallRegistryKey" "UninstallString" '"$INSTDIR\\Uninstall.exe"'
+  WriteRegStr HKCU "$UninstallRegistryKey" "QuietUninstallString" '"$INSTDIR\\Uninstall.exe" /S'
+  WriteRegDWORD HKCU "$UninstallRegistryKey" "NoModify" 1
+  WriteRegDWORD HKCU "$UninstallRegistryKey" "NoRepair" 1
+  DetailPrint "安装完成。"
+SectionEnd
+
+Section "Uninstall"
+  SetShellVarContext current
+  IfFileExists "$INSTDIR\\Uninstall.ps1" 0 uninstallMissing
+  DetailPrint "正在移除行研工作台和本安装包添加的插件..."
+  ExecWait '"$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\\Uninstall.ps1" -Silent -NoConfirm' $0
+  IntCmp $0 0 uninstallSucceeded
+    SetErrorLevel $0
+    MessageBox MB_OK|MB_ICONSTOP "卸载未完成。请查看日志：$TEMP\\dsh-industry-research-bundle.log" /SD IDOK
+    Abort
+  uninstallMissing:
+    SetErrorLevel 3
+    MessageBox MB_OK|MB_ICONSTOP "卸载程序文件缺失。请重新运行最新安装包修复后再卸载。" /SD IDOK
+    Abort
+  uninstallSucceeded:
+  Delete "$INSTDIR\\Launch DSH.ps1"
+  Delete "$INSTDIR\\Uninstall.ps1"
+  Delete "$INSTDIR\\Uninstall.cmd"
+  Delete "$INSTDIR\\messages.json"
+  Delete "$INSTDIR\\README.txt"
+  Delete "$INSTDIR\\THIRD-PARTY-NOTICES.txt"
+  Delete "$INSTDIR\\manifest.json"
+  Delete "$INSTDIR\\installed-plugins.json"
+  RMDir /r "$INSTDIR\\plugin"
+  RMDir /r "$INSTDIR\\bundled-plugins"
+  Delete "$INSTDIR\\Uninstall.exe"
+  RMDir "$INSTDIR"
+  DeleteRegKey HKCU "$UninstallRegistryKey"
+  DetailPrint "卸载完成。"
 SectionEnd
 `;
   writeFileSync(nsi, '\ufeff' + script, 'utf8');

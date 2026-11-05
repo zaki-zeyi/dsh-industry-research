@@ -1,3 +1,8 @@
+param(
+  [switch]$Silent,
+  [switch]$NoConfirm
+)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -6,6 +11,8 @@ $script:LogPath = Join-Path ([System.IO.Path]::GetTempPath()) 'dsh-industry-rese
 $script:TestRoot = $env:DSH_BUNDLE_TEST_ROOT
 $script:TestMode = -not [string]::IsNullOrWhiteSpace($script:TestRoot)
 $script:Messages = $null
+$script:Silent = [bool]$Silent
+$script:NoConfirm = [bool]$NoConfirm
 
 function Read-Messages {
   $path = Join-Path $script:Root 'messages.json'
@@ -29,6 +36,7 @@ function Write-Log {
 
 function Show-Message {
   param([string]$Text, [string]$Icon = 'Information')
+  if ($script:Silent) { return }
   try {
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.MessageBox]::Show($Text, (T 'uninstallTitle'), 'OK', $Icon) | Out-Null
@@ -49,7 +57,7 @@ function Fail {
   $text = $text + "`r`n`r`n" + (T 'logHint') + ' ' + $script:LogPath
   Write-Host $text -ForegroundColor Red
   Write-Log $text
-  if (-not $script:TestMode) { Show-Message $text 'Error' }
+  if (-not $script:TestMode -and -not $script:Silent) { Show-Message $text 'Error' }
   exit 1
 }
 
@@ -86,7 +94,7 @@ function Get-PluginLinkPath {
 try {
   $script:Messages = Read-Messages
   Write-Log 'Uninstaller started.'
-  if (-not $script:TestMode -and -not (Ask-YesNo (T 'uninstallConfirm'))) { exit 0 }
+  if (-not $script:TestMode -and -not $script:Silent -and -not $script:NoConfirm -and -not (Ask-YesNo (T 'uninstallConfirm'))) { exit 0 }
 
   $userHome = [Environment]::GetFolderPath('UserProfile')
   $dshHome = $env:DSH_HOME
