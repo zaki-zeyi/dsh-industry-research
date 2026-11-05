@@ -252,13 +252,13 @@ test('AC-UI-15 报告与AI对话均可返回工作台，重新打开不重复调
 test('AC-UI-17 飞书根目录设置、Prompt 联动与刷新保留', async ({ page, request }) => {
   await page.goto('/'); await page.getByRole('button', { name: '设置飞书根目录', exact: true }).click();
   await expect(page.getByLabel('根目录名字')).toHaveValue('行研工作台');
-  await page.getByLabel('根目录名字').fill('产业研究'); await page.getByRole('button', { name: '保存设置', exact: true }).click();
+  await page.getByLabel('根目录名字').fill('产业研究'); await page.getByRole('button', { name: '保存设置并导入', exact: true }).click();
   await page.getByRole('button', { name: '新建调研', exact: true }).click();
   await expect(page.getByLabel('任务 Prompt')).toHaveValue(/飞书云盘根目录【产业研究】/);
   await expect(page.locator('.destination')).toContainText('产业研究');
   await page.keyboard.press('Escape'); await page.reload();
   await page.getByRole('button', { name: '设置飞书根目录', exact: true }).click(); await expect(page.getByLabel('根目录名字')).toHaveValue('产业研究');
-  await page.getByLabel('根目录名字').fill(''); await expect(page.getByRole('button', { name: '保存设置', exact: true })).toBeDisabled();
+  await page.getByLabel('根目录名字').fill(''); await expect(page.getByRole('button', { name: '保存设置并导入', exact: true })).toBeDisabled();
   await page.keyboard.press('Escape');
   await request.put('/api/feishu-settings', { data: { rootName: '行研工作台' } });
 });
@@ -281,21 +281,21 @@ test('AC-UI-18 已发布报告卡片链接到飞书，AI会话按钮独立进入
 
 test('AC-UI-19 目标文件夹链接保存ID、刷新保留，拒绝文档与外站链接',async({page,request})=>{
  await page.goto('/');await page.getByRole('button',{name:'设置飞书根目录',exact:true}).click();await page.getByRole('radio',{name:'使用文件夹链接',exact:true}).check();
- await page.getByLabel('飞书文件夹链接',{exact:true}).fill('https://evil.example/drive/folder/token');await page.getByRole('button',{name:'保存设置',exact:true}).click();await expect(page.getByRole('alert')).toContainText('飞书文件夹');
- await page.getByLabel('飞书文件夹链接',{exact:true}).fill('https://tenant.feishu.cn/docx/document123');await page.getByRole('button',{name:'保存设置',exact:true}).click();await expect(page.getByRole('alert')).toContainText('飞书文件夹');
- const url='https://tenant.feishu.cn/drive/folder/uiFolder123';await page.getByLabel('飞书文件夹链接',{exact:true}).fill(url);await page.getByRole('button',{name:'保存设置',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
+ await page.getByLabel('飞书文件夹链接',{exact:true}).fill('https://evil.example/drive/folder/token');await page.getByRole('button',{name:'保存设置并导入',exact:true}).click();await expect(page.getByRole('alert')).toContainText('飞书文件夹');
+ await page.getByLabel('飞书文件夹链接',{exact:true}).fill('https://tenant.feishu.cn/docx/document123');await page.getByRole('button',{name:'保存设置并导入',exact:true}).click();await expect(page.getByRole('alert')).toContainText('飞书文件夹');
+ const url='https://tenant.feishu.cn/drive/folder/uiFolder123';await page.getByLabel('飞书文件夹链接',{exact:true}).fill(url);await page.getByRole('button',{name:'保存设置并导入',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
  expect((await(await request.get('/api/feishu-settings')).json()).folderToken).toBe('uiFolder123');await page.reload();await page.getByRole('button',{name:'设置飞书根目录',exact:true}).click();await expect(page.getByLabel('飞书文件夹链接',{exact:true})).toHaveValue(url);await page.keyboard.press('Escape');
  await request.put('/api/feishu-settings',{data:{rootName:'行研工作台',folderUrl:''}});
 });
 
 test('AC-UI-20 目录名字或链接二选一，链接独立提交及Prompt联动，切换后不携带隐藏值',async({page,request})=>{
  await page.goto('/');await page.getByRole('button',{name:'设置飞书根目录',exact:true}).click();
- await page.getByRole('radio',{name:'使用文件夹链接',exact:true}).check();await expect(page.getByLabel('根目录名字',{exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'保存设置',exact:true})).toBeDisabled();
+ await page.getByRole('radio',{name:'使用文件夹链接',exact:true}).check();await expect(page.getByLabel('根目录名字',{exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'保存设置并导入',exact:true})).toBeDisabled();
  const folderUrl='https://tenant.feishu.cn/drive/folder/choiceFolder456';await page.getByLabel('飞书文件夹链接',{exact:true}).fill(folderUrl);
  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.screenshot({path:'test-results/root-link-mode.png',fullPage:true});
- const submitted=page.waitForRequest(r=>r.method()==='PUT'&&r.url().endsWith('/api/feishu-settings'));await page.getByRole('button',{name:'保存设置',exact:true}).click();expect((await submitted).postDataJSON()).toEqual({folderUrl});
+ const submitted=page.waitForRequest(r=>r.method()==='POST'&&r.url().endsWith('/api/feishu-settings/import'));await page.getByRole('button',{name:'保存设置并导入',exact:true}).click();expect((await submitted).postDataJSON()).toEqual({folderUrl});
  await page.getByRole('button',{name:'新建调研',exact:true}).click();await expect(page.getByLabel('任务 Prompt')).toHaveValue(new RegExp('指定飞书文件夹'));await expect(page.getByLabel('任务 Prompt')).toHaveValue(new RegExp('choiceFolder456'));await expect(page.locator('.destination')).toContainText('指定文件夹');await page.keyboard.press('Escape');
  await page.getByRole('button',{name:'设置飞书根目录',exact:true}).click();await expect(page.getByRole('radio',{name:'使用文件夹链接',exact:true})).toBeChecked();await page.getByRole('radio',{name:'按名字创建',exact:true}).check();await expect(page.getByLabel('飞书文件夹链接',{exact:true})).toHaveCount(0);await page.getByLabel('根目录名字',{exact:true}).fill('二选一目录');
- const nameSubmit=page.waitForRequest(r=>r.method()==='PUT'&&r.url().endsWith('/api/feishu-settings'));await page.getByRole('button',{name:'保存设置',exact:true}).click();expect((await nameSubmit).postDataJSON()).toEqual({rootName:'二选一目录'});expect((await(await request.get('/api/feishu-settings')).json()).folderUrl).toBeUndefined();
+ const nameSubmit=page.waitForRequest(r=>r.method()==='POST'&&r.url().endsWith('/api/feishu-settings/import'));await page.getByRole('button',{name:'保存设置并导入',exact:true}).click();expect((await nameSubmit).postDataJSON()).toEqual({rootName:'二选一目录'});expect((await(await request.get('/api/feishu-settings')).json()).folderUrl).toBeUndefined();
  await request.put('/api/feishu-settings',{data:{rootName:'行研工作台'}});
 });

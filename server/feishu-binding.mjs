@@ -9,7 +9,7 @@ import { agentDeliverySchema } from './agent-delivery.mjs';
 import { ServiceError } from './service.mjs';
 import { applicationSchema, cliFor } from './feishu-application.mjs';
 import { larkRecoveryForError, larkRecoveryForStatus } from './lark-health.mjs';
-export const requiredScopes = ['auth:user.id:read', 'contact:user.basic_profile:readonly', 'docx:document:create', 'docx:document:write_only', 'docx:document:readonly', 'docs:document:import', 'docs:document.media:upload', 'docs:document.media:download', 'drive:drive.metadata:readonly', 'drive:file:upload', 'drive:file:download', 'space:folder:create', 'offline_access'];
+export const requiredScopes = ['auth:user.id:read', 'contact:user.basic_profile:readonly', 'docx:document:create', 'docx:document:write_only', 'docx:document:readonly', 'docs:document:import', 'docs:document.media:upload', 'docs:document.media:download', 'drive:drive.metadata:readonly', 'space:document:retrieve', 'drive:file:upload', 'drive:file:download', 'space:folder:create', 'offline_access'];
 export const requiredTenantScopes = ['im:message:send_as_bot'];
 export class FeishuBinding {
   constructor({ command, run, store, registerApp } = {}) {

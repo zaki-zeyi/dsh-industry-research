@@ -59,6 +59,119 @@ export function parseLibraryManifest(content) {
   return companies.map(c => ({ ...c, updatedAt: new Date(c.updatedAt).toISOString() }));
 }
 const defaultExec = promisify(execFile);
+const importPageSize = 200, importLimit = 1000;
+const importExcludedNames = new Set(['公司索引', '分析报告索引', '友商分析', '日报', '周报', '内部资料']);
+function cliArgs(app, args) { return [...(app?.profile ? ['--profile', app.profile] : []), ...args]; }
+async function runLarkCli(run, app, args, { command, timeout = 20000 } = {}) {
+  const local = resolve(homedir(), '.local/bin/lark-cli');
+  const executable = command ?? (existsSync(local) ? local : 'lark-cli');
+  const launch = run === defaultExec ? larkLaunch(executable, args) : { command: executable, args };
+  try {
+    const result = await run(launch.command, launch.args, { timeout, maxBuffer: 1024 * 1024, windowsHide: true, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } });
+    return typeof result === 'string' ? result : result?.stdout ?? '';
+  } catch (error) { throw libraryReadError(error); }
+}
+function parseLarkJson(stdout) {
+  try { return JSON.parse(stdout); }
+  catch { throw new LibraryRefreshError('LIBRARY_INVALID_RESPONSE', 'Lark CLI 返回格式异常，请检查 CLI 后重试；本地已同步记录保留'); }
+}
+function larkData(response) { return response?.data ?? response ?? {}; }
+function throwLarkFailure(response, stdout) { if (response?.ok === false) throw libraryReadError({ stdout }); }
+function cleanFileName(value) { return String(value ?? '').trim().replace(/\.(docx?|md)$/i, '').trim(); }
+function fileToken(file) { return file?.shortcut_info?.target_token ?? file?.token; }
+function fileType(file) { return String(file?.shortcut_info?.target_type ?? file?.type ?? '').toLowerCase(); }
+function isFolder(file) { return fileType(file) === 'folder'; }
+function isCompanyDocument(file) { return ['docx', 'doc', 'wiki'].includes(fileType(file)) && /^https:\/\//.test(String(file?.url ?? '')); }
+function fileUpdatedAt(file) {
+  const value = Number(file?.modified_time);
+  if (!Number.isFinite(value) || value <= 0) return new Date().toISOString();
+  return new Date(value > 1e12 ? value : value * 1000).toISOString();
+}
+async function listDriveFolder(run, app, token, options = {}) {
+  const files = []; let pageToken; let pages = 0;
+  do {
+    const args = cliArgs(app, ['drive', 'files', 'list', '--folder-token', token, '--as', 'user', '--json', '--page-size', String(importPageSize), ...(pageToken ? ['--page-token', pageToken] : [])]);
+    const stdout = await runLarkCli(run, app, args, options);
+    const response = parseLarkJson(stdout); throwLarkFailure(response, stdout);
+    const data = larkData(response); files.push(...(Array.isArray(data.files) ? data.files : []));
+    pageToken = data.has_more === false ? null : (data.next_page_token ?? data.page_token ?? null);
+    pages++;
+  } while (pageToken && pages < Math.ceil(importLimit / importPageSize));
+  return { files: files.slice(0, importLimit), truncated: files.length > importLimit };
+}
+async function fetchDocumentContent(run, app, docUrl, options = {}) {
+  const stdout = await runLarkCli(run, app, cliArgs(app, ['docs', '+fetch', '--doc', docUrl, '--doc-format', 'markdown', '--as', 'user']), options);
+  const response = parseLarkJson(stdout); throwLarkFailure(response, stdout);
+  const content = larkData(response).document?.content;
+  if (typeof content !== 'string') throw new LibraryRefreshError('LIBRARY_INVALID_RESPONSE', '公司索引内容为空或格式异常，请在原会话检查后重试；本地已同步记录保留');
+  return content;
+}
+function companiesFromFiles(files) {
+  const names = new Set(), urls = new Set(), companies = [];
+  for (const file of files) {
+    const name = cleanFileName(file?.name), url = String(file?.url ?? '');
+    if (!name || importExcludedNames.has(name) || names.has(name) || urls.has(url) || !isCompanyDocument(file)) continue;
+    names.add(name); urls.add(url);
+    companies.push({ name, url, dimensions: [], added: 0, conflicts: 0, updatedAt: fileUpdatedAt(file) });
+  }
+  return companies;
+}
+function relatedTaskId(store, root, app, name) {
+  const key = libraryKey(root, app);
+  return store.list?.().find(task => task.industry?.companies?.includes(name) && libraryKey(task.feishuRoot, task.feishuApp) === key)?.id;
+}
+function mergeImportedCompanies(store, root, app, current, imported) {
+  const byName = new Map(current.map(company => [company.name, company]));
+  for (const company of imported) {
+    const previous = byName.get(company.name);
+    if (!previous) {
+      const taskId = relatedTaskId(store, root, app, company.name);
+      byName.set(company.name, { ...company, ...(taskId ? { taskId } : {}) });
+      continue;
+    }
+    const previousTime = Date.parse(previous.updatedAt) || 0, remoteTime = Date.parse(company.updatedAt) || 0;
+    const preferRemote = remoteTime >= previousTime;
+    byName.set(company.name, {
+      ...company,
+      ...previous,
+      url: preferRemote ? company.url : previous.url,
+      updatedAt: preferRemote ? company.updatedAt : previous.updatedAt,
+      dimensions: [...new Set([...(previous.dimensions ?? []), ...(company.dimensions ?? [])])],
+      added: Math.max(previous.added ?? 0, company.added ?? 0),
+      conflicts: Math.max(previous.conflicts ?? 0, company.conflicts ?? 0),
+    });
+  }
+  return [...byName.values()];
+}
+export async function importLibrary(store, root, app, run = defaultExec, { command } = {}) {
+  if (!root?.folderToken) return { status: 'skipped', imported: 0, total: library(store, root, app).companies.length, libraryFolderFound: false, indexFound: false, message: '设置已保存。目录将在首次调研时创建，创建后请再次点击“保存设置并导入”。' };
+  const key = libraryKey(root, app), current = library(store, root, app);
+  const rootListing = await listDriveFolder(run, app, root.folderToken, { command });
+  const libraryFolder = rootListing.files.find(file => isFolder(file) && cleanFileName(file.name) === '全量信息库');
+  const libraryFolderToken = fileToken(libraryFolder);
+  const listing = libraryFolderToken ? await listDriveFolder(run, app, libraryFolderToken, { command }) : rootListing;
+  const index = listing.files.find(file => isCompanyDocument(file) && cleanFileName(file.name) === '公司索引');
+  let imported, indexFound = Boolean(index), manifestUrl;
+  if (index) {
+    manifestUrl = String(index.url);
+    imported = parseLibraryManifest(await fetchDocumentContent(run, app, manifestUrl, { command }));
+  } else {
+    imported = companiesFromFiles(listing.files);
+  }
+  const syncedAt = new Date().toISOString();
+  const companies = mergeImportedCompanies(store, root, app, current.companies, imported);
+  const saved = store.saveSetting(key, {
+    ...current,
+    ...(libraryFolderToken ? { folderToken: libraryFolderToken } : {}),
+    ...(manifestUrl ? { manifestUrl } : {}),
+    companies,
+    syncedAt,
+    ...(imported.length ? { importedAt: syncedAt } : {}),
+  });
+  if (!imported.length) return { status: 'empty', imported: 0, total: saved.companies.length, libraryFolderFound: Boolean(libraryFolder), indexFound, syncedAt, truncated: listing.truncated, message: '设置已保存，但飞书目录中没有找到可导入的公司。' };
+  const source = indexFound ? '公司索引' : '公司文档';
+  return { status: 'completed', imported: imported.length, total: saved.companies.length, libraryFolderFound: Boolean(libraryFolder), indexFound, syncedAt, truncated: listing.truncated, message: `已从${source}导入 ${imported.length} 家公司${saved.companies.length > imported.length ? `，当前共收录 ${saved.companies.length} 家` : ''}。` };
+}
 export async function refreshLibrary(store, root, app, run = defaultExec, { command } = {}) {
   const key = libraryKey(root, app), current = library(store, root, app);
   if (!current.manifestUrl) return current;

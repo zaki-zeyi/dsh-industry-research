@@ -41,9 +41,9 @@ test('PRD1907 过期授权需重新发起，不接受非官方URL与假二维码
   const bad=new FeishuBinding({run:async args=>args[1]==='status'?status(false):{device_code:'secret',verification_url:'https://evil.example/authorize'}}); await assert.rejects(bad.start(),/无法发起/);
 });
 
-test('PRD1872 申请平台所需全部生态权限，但不申请目录读取/搜索权限', async () => {
-  const writeScopes = 'auth:user.id:read contact:user.basic_profile:readonly docx:document:create docx:document:write_only docx:document:readonly docs:document:import docs:document.media:upload docs:document.media:download drive:drive.metadata:readonly drive:file:upload drive:file:download space:folder:create offline_access';
-  assert.ok(!requiredScopes.includes('space:document:retrieve')); assert.ok(!requiredScopes.includes('search:docs:read'));
+test('PRD1872 申请平台所需全部生态权限，包含云盘只读列表权限，但不申请搜索权限', async () => {
+  const writeScopes = 'auth:user.id:read contact:user.basic_profile:readonly docx:document:create docx:document:write_only docx:document:readonly docs:document:import docs:document.media:upload docs:document.media:download drive:drive.metadata:readonly space:document:retrieve drive:file:upload drive:file:download space:folder:create offline_access';
+  assert.ok(requiredScopes.includes('space:document:retrieve')); assert.ok(!requiredScopes.includes('search:docs:read'));
   for (const scope of ['docs:document.media:upload','docs:document.media:download','drive:file:upload','drive:file:download']) assert.ok(requiredScopes.includes(scope));
   const loggedIn = new FeishuBinding({ run: async () => status(true, writeScopes) });
   assert.equal((await loggedIn.requireBound()).bound, true); assert.equal((await loggedIn.start()).bound, true);
@@ -53,7 +53,7 @@ test('PRD1872 申请平台所需全部生态权限，但不申请目录读取/�
     if (args[1] === 'qrcode') { writeFileSync(args.at(-1), png); return ''; }
     grant = args[args.indexOf('--scope') + 1]; return { device_code: 'private', verification_url: 'https://accounts.feishu.cn/device?code=write-only', expires_in: 600 };
   } });
-  try { await binding.start(); assert.ok(!grant.includes('space:document:retrieve')); assert.ok(!grant.includes('search:docs:read')); }
+  try { await binding.start(); assert.ok(grant.includes('space:document:retrieve')); assert.ok(!grant.includes('search:docs:read')); }
   finally { binding.close(); }
 });
 

@@ -58,11 +58,14 @@ export function larkRecoveryForStatus(result, { missingScopes = [], accountMisma
   }
 
   if (missingScopes.length) {
+    const driveRead = missingScopes.includes('space:document:retrieve');
     return recovery(
       'LARK_SCOPE_MISSING',
       'authorize',
       true,
-      '飞书授权缺少文档或云盘权限，将自动重新发起授权；完成扫码后会自动恢复。',
+      driveRead
+        ? '飞书授权缺少云盘目录读取权限，将自动重新发起授权；完成扫码后会自动恢复。若仍失败，请在飞书开放平台为应用开通云盘文件读取权限。'
+        : '飞书授权缺少文档或云盘权限，将自动重新发起授权；完成扫码后会自动恢复。',
     );
   }
 

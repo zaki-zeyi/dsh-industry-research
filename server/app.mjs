@@ -1,6 +1,6 @@
 import { briefingTask } from './briefings.mjs';
 import { libraryReadError } from './library-errors.mjs';
-import { refreshLibrary, preferences, preferencesSchema, library, companyTaskInput } from './industry.mjs';
+import { refreshLibrary, importLibrary, preferences, preferencesSchema, library, companyTaskInput } from './industry.mjs';
 import { refreshAnalysisLibrary, analysisLibrary, analysisTaskInput } from './analysis.mjs';
 import { createRequire } from 'node:module';
 const express = createRequire(import.meta.url)('express');
@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { ServiceError } from './service.mjs';
 import { prepareInternalMaterial } from './internal-materials.mjs';
 
-export function createApp(service, { dist = resolve('dist'), health = {}, libraryRun, analysisRun } = {}) {
+export function createApp(service, { dist = resolve('dist'), health = {}, libraryRun, libraryImportRun, analysisRun } = {}) {
   const app = express(); app.disable('x-powered-by');
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer');
@@ -87,6 +87,25 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.get('/api/feishu-binding/qr/:id', (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.type('png').send(service.binding.qr(req.params.id)); } catch(e) { next(e); } });
   app.get('/api/feishu-settings', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json(service.feishuSettings()); });
   app.put('/api/feishu-settings', (req, res, next) => { try { res.json(service.setFeishuSettings(req.body)); } catch (e) { next(e); } });
+  app.post('/api/feishu-settings/import', async (req, res, next) => {
+    let settings;
+    try { settings = service.setFeishuSettings(req.body); }
+    catch (error) { next(error); return; }
+    const application = service.binding?.applicationSnapshot?.();
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      const summary = await importLibrary(service.store, settings, application, libraryImportRun, { command: service.binding?.command });
+      res.json({ settings, import: summary, library: library(service.store, settings, application) });
+    } catch (error) {
+      const safe = libraryReadError(error);
+      const current = library(service.store, settings, application);
+      res.json({
+        settings,
+        import: { status: 'failed', code: safe.code, imported: 0, total: current.companies.length, libraryFolderFound: false, indexFound: false, message: `设置已保存，但读取飞书目录失败：${safe.message}` },
+        library: current,
+      });
+    }
+  });
   app.get('/api/config', (_req, res) => res.json({ mode: service.mode, nativeWorkspace: service.nativeSessions?.workspaceState?.() ?? null, cloudOnly: Boolean(service.cloudOnly), analysisAvailable: Boolean(service.cloudOnly), terminalAvailable: Boolean(service.terminals), nativeSessionAvailable: Boolean(service.nativeSessions), transport: service.researcher.transport ?? 'json', terminalPermissions: service.terminals?.permissions ?? null, publicationTarget: service.publisher.kind ?? 'demo', publicationOwner: 'agent', singleUser: true, feishuTarget: service.feishuSettings().folderUrl ? '飞书云盘 / 指定文件夹' : `飞书云盘 / ${service.feishuSettings().rootName}`, feishuRoot: service.feishuSettings(), internalDirectoryName: service.store.setting("internal-directory-name") ?? "内部资料" }));
   app.get('/api/tasks/:id/agent-qr', (req, res, next) => { try {
     const t = service.require(req.params.id);
