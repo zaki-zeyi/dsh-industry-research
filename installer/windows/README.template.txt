@@ -2,10 +2,18 @@ DSH 行研工作台 Windows 一键安装包
 =================================
 
 版本：行研工作台 {{PLUGIN_VERSION}} / DeepSeek Harness {{DESKTOP_VERSION}}
+目标系统：{{TARGET_OS}}（{{TARGET_ARCH}}）
+
+系统要求
+--------
+* Windows 10 64 位或 Windows 11 64 位。
+* 64 位 x64 处理器与操作系统。
+* 32 位 Windows 10 无法运行官方 DeepSeek Harness 桌面端，因此本安装包会阻止安装并给出提示。
+* Windows 11 ARM64 暂未验证；请使用 x64 电脑。
 
 一、安装
 --------
-1. 双击 DSH-Industry-Research-Windows-Setup-v{{PLUGIN_VERSION}}.exe。
+1. 双击 {{INSTALLER_FILENAME}}。
 2. 如果电脑还没有 DeepSeek Harness，安装器会先安装官方桌面端。
 3. 安装器会自动把行研工作台和精选插件装进 DSH，并启动桌面端。
 4. 打开 DSH 后，在侧栏点击“行研工作台”，按页面提示绑定飞书。
@@ -75,6 +83,7 @@ DSH 行研工作台 Windows 一键安装包
 1. 安装后侧栏没有“行研工作台”：完全退出 DSH 后重新打开。
 2. 提示插件端口被占用：关闭旧的调研服务或重启 DSH。
 3. 飞书无法绑定：检查网络、飞书应用权限和账号权限，按工作台提示重试。
+4. 提示系统版本或 32 位系统不支持：请换用 64 位 Windows 10/11。官方 DSH 桌面端没有 32 位构建，无法通过修改安装脚本绕过。
 
 六、说明
 --------

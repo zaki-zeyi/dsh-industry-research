@@ -8,6 +8,7 @@ $script:TestRoot = $env:DSH_BUNDLE_TEST_ROOT
 $script:TestMode = -not [string]::IsNullOrWhiteSpace($script:TestRoot)
 $script:NoLaunch = $script:TestMode -or ($env:DSH_BUNDLE_NO_LAUNCH -eq '1')
 $script:LocalAppData = $env:LOCALAPPDATA
+. (Join-Path $PSScriptRoot 'Compatibility.ps1')
 
 function Read-Messages {
   $path = Join-Path $script:Root 'messages.json'
@@ -417,7 +418,9 @@ try {
     $script:LocalAppData = Join-Path $script:TestRoot 'LocalAppData'
     New-Item -ItemType Directory -Path $script:LocalAppData -Force | Out-Null
   }
-  if (-not $script:TestMode -and $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { Fail 'unsupportedArch' }
+  $compatibility = Get-InstallerCompatibility -UseTestOverrides:$script:TestMode
+  Write-Log ('Detected system: ' + $compatibility.Detail)
+  if (-not $compatibility.Supported) { Fail $compatibility.ReasonKey $compatibility.Detail }
 
   $userHome = [Environment]::GetFolderPath('UserProfile')
   $dshHome = $env:DSH_HOME

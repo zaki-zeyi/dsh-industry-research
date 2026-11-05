@@ -9,6 +9,8 @@ const artifacts = resolve(root, 'artifacts');
 const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
 const version = pkg.version;
 const desktopVersion = '0.2.0-rc.2';
+const targetOS = 'Windows 10/11';
+const targetArch = 'x64';
 const pluginDir = resolve(artifacts, `${pkg.name}-${version}`);
 const pluginManifest = resolve(pluginDir, 'package.json');
 if (!existsSync(pluginManifest)) throw new Error(`缺少插件安装目录：${pluginDir}。请先运行 npm run plugin:pack`);
@@ -56,7 +58,8 @@ if (process.env.DSH_DESKTOP_INSTALLER_SHA256 && process.env.DSH_DESKTOP_INSTALLE
 const signatureStatus = process.env.SKIP_DSH_SIGNATURE_CHECK === '1' ? 'skipped' : verifyOfficialInstaller();
 const stage = resolve(artifacts, 'windows-bundle-stage');
 const nsi = resolve(artifacts, 'windows-bundle.nsi');
-const output = resolve(artifacts, `DSH-Industry-Research-Windows-Setup-v${version}.exe`);
+const installerFilename = `DSH-Industry-Research-Windows-Setup-v${version}-${targetArch}.exe`;
+const output = resolve(artifacts, installerFilename);
 rmSync(stage, { recursive: true, force: true });
 rmSync(nsi, { force: true });
 rmSync(output, { force: true });
@@ -75,22 +78,31 @@ try {
   }
 
   const readmeTemplate = readFileSync(resolve(installerFiles, 'README.template.txt'), 'utf8');
-  writeFileSync(resolve(stage, 'README.txt'), readmeTemplate.replaceAll('{{PLUGIN_VERSION}}', version).replaceAll('{{DESKTOP_VERSION}}', desktopVersion));
+  writeFileSync(resolve(stage, 'README.txt'), readmeTemplate
+    .replaceAll('{{PLUGIN_VERSION}}', version)
+    .replaceAll('{{DESKTOP_VERSION}}', desktopVersion)
+    .replaceAll('{{INSTALLER_FILENAME}}', installerFilename)
+    .replaceAll('{{TARGET_OS}}', targetOS)
+    .replaceAll('{{TARGET_ARCH}}', targetArch));
 
   const release = existsSync(resolve(artifacts, 'plugin-release.json')) ? JSON.parse(readFileSync(resolve(artifacts, 'plugin-release.json'), 'utf8')) : {};
   const metadata = {
     bundle: 'dsh-industry-research-windows',
+    target: { os: targetOS, architecture: targetArch },
     plugin: { name: pkg.name, version, directory: basename(pluginDir), tgz: release.filename, sha256: release.sha256 },
     bundledPlugins: (bundledRelease.plugins ?? []).map(plugin => ({ name: plugin.name, version: plugin.version, license: plugin.license, homepage: plugin.homepage, sourceUrl: plugin.sourceUrl, sha256: plugin.sha256 })),
-    deepseekHarness: { version: desktopVersion, installer: 'DeepSeek-Harness-Setup.exe', sha256: officialSha256, signature: signatureStatus },
+    deepseekHarness: { version: desktopVersion, architecture: targetArch, minimumOS: targetOS, installer: 'DeepSeek-Harness-Setup.exe', sha256: officialSha256, signature: signatureStatus },
     builtAt: new Date().toISOString()
   };
   writeFileSync(resolve(stage, 'manifest.json'), JSON.stringify(metadata, null, 2) + '\n');
 
   const script = `Unicode true
 ManifestDPIAware true
-Name "DSH 行研工作台"
-Caption "DSH 行研工作台 安装程序"
+!include "WinVer.nsh"
+!include "x64.nsh"
+!include "LogicLib.nsh"
+Name "DSH 行研工作台（Windows 10/11 x64）"
+Caption "DSH 行研工作台 安装程序（Windows 10/11 x64）"
 BrandingText "DSH 行研工作台 v${version}"
 OutFile "${output}"
 RequestExecutionLevel user
@@ -99,8 +111,19 @@ ShowInstDetails show
 AutoCloseWindow true
 VIProductVersion "${version}.0"
 VIAddVersionKey "ProductName" "DSH 行研工作台"
-VIAddVersionKey "FileDescription" "DSH 行研工作台 Windows 一键安装包"
+VIAddVersionKey "FileDescription" "DSH 行研工作台 Windows 10/11 x64 一键安装包"
 VIAddVersionKey "FileVersion" "${version}"
+
+Function .onInit
+  \${IfNot} \${AtLeastWin10}
+    MessageBox MB_OK|MB_ICONSTOP "此安装包仅支持 Windows 10 或 Windows 11（64 位）。当前系统版本过低，请升级后再安装。"
+    Abort
+  \${EndIf}
+  \${IfNot} \${RunningX64}
+    MessageBox MB_OK|MB_ICONSTOP "此安装包包含 64 位 DeepSeek Harness 桌面端，不能在 32 位 Windows 或 ARM64 系统上安装。请使用 64 位 Windows 10/11。"
+    Abort
+  \${EndIf}
+FunctionEnd
 
 Page instfiles
 

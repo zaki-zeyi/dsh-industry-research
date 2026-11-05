@@ -2,10 +2,10 @@
 
 插件包名 `dsh-industry-research`，页签名「行研工作台」。
 
-1. Windows x64 用户优先运行 `DSH-Industry-Research-Windows-Setup-v0.8.0.exe`；安装器会安装官方 DSH（如未安装）并预装行研工作台和精选插件。
+1. Windows 10/11 x64 用户优先运行 `DSH-Industry-Research-Windows-Setup-v0.8.1-x64.exe`；安装器会安装官方 DSH（如未安装）并预装行研工作台和精选插件。32 位 Windows 10 无法运行官方 64 位 DSH，安装器会在解压前阻止安装。
 2. 维护者流程：`npm ci` 安装依赖，`npm run acceptance` 验收，`npm run plugin:pack` 打包，再运行 `npm run bundle:plugins` 准备精选插件，最后运行 `npm run bundle:windows` 生成 Windows 一键安装包。
-3. ZIP 用户解压 `artifacts/dsh-industry-research-0.8.0-desktop.zip`，在 DSH「添加插件」填写解压后包含 package.json 的目录。安装后保留该目录。
-4. 安装并启用，按宿主提示重新加载。macOS / Windows 支持 x64、arm64；Windows 建议使用较短路径。
+3. ZIP 用户解压 `artifacts/dsh-industry-research-0.8.1-desktop.zip`，在 DSH「添加插件」填写解压后包含 package.json 的目录。安装后保留该目录。
+4. 安装并启用，按宿主提示重新加载。插件 ZIP 支持 macOS 与 Windows 的 x64、arm64；Windows 一体化安装包目前只提供 x64。Windows 建议使用较短路径。
 5. 网页版通过 `dsh plugin --profile <你的profile> add <tgz绝对路径>` 安装；使用配置好的 DSH 网页宿主运行。
 6. 宿主需有模型和检索工具；其运行环境需安装 Lark CLI。
 7. 点击「绑定飞书」，完成目标账号、应用及个人文档授权；切换账号需要重新绑定匹配应用。日报/周报机器人通知还要求应用具备 `im:message:send_as_bot`，且绑定用户处于机器人可用范围内。
