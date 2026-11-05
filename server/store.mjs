@@ -33,7 +33,7 @@ export class Store {
   runtimeLog(event, details = {}, level = 'info') {
     if (!/^[a-z][a-z0-9_.-]{0,79}$/.test(event) || !['info','warn','error'].includes(level)) return;
     const safe = {};
-    const allowed = ['appId','targetAppId','previousAppId','code','status','phase','profile','operation','scope','attempt','taskId','killed','credentialStatus'];
+    const allowed = ['appId','targetAppId','previousAppId','code','status','phase','profile','operation','scope','attempt','taskId','killed','credentialStatus','operationId','durationMs'];
     for (const key of allowed) {
       const value = details[key];
       if (typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value)) safe[key] = value;
@@ -42,8 +42,8 @@ export class Store {
     try { this.db.prepare('INSERT INTO runtime_logs(at,level,event,details) VALUES(?,?,?,?)').run(new Date().toISOString(), level, event, JSON.stringify(safe));
     this.db.exec('DELETE FROM runtime_logs WHERE seq <= (SELECT MAX(seq)-1000 FROM runtime_logs)'); } catch { /* Diagnostics must not replace the original operation failure. */ }
   }
-  runtimeLogs({ limit = 100, before = Number.MAX_SAFE_INTEGER } = {}) {
-    return this.db.prepare('SELECT * FROM runtime_logs WHERE seq < ? ORDER BY seq DESC LIMIT ?').all(before, Math.min(200, Math.max(1, limit))).map(row => ({ ...row, details: JSON.parse(row.details) }));
+  runtimeLogs({ limit = 100, before = Number.MAX_SAFE_INTEGER, feishu = false, level } = {}) {
+    return this.db.prepare("SELECT * FROM runtime_logs WHERE seq < ? AND (? = 0 OR event LIKE 'feishu.%') AND (? IS NULL OR level = ?) ORDER BY seq DESC LIMIT ?").all(before, feishu ? 1 : 0, level ?? null, level ?? null, Math.min(200, Math.max(1, limit))).map(row => ({ ...row, details: JSON.parse(row.details) }));
   }
   saveSetting(key, value) { this.db.prepare('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body').run(key, JSON.stringify(value)); return value; }
   deleteSetting(key) { this.db.prepare('DELETE FROM settings WHERE key=?').run(key); }
