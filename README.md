@@ -56,11 +56,15 @@ npm run plugin:pack
 
 `acceptance` 包含构建、业务/API 回归与浏览器验收。`test:native-host` 启动隔离的真实 DSH 宿主，模型和飞书交付使用本机测试夹具，不调用外部模型或修改真实飞书文档。
 
+## 0.8.3 飞书扫码修复
+
+飞书应用绑定和个人授权二维码统一使用临时工作目录内的相对路径 `./qrcode.png`。CLI 返回后会先校验 PNG，再允许页面展示二维码；生成失败会显示明确错误，不再误报“网页可能已完成配置”。原绑定始终保留，可重新获取二维码。
+
 ## 安装
 
 Windows 10/11 x64 用户优先使用一键安装包：
 
-- `artifacts/DSH-Industry-Research-Windows-Setup-v0.8.2-x64.exe`
+- `artifacts/DSH-Industry-Research-Windows-Setup-v0.8.3-x64.exe`
 
 安装器会在开始前检查系统：仅允许 Windows 10/11 x64。32 位 Windows 10 和 Windows 11 ARM64 会被明确阻止；官方 DeepSeek Harness 桌面端目前没有 32 位构建，不能只靠修改安装脚本增加 x86 支持。
 
@@ -76,9 +80,9 @@ Windows 10/11 x64 用户优先使用一键安装包：
 
 运行 `npm run plugin:pack` 后生成：
 
-- `artifacts/dsh-industry-research-0.8.2-desktop.zip`
-- `artifacts/dsh-industry-research-0.8.2.tgz`
-- `artifacts/dsh-industry-research-0.8.2/` 可直接安装目录
+- `artifacts/dsh-industry-research-0.8.3-desktop.zip`
+- `artifacts/dsh-industry-research-0.8.3.tgz`
+- `artifacts/dsh-industry-research-0.8.3/` 可直接安装目录
 
 维护者可依次运行 `npm run plugin:pack`、`npm run bundle:plugins`、`npm run bundle:windows` 重新生成 Windows 一键安装包。`bundle:plugins` 会下载 `installer/windows/bundled-plugins.json` 中固定版本的插件包并校验 SHA256。需要本机已有官方 DSH 安装器、NSIS，并可通过 `DSH_DESKTOP_INSTALLER` 和 `MAKENSIS` 覆盖默认路径。
 

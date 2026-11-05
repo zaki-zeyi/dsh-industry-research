@@ -17,6 +17,7 @@ test('本机CLI、PowerShell、DPoP和网络错误得到不同的用户动作',(
     [Object.assign(new Error('spawn lark-cli ENOENT'),{code:'ENOENT'}),'LARK_CLI_NOT_FOUND','install_cli'],
     [new Error('无法加载文件 lark-cli.ps1，因为在此系统上禁止运行脚本'),'LARK_POWERSHELL_POLICY','repair_cli'],
     [new Error('DPoP key unavailable or inconsistent 0x80090016'),'LARK_DPOP_KEY_UNAVAILABLE','authorize'],
+    [Object.assign(new Error('授权二维码生成失败'),{code:'LARK_QRCODE_GENERATION_FAILED'}),'LARK_QRCODE_GENERATION_FAILED','retry'],
     [new Error('getaddrinfo ENOTFOUND open.feishu.cn'),'LARK_NETWORK_UNAVAILABLE','retry'],
     [{code:'server_error',description:'socket hang up'},'LARK_NETWORK_UNAVAILABLE','retry'],
   ];
@@ -26,4 +27,16 @@ test('本机CLI、PowerShell、DPoP和网络错误得到不同的用户动作',(
     assert.equal(value.action,action);
     assert.doesNotMatch(value.message,/lark-cli\.ps1|0x80090016|open\.feishu\.cn/i);
   }
+});
+
+test('二维码生成失败不会误报网页已完成配置',()=>{
+  const value=larkRecoveryForError(Object.assign(new Error('授权二维码生成失败'),{code:'LARK_QRCODE_GENERATION_FAILED'}));
+  assert.equal(value.code,'LARK_QRCODE_GENERATION_FAILED');
+  assert.match(value.message,/二维码生成失败/);
+  assert.doesNotMatch(value.message,/网页可能已完成配置/);
+});
+
+test('二维码文件缺失的ENOENT不会被误判为CLI未安装',()=>{
+  const value=larkRecoveryForError(Object.assign(new Error('授权二维码生成失败'),{code:'LARK_QRCODE_GENERATION_FAILED',cause:{code:'ENOENT'}}));
+  assert.equal(value.code,'LARK_QRCODE_GENERATION_FAILED');
 });

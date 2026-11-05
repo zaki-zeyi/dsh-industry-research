@@ -14,6 +14,8 @@
 
 Windows KeyStore/DPoP 在 DSH 宿主进程内仍不可用时，工作台可提供一个显式兼容修复按钮。该操作只对插件自己的 `research-…` profile 执行 `config set dpop disabled` 并重新授权，使用 Lark CLI 支持的 Bearer 本地凭证；不会修改 Codex、默认 profile 或其他飞书 profile。默认仍优先 DPoP，不会静默降级。
 
+应用绑定和个人授权二维码均由本机 Lark CLI 在独立的临时工作目录内生成。传给 `--output` 的固定路径是相对路径 `./qrcode.png`；工作台再用该目录的绝对路径读取并校验 PNG。这样既满足 CLI 对相对输出路径的要求，也不会把二维码写到用户当前目录或其他流程的临时目录。若 CLI 没有生成有效 PNG，页面会明确提示二维码生成失败并保留原绑定，不会据此判断飞书网页配置已经完成。
+
 用户唯一必须完成的步骤是在飞书官方页面确认当前账号和所需权限。
 
 ## 重新绑定与更换应用
@@ -35,6 +37,7 @@ Windows KeyStore/DPoP 在 DSH 宿主进程内仍不可用时，工作台可提�
 | `LARK_APP_NOT_CONFIGURED` | 自动进入扫码登录与应用绑定流程 |
 | `LARK_ACCOUNT_MISMATCH` | 提示使用同一账号授权，或通过“重新绑定”绑定新账号的应用 |
 | `LARK_NETWORK_UNAVAILABLE` | 保留二维码，提示检查网络后重试 |
+| `LARK_QRCODE_GENERATION_FAILED` | 明确提示本地二维码生成失败；保留原绑定，可重新获取二维码 |
 | `LARK_CLI_NOT_FOUND` / `LARK_POWERSHELL_POLICY` | 提示修复本机 CLI；不伪装成授权失败 |
 
 错误响应只返回分类、动作和面向用户的说明，不回传命令输出、token、device code、App Secret 或私钥信息。

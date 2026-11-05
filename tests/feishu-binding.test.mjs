@@ -1,10 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { resolve } from 'node:path';
 import { FeishuBinding, requiredScopes } from '../server/feishu-binding.mjs';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGQAAAABJRU5ErkJggg==','base64');
 const status = (bound, scope = requiredScopes.join(' ')) => ({ identities: { bot: { status: 'ready', available: true, verified: true, appName: '行研工作台助手' }, user: { available: bound, verified: bound, userName: '验收用户', scope } } });
+const writeQr = (args, options, value = png) => {
+  const output = args.at(-1);
+  assert.equal(output, './qrcode.png');
+  writeFileSync(resolve(options.cwd, output), value);
+};
 
 test('PRD1907 绑定只认服务端验证的用户授权和所需scope，缺CLI失败关闭且不泄露凭据', async () => {
   for (const raw of [status(false), status(true, ''), { verified: true, identities: { bot: { available: true, verified: true } } }]) {
@@ -15,10 +20,10 @@ test('PRD1907 绑定只认服务端验证的用户授权和所需scope，缺CLI�
 });
 test('PRD1907 二维码split flow、并发幂等、服务端完成与敏感字段隔离', async () => {
   let bound = false, logins = 0; const calls = [];
-  const binding = new FeishuBinding({ run: async args => {
+  const binding = new FeishuBinding({ run: async (args, options) => {
     calls.push(args);
     if (args[1] === 'status') return status(bound);
-    if (args[1] === 'qrcode') { writeFileSync(args.at(-1), png); return ''; }
+    if (args[1] === 'qrcode') { writeQr(args, options); return ''; }
     if (args.includes('--no-wait')) { logins++; return { device_code: 'private-device-code', verification_url: 'https://accounts.feishu.cn/device?code=fixture', expires_in: 600 }; }
     if (args.includes('--device-code')) { bound = true; return { success: true }; }
   } });
@@ -30,15 +35,25 @@ test('PRD1907 二维码split flow、并发幂等、服务端完成与敏感字�
   } finally { binding.close(); }
 });
 test('PRD1907 过期授权需重新发起，不接受非官方URL与假二维码', async () => {
-  let serial=0;
-  const binding = new FeishuBinding({ run: async args => {
+  let serial=0, invalidQr=false;
+  const binding = new FeishuBinding({ run: async (args, options) => {
     if(args[1]==='status') return status(false);
-    if(args[1]==='qrcode') { writeFileSync(args.at(-1),'not png'); return ''; }
+    if(args[1]==='qrcode') { writeQr(args, options, invalidQr ? 'not png' : png); return ''; }
     return { device_code: 'secret-'+serial++, verification_url: 'https://accounts.feishu.cn/device?code='+serial, expires_in:600 };
   }});
-  try { const first=await binding.start(); assert.throws(()=>binding.qr(first.flowId),/格式/); binding.flow.expires=Date.now()-1; await assert.rejects(binding.complete(first.flowId),/过期/); const second=await binding.start(); assert.notEqual(first.flowId,second.flowId); }
+  try { const first=await binding.start(); assert.equal(binding.qr(first.flowId).length,png.length); binding.flow.expires=Date.now()-1; await assert.rejects(binding.complete(first.flowId),/过期/); invalidQr=true; await assert.rejects(binding.start(),e=>e.status===503&&e.code==='LARK_QRCODE_GENERATION_FAILED'); invalidQr=false; const second=await binding.start(); assert.notEqual(first.flowId,second.flowId); }
   finally { binding.close(); }
   const bad=new FeishuBinding({run:async args=>args[1]==='status'?status(false):{device_code:'secret',verification_url:'https://evil.example/authorize'}}); await assert.rejects(bad.start(),/无法发起/);
+});
+
+test('CLI成功但未生成二维码时按二维码失败处理，不误报CLI未安装',async()=>{
+  const binding=new FeishuBinding({run:async args=>{
+    if(args[1]==='status')return status(false);
+    if(args[1]==='qrcode')return '';
+    return {device_code:'private',verification_url:'https://accounts.feishu.cn/device?code=missing-qr',expires_in:600};
+  }});
+  try{await assert.rejects(binding.start(),e=>e.status===503&&e.code==='LARK_QRCODE_GENERATION_FAILED'&&!/未找到 lark-cli/.test(e.message));}
+  finally{binding.close();}
 });
 
 test('PRD1872 申请平台所需全部生态权限，包含云盘只读列表权限，但不申请搜索权限', async () => {
@@ -48,9 +63,9 @@ test('PRD1872 申请平台所需全部生态权限，包含云盘只读列表权
   const loggedIn = new FeishuBinding({ run: async () => status(true, writeScopes) });
   assert.equal((await loggedIn.requireBound()).bound, true); assert.equal((await loggedIn.start()).bound, true);
   let grant;
-  const binding = new FeishuBinding({ run: async args => {
+  const binding = new FeishuBinding({ run: async (args, options) => {
     if (args[1] === 'status') return status(false);
-    if (args[1] === 'qrcode') { writeFileSync(args.at(-1), png); return ''; }
+    if (args[1] === 'qrcode') { writeQr(args, options); return ''; }
     grant = args[args.indexOf('--scope') + 1]; return { device_code: 'private', verification_url: 'https://accounts.feishu.cn/device?code=write-only', expires_in: 600 };
   } });
   try { await binding.start(); assert.ok(grant.includes('space:document:retrieve')); assert.ok(!grant.includes('search:docs:read')); }
@@ -72,23 +87,23 @@ test('FR02 机器人身份不可用时保留文档绑定但明确标记通知未
   } finally { binding.close(); }
 });
 
-test('回归：macOS临时二维码路径通过指定CLI工作目录落在允许根内', async () => {
-  let qrOptions, qrPath;
+test('回归：二维码输出始终使用临时工作目录内的相对路径', async () => {
+  let qrOptions, qrPath, qrAbsolutePath;
   const binding = new FeishuBinding({ run: async (args, options) => {
     if (args[1] === 'status') return status(false);
-    if (args[1] === 'qrcode') { qrOptions = options; qrPath = args.at(-1); assert.equal(dirname(qrPath), options.cwd); writeFileSync(qrPath, png); return ''; }
+    if (args[1] === 'qrcode') { qrOptions = options; qrPath = args.at(-1); qrAbsolutePath = binding.flow.qrPath; writeQr(args, options); return ''; }
     return { device_code: 'private', verification_url: 'https://accounts.feishu.cn/device?code=path-test', expires_in: 600 };
   } });
-  try { const flow = await binding.start(); assert.ok(qrOptions.cwd); assert.equal(binding.qr(flow.flowId).length, png.length); }
+  try { const flow = await binding.start(); assert.ok(qrOptions.cwd); assert.equal(qrPath, './qrcode.png'); assert.equal(qrAbsolutePath, resolve(qrOptions.cwd, qrPath)); assert.equal(binding.qr(flow.flowId).length, png.length); }
   finally { binding.close(); }
 });
 
 test('PRD1951 已绑定也可并发幂等重新绑定，新二维码替换旧流程，确认后切换账号', async () => {
   let userName='原账号', issued=0;const calls=[];
-  const binding=new FeishuBinding({run:async args=>{
+  const binding=new FeishuBinding({run:async (args,options)=>{
     calls.push(args);
     if(args[1]==='status')return {identities:{user:{...status(true).identities.user,userName}}};
-    if(args[1]==='qrcode'){writeFileSync(args.at(-1),png);return '';}
+    if(args[1]==='qrcode'){writeQr(args,options);return '';}
     if(args.includes('--device-code')){assert.equal(args[args.indexOf('--device-code')+1],'private-2');userName='新账号';return {success:true};}
     issued++;return {device_code:'private-'+issued,verification_url:'https://accounts.feishu.cn/device?code=rebind-'+issued,expires_in:600};
   }});
@@ -100,9 +115,9 @@ test('PRD1951 已绑定也可并发幂等重新绑定，新二维码替换旧流
   }finally{binding.close();}
 });
 test('PRD1951 重新绑定生成失败不会注销原账号，确认中重复请求恢复同一流程',async()=>{
- let fail=true,finish;const binding=new FeishuBinding({run:async args=>{
+ let fail=true,finish;const binding=new FeishuBinding({run:async (args,options)=>{
   if(args[1]==='status')return status(true);
-  if(args[1]==='qrcode'){if(fail)throw new Error('private-error');writeFileSync(args.at(-1),png);return '';}
+  if(args[1]==='qrcode'){if(fail)throw new Error('private-error');writeQr(args,options);return '';}
   if(args.includes('--device-code')){await new Promise(resolve=>{finish=resolve;});return {success:true};}
   return {device_code:'private-code',verification_url:'https://accounts.feishu.cn/device?code=locking',expires_in:600};
  }});
@@ -114,11 +129,11 @@ test('PRD1951 重新绑定生成失败不会注销原账号，确认中重复请
 
 test('PRD1990 二维码显示授权应用，确认固定使用发起时的profile且不创建应用', async () => {
  let selected={mode:'custom',appId:'cli_personal123',profile:'research-fixture'},bound=false;const calls=[];
- const binding=new FeishuBinding({store:{setting:key=>key==='feishu-application'?selected:null},run:async args=>{
+  const binding=new FeishuBinding({store:{setting:key=>key==='feishu-application'?selected:null},run:async (args,options)=>{
   calls.push(args);assert.deepEqual(args.slice(0,2),['--profile','research-fixture']);const cmd=args.slice(2);
   if(cmd[1]==='status')return {...status(bound),appId:'cli_personal123',identities:{...status(bound).identities,bot:{appName:'个人授权应用'}}};
   if(cmd[0]==='contact')return {ok:true,data:{user:{union_id:'on_fixture'}}};
-  if(cmd[1]==='qrcode'){writeFileSync(cmd.at(-1),png);return '';}
+  if(cmd[1]==='qrcode'){writeQr(cmd,options);return '';}
   if(cmd.includes('--device-code')){bound=true;return {success:true};}
   return {device_code:'private-code',verification_url:'https://accounts.feishu.cn/device?code=personal',expires_in:600};
  }});
@@ -127,9 +142,9 @@ test('PRD1990 二维码显示授权应用，确认固定使用发起时的profil
 });
 
 test('PRD1990 默认应用在授权途中变更时不误报绑定成功',async()=>{
- let changed=false;const binding=new FeishuBinding({run:async args=>{
+  let changed=false;const binding=new FeishuBinding({run:async (args,options)=>{
   if(args[1]==='status')return {...status(changed),appId:changed?'cli_changed123':'cli_original123'};
-  if(args[1]==='qrcode'){writeFileSync(args.at(-1),png);return '';}
+   if(args[1]==='qrcode'){writeQr(args,options);return '';}
   if(args.includes('--device-code')){changed=true;return {success:true};}
   return {device_code:'private-code',verification_url:'https://accounts.feishu.cn/device?code=changed',expires_in:600};
  }});
@@ -162,12 +177,12 @@ test('本机DPoP或用户授权失效时返回可自动执行的恢复动作',as
 
 test('PRD1872 插件专用profile可切换Bearer兼容登录，不传全局dpop参数',async()=>{
  const calls=[];const selected={mode:'custom',appId:'cli_compat123',profile:'research-compat'};
- const binding=new FeishuBinding({store:{setting:key=>key==='feishu-application'?selected:null},run:async args=>{
+  const binding=new FeishuBinding({store:{setting:key=>key==='feishu-application'?selected:null},run:async (args,options)=>{
   calls.push(args);const cmd=args.slice(2);
   if(cmd[0]==='config')return {ok:true};
   if(cmd[0]==='auth'&&cmd[1]==='logout')return {ok:true,loggedOut:true};
   if(cmd[0]==='auth'&&cmd[1]==='status')return {appId:'cli_compat123',dpopKeyStatus:'missing',identities:{bot:{status:'ready',available:true,verified:true},user:{available:false,verified:false,tokenStatus:'needs_refresh'}}};
-  if(cmd[0]==='auth'&&cmd[1]==='qrcode'){writeFileSync(cmd.at(-1),png);return '';}
+  if(cmd[0]==='auth'&&cmd[1]==='qrcode'){writeQr(cmd,options);return '';}
   return {device_code:'private-compatible',verification_url:'https://accounts.feishu.cn/device?code=compatible',expires_in:600};
  }});
  try{
@@ -181,9 +196,9 @@ test('PRD1872 插件专用profile可切换Bearer兼容登录，不传全局dpop�
 });
 
 test('扫码仍在等待时不阻塞页面，后台完成授权并自动切回已绑定状态',async()=>{
- let bound=false,finish;const binding=new FeishuBinding({run:async args=>{
+  let bound=false,finish;const binding=new FeishuBinding({run:async (args,options)=>{
   if(args[1]==='status')return {appId:'cli_default123',dpopKeyStatus:bound?'available':'missing',identities:{bot:{status:'ready'},user:{...status(bound).identities.user,tokenStatus:bound?'valid':'needs_refresh'}}};
-  if(args[1]==='qrcode'){writeFileSync(args.at(-1),png);return '';}
+  if(args[1]==='qrcode'){writeQr(args,options);return '';}
   if(args.includes('--device-code'))return new Promise(resolve=>{finish=()=>{bound=true;resolve({ok:true});};});
   return {device_code:'private-auto',verification_url:'https://accounts.feishu.cn/device?code=auto',expires_in:600};
  }});

@@ -92,6 +92,15 @@ function errorText(error) {
 export function larkRecoveryForError(error) {
   const text = errorText(error);
 
+  if (/^LARK_QRCODE_/.test(String(error?.code ?? ''))) {
+    return recovery(
+      'LARK_QRCODE_GENERATION_FAILED',
+      'retry',
+      false,
+      '飞书授权二维码生成失败，原绑定仍然保留。请重新获取二维码后重试；若重复失败，请修复工作台中的 Lark CLI 组件。',
+    );
+  }
+
   if (/ENOENT|command not found|不是内部或外部命令|找不到 Lark CLI|not recognized as/i.test(text)) {
     return recovery(
       'LARK_CLI_NOT_FOUND',
@@ -159,6 +168,6 @@ export function larkRecoveryForError(error) {
     'LARK_AUTHORIZATION_PENDING',
     'authorize',
     false,
-    '飞书网页可能已完成配置，但本地尚未收到最终应用凭据。原绑定已保留；请检查网络后重新获取二维码并扫码确认。',
+    '授权流程尚未完成，本地未收到最终应用凭据。原绑定已保留；请检查网络后重新获取二维码并扫码确认。',
   );
 }

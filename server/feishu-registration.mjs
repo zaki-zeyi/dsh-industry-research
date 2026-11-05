@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { ServiceError } from './service.mjs';
 import { larkRecoveryForError } from './lark-health.mjs';
+import { qrcodeArgs, qrcodeFailure, qrcodePath, verifyQrcode } from './feishu-qrcode.mjs';
 import { registerFeishuApp } from './feishu-register-app.mjs';
 
 export function registrationUrl(value) {
@@ -35,7 +36,7 @@ export class FeishuRegistration {
       replaceApp,
       accountRebind,
     };
-    f.qrPath = resolve(f.directory, 'qrcode.png'); this.flow = f;
+    f.qrPath = qrcodePath(f.directory); this.flow = f;
     f.timer = setTimeout(() => { if (active(f)) { f.controller.abort(); f.status = 'expired'; f.error = '二维码已过期，请重新扫码登录并选择应用'; } }, 600000); f.timer.unref?.();
     this.binding.store?.runtimeLog?.('feishu.registration.started', {previousAppId:selected?.appId, operation:accountRebind?'rebind':replaceApp?'replace':'repair'});
     this.work = this.execute(f); return this.snapshot();
@@ -51,11 +52,17 @@ export class FeishuRegistration {
           if (this.flow !== f || f.controller.signal.aborted) return;
           if (!registrationUrl(info.url) || !Number.isFinite(info.expireIn) || info.expireIn <= 0) throw new Error('invalid verification response');
           f.url = info.url; f.expires = Date.now() + Math.min(info.expireIn, 600) * 1000; f.status = 'awaiting_scan';
-          qrWork = this.binding.run(['auth', 'qrcode', f.url, '--output', f.qrPath], { cwd: f.directory });
+          // Lark CLI resolves --output against its working directory and rejects
+          // absolute output paths. Keep both the command and file lookup scoped
+          // to this flow's private temporary directory.
+          qrWork = this.binding.run(qrcodeArgs(f.url), { cwd: f.directory })
+            .then(() => verifyQrcode(f.qrPath))
+            .catch(error => { throw qrcodeFailure(error); });
           // Observe immediately, even when registration continues polling for several minutes.
           qrWork.catch(error => {
             if (this.flow === f && active(f)) {
               f.recovery = larkRecoveryForError(error);
+              f.failureCode = f.recovery.code;
               f.status = 'failed';
               f.error = f.recovery.message;
       this.binding.store?.runtimeLog?.('feishu.registration.failed', {targetAppId:f.credentials?.client_id,phase:f.phase,code:f.failureCode},'error');
@@ -179,8 +186,8 @@ export class FeishuRegistration {
   qr(id) {
     this.snapshot(); const f = this.flow;
     if (!f || f.id !== id || f.status !== 'awaiting_scan') throw new ServiceError(404, '应用绑定二维码已失效，请重新获取');
-    let bytes; try { bytes = readFileSync(f.qrPath); } catch { throw new ServiceError(404, '二维码生成中，请稍后重试'); }
-    if (bytes.length > 1024 * 1024 || !bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new ServiceError(404, '二维码格式无效'); return bytes;
+    try { return verifyQrcode(f.qrPath); }
+    catch (error) { throw new ServiceError(404, error.code === 'LARK_QRCODE_INVALID' ? '二维码格式无效' : '二维码生成中，请稍后重试'); }
   }
   cancel() {
     const f = this.flow; if (!f) return;

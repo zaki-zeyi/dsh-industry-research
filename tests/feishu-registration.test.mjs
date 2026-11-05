@@ -1,5 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
 import { fixture, until } from './helpers.mjs';
 import { FeishuBinding } from '../server/feishu-binding.mjs';
 import { registrationUrl } from '../server/feishu-registration.mjs';
@@ -231,5 +232,23 @@ test('CLI保存后超时先验证已落盘的profile，不重复创建且不泄�
   f.reg.start();f.sdk.approve();await until(()=>f.reg.snapshot().status==='completed');
   assert.equal(adds,1);assert.deepEqual(f.reg.snapshot().storageDiagnostic,{code:'ETIMEDOUT',killed:true,credentialStatus:'verified'});
   assert.ok(!JSON.stringify(f.reg.snapshot()).includes('private storage failure'));assert.ok(!JSON.stringify(f.reg.snapshot()).includes('fixture-secret'));
+ }finally{await f.close();}
+});
+
+test('注册二维码始终写入临时工作目录内的相对路径',async()=>{
+ const f=setup();try{
+  const flow=f.reg.start();await until(()=>{try{return f.reg.qr(flow.flowId).length>0;}catch{return false;}});
+  const qrCall=f.cli.calls.find(call=>call.args[1]==='qrcode');
+  assert.ok(qrCall);assert.equal(qrCall.args.at(-1),'./qrcode.png');assert.ok(qrCall.options.cwd);
+  assert.equal(f.reg.flow.qrPath,resolve(qrCall.options.cwd,'qrcode.png'));
+ }finally{await f.close();}
+});
+
+test('注册二维码生成失败时给出明确错误而不是误报网页已完成配置',async()=>{
+ const f=setup();try{
+  f.cli.setQrFailure(true);f.reg.start();await until(()=>f.reg.snapshot().status==='failed');
+  const state=f.reg.snapshot();assert.equal(state.failureCode,'LARK_QRCODE_GENERATION_FAILED');
+  assert.match(state.error,/二维码生成失败/);assert.doesNotMatch(state.error,/网页可能已完成配置/);
+  assert.equal(f.store.setting('feishu-application'),null);
  }finally{await f.close();}
 });

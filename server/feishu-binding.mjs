@@ -1,7 +1,7 @@
 import { larkLaunch } from './lark-launch.mjs';
 import { FeishuRegistration } from './feishu-registration.mjs';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -9,6 +9,7 @@ import { agentDeliverySchema } from './agent-delivery.mjs';
 import { ServiceError } from './service.mjs';
 import { applicationSchema, cliFor } from './feishu-application.mjs';
 import { larkRecoveryForError, larkRecoveryForStatus } from './lark-health.mjs';
+import { qrcodeArgs, qrcodeFailure, qrcodePath, verifyQrcode } from './feishu-qrcode.mjs';
 export const requiredScopes = ['auth:user.id:read', 'contact:user.basic_profile:readonly', 'docx:document:create', 'docx:document:write_only', 'docx:document:readonly', 'docs:document:import', 'docs:document.media:upload', 'docs:document.media:download', 'drive:drive.metadata:readonly', 'space:document:retrieve', 'drive:file:upload', 'drive:file:download', 'space:folder:create', 'offline_access'];
 export const requiredTenantScopes = ['im:message:send_as_bot'];
 export class FeishuBinding {
@@ -254,9 +255,15 @@ export class FeishuBinding {
       const url = data.verification_uri_complete ?? data.verification_url ?? data.verification_uri;
       if (!agentDeliverySchema.safeParse({ status: 'awaiting_authorization', authorizationUrl: url }).success || typeof data.device_code !== 'string' || !data.device_code) throw new Error('invalid flow');
       const expiresIn = Number(data.expires_in ?? 600); if (!Number.isFinite(expiresIn) || expiresIn <= 0) throw new Error('invalid expiry');
-      const directory = mkdtempSync(resolve(tmpdir(), 'research-feishu-binding-')), qrPath = resolve(directory, 'qrcode.png');
+      const directory = mkdtempSync(resolve(tmpdir(), 'research-feishu-binding-')), qrPath = qrcodePath(directory);
       this.flow = { id: randomUUID(), deviceCode: data.device_code, url, rebind, compatibility, pending, application, appId: state.appId ?? application.appId, appName: state.appName, expires: Date.now() + Math.min(expiresIn, 1800) * 1000, directory, qrPath };
-      await this.run(this.selectedArgs(['auth', 'qrcode', url, '--output', qrPath], application), { cwd: directory }); return this.publicFlow();
+      try {
+        // Lark CLI only accepts a relative --output path. The file still lands
+        // inside this flow's private directory through the process cwd.
+        await this.run(this.selectedArgs(qrcodeArgs(url), application), { cwd: directory });
+        verifyQrcode(qrPath);
+      } catch (failure) { throw qrcodeFailure(failure); }
+      return this.publicFlow();
     } catch (failure) {
       this.clear();
       const recovery = larkRecoveryForError(failure);
@@ -285,8 +292,8 @@ export class FeishuBinding {
   }
   qr(id) {
     if (!this.flow || id !== this.flow.id || this.flow.expires <= Date.now()) throw new ServiceError(404, '授权二维码已失效，请重新绑定飞书');
-    let bytes; try { bytes = readFileSync(this.flow.qrPath); } catch { throw new ServiceError(404, '二维码尚不可用，请重试'); }
-    if (bytes.length > 1024 * 1024 || !bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new ServiceError(404, '二维码格式无效'); return bytes;
+    try { return verifyQrcode(this.flow.qrPath); }
+    catch (error) { throw new ServiceError(404, error.code === 'LARK_QRCODE_INVALID' ? '二维码格式无效' : '二维码尚不可用，请重试'); }
   }
   async complete(id) {
     if (!this.flow || this.flow.id !== id || this.flow.expires <= Date.now()) throw new ServiceError(409, '授权已过期，请重新发起绑定');

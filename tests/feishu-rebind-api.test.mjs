@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fixture } from './helpers.mjs';
 import { createApp } from '../server/app.mjs';
 import { FeishuBinding, requiredScopes } from '../server/feishu-binding.mjs';
@@ -8,10 +9,10 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
 test('PRD1951 重新绑定API严格校验、旧二维码失效、来源限制与账号更新',async()=>{
  const f=fixture();let name='账号A',openId='ou_account_a',serial=0;
  f.store.saveSetting('feishu-application',{mode:'custom',appId:'cli_rebind123',profile:'research-rebind',ownerOpenId:openId});
- const binding=new FeishuBinding({store:f.store,run:async args=>{
+ const binding=new FeishuBinding({store:f.store,run:async (args,options)=>{
   const command=args[0]==='--profile'?args.slice(2):args;
   if(command[1]==='status')return {appId:'cli_rebind123',identities:{bot:{status:'ready',available:true,verified:true},user:{openId,available:true,verified:true,userName:name,scope:requiredScopes.join(' ')}}};
-  if(command[1]==='qrcode'){writeFileSync(args.at(-1),png);return '';}
+  if(command[1]==='qrcode'){assert.equal(args.at(-1),'./qrcode.png');writeFileSync(resolve(options.cwd,args.at(-1)),png);return '';}
   if(args.includes('--device-code')){name='账号B';openId='ou_account_b';return {success:true};}
   return {device_code:'private-'+(++serial),verification_url:'https://accounts.feishu.cn/device?code='+serial,expires_in:600};
  }});f.service.binding=binding;const server=createApp(f.service).listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const base=`http://127.0.0.1:${server.address().port}`;
