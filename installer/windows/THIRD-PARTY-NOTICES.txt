@@ -1,0 +1,20 @@
+DSH 行研工作台 Windows 一键安装包 - 第三方说明
+================================================
+
+1. DeepSeek Harness
+   本安装包内含 DeepSeek Harness 0.2.0-rc.2 官方 Windows 安装器，文件未作修改。
+   安装器由杭州深度求索人工智能基础技术研究有限公司进行代码签名。
+   DeepSeek Harness 的名称、品牌、程序及相关权利归其权利人所有。
+   使用和再分发时请遵守 DeepSeek Harness 的官方许可、服务条款和品牌规范。
+   官方网站：https://harness.deepseek.com
+
+2. NSIS
+   本安装包使用 Nullsoft Scriptable Install System (NSIS) 制作。
+   NSIS 以其 zlib/libpng 风格许可发布。
+
+3. 行研工作台
+   行研工作台插件代码来自 dsh-industry-research 项目。
+   插件包含的 Node.js 依赖保留各自的许可证，详见插件目录中的依赖包。
+
+本说明不构成法律意见。对外公开分发前，请由发布方确认 DeepSeek Harness 的再分发授权、
+品牌使用要求和第三方组件许可义务。

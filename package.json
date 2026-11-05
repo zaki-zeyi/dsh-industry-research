@@ -1,6 +1,6 @@
 {
   "name": "dsh-industry-research",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -21,6 +21,7 @@
     "test:native-host": "node scripts/native-host-acceptance.mjs --browser",
     "test:feishu-qr": "node scripts/feishu-registration-smoke.mjs",
     "plugin:check-pack": "node scripts/check-plugin-pack.mjs",
+    "bundle:windows": "node scripts/build-windows-bundle.mjs",
     "test:git-install": "node scripts/git-install-acceptance.mjs",
     "plugin:publish-git": "node scripts/publish-git-plugin.mjs"
   },

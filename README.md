@@ -58,11 +58,19 @@ npm run plugin:pack
 
 ## 安装
 
+Windows x64 用户优先使用一键安装包：
+
+- `artifacts/DSH-行研工作台-Windows-一键安装包-v0.7.2.exe`
+
+安装器会先安装官方 DeepSeek Harness（未安装时），再预装并启用行研工作台，无需 Node.js、npm 或手动添加插件。安装包内附未修改的官方 DeepSeek Harness `0.2.0-rc.2` 安装器；已有 DSH 设置、账号和调研数据会保留。
+
 运行 `npm run plugin:pack` 后生成：
 
-- `artifacts/dsh-industry-research-0.7.1-desktop.zip`
-- `artifacts/dsh-industry-research-0.7.1.tgz`
-- `artifacts/dsh-industry-research-0.7.1/` 可直接安装目录
+- `artifacts/dsh-industry-research-0.7.2-desktop.zip`
+- `artifacts/dsh-industry-research-0.7.2.tgz`
+- `artifacts/dsh-industry-research-0.7.2/` 可直接安装目录
+
+维护者可在打包插件后运行 `npm run bundle:windows` 重新生成 Windows 一键安装包。需要本机已有官方 DSH 安装器、NSIS，并可通过 `DSH_DESKTOP_INSTALLER` 和 `MAKENSIS` 覆盖默认路径。
 
 在 DSH 桌面版「添加插件」中填写上述解压目录的绝对路径，按宿主提示启用或重新加载。Windows 和 macOS 使用同一个 ZIP；网页版可以使用 DSH CLI 安装 tgz。详见 [安装说明](docs/plugin-install.md)。
 
@@ -78,4 +86,4 @@ https://github.com/zaki-zeyi/dsh-industry-research
 
 自动测试验证配置持久化、宿主会话、交付回执、公司/友商报告索引、错误恢复与界面交互。真实扫码授权、企业审批、付费信源可访问性和实际调研内容质量需要真实环境验收。Agent 声称完成时须交付公司或友商报告的真实飞书链接；平台校验回执结构、来源范围及链接稳定性，不逐条审计远端事实。增量去重、图表和文档内高亮由 Agent 执行。
 
-[PRD 1917 快照](docs/prd-update-1917.md) · [友商分析 PRD 449](docs/prd-lightweight-449.md) · [架构](docs/architecture.md) · [飞书授权自动恢复](docs/feishu-auth-recovery.md) · [验收记录](docs/acceptance-report.md)
+[用户使用指南](docs/user-guide.md) · [PRD 1917 快照](docs/prd-update-1917.md) · [友商分析 PRD 449](docs/prd-lightweight-449.md) · [架构](docs/architecture.md) · [飞书授权自动恢复](docs/feishu-auth-recovery.md) · [验收记录](docs/acceptance-report.md)
