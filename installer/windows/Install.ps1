@@ -99,6 +99,31 @@ function Write-JsonFile {
   [System.IO.File]::WriteAllText($Path, $json + "`n", $encoding)
 }
 
+function Get-ExtendedPath {
+  param([string]$Path)
+  $fullPath = [System.IO.Path]::GetFullPath($Path)
+  if ($fullPath.StartsWith('\\?\')) { return $fullPath }
+  if ($fullPath.StartsWith('\\')) { return '\\?\UNC\' + $fullPath.Substring(2) }
+  return '\\?\' + $fullPath
+}
+
+function Copy-DirectoryTree {
+  param([string]$Source, [string]$Destination)
+  $sourceRoot = [System.IO.Path]::GetFullPath($Source).TrimEnd('\')
+  $destinationRoot = [System.IO.Path]::GetFullPath($Destination).TrimEnd('\')
+  [System.IO.Directory]::CreateDirectory((Get-ExtendedPath $destinationRoot)) | Out-Null
+  foreach ($directory in @(Get-ChildItem -LiteralPath $sourceRoot -Directory -Recurse -Force)) {
+    $relative = $directory.FullName.Substring($sourceRoot.Length).TrimStart('\')
+    [System.IO.Directory]::CreateDirectory((Get-ExtendedPath (Join-Path $destinationRoot $relative))) | Out-Null
+  }
+  foreach ($file in @(Get-ChildItem -LiteralPath $sourceRoot -File -Recurse -Force)) {
+    $relative = $file.FullName.Substring($sourceRoot.Length).TrimStart('\')
+    $target = Join-Path $destinationRoot $relative
+    [System.IO.Directory]::CreateDirectory((Get-ExtendedPath (Split-Path -Parent $target))) | Out-Null
+    [System.IO.File]::Copy((Get-ExtendedPath $file.FullName), (Get-ExtendedPath $target), $true)
+  }
+}
+
 function Get-DshExecutable {
   $candidates = New-Object System.Collections.Generic.List[string]
   if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
@@ -176,33 +201,73 @@ function Ensure-DshStopped {
   if ($remaining.Count -gt 0) { Fail 'closeCancelled' }
 }
 
+function Get-PluginPackage {
+  param([string]$Source)
+  $manifestPath = Join-Path $Source 'package.json'
+  $manifest = (Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+  $name = [string](Get-ObjectProperty $manifest 'name')
+  $version = [string](Get-ObjectProperty $manifest 'version')
+  if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($version)) { throw "插件包缺少 name 或 version：$Source" }
+  if ($name -notmatch '^(?:@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+$') { throw "插件包名不合法：$name" }
+  foreach ($segment in $name.Split('/')) {
+    if ($segment -eq '.' -or $segment -eq '..') { throw "插件包名不合法：$name" }
+  }
+  $slug = ($name -replace '^@', '') -replace '/', '-'
+  return [pscustomobject]@{
+    Name = $name
+    Version = $version
+    Slug = $slug
+    Source = $Source
+    Target = ''
+    PosixTarget = ''
+    InstallRoot = ''
+    ReplaceExisting = $false
+    Installed = $false
+  }
+}
+
 function Install-PluginFiles {
   $pluginRoot = Join-Path $script:Root 'plugin'
   $packages = @(Get-ChildItem -LiteralPath $pluginRoot -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'package.json') -PathType Leaf })
   if ($packages.Count -ne 1) { Fail 'pluginMissing' }
-  $source = $packages[0].FullName
-  $manifestPath = Join-Path $source 'package.json'
-  $manifest = (Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json)
-  $version = [string](Get-ObjectProperty $manifest 'version')
-  if ([string]::IsNullOrWhiteSpace($version)) { Fail 'pluginMissing' }
-
+  $plugin = Get-PluginPackage $packages[0].FullName
   $installRoot = Join-Path $script:LocalAppData 'DSH Industry Research'
-  $target = Join-Path $installRoot ('plugin\' + $version)
+  $target = Join-Path $installRoot ('plugin\' + $plugin.Version)
   New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
   if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
-  Copy-Item -LiteralPath $source -Destination $target -Recurse -Force
+  Copy-DirectoryTree $plugin.Source $target
   foreach ($name in @('Uninstall.cmd', 'Uninstall.ps1', 'messages.json', 'README.txt', 'THIRD-PARTY-NOTICES.txt', 'manifest.json')) {
     $sourceFile = Join-Path $script:Root $name
     if (Test-Path -LiteralPath $sourceFile -PathType Leaf) {
       Copy-Item -LiteralPath $sourceFile -Destination (Join-Path $installRoot $name) -Force
     }
   }
-  return [pscustomobject]@{
-    Version = $version
-    InstallRoot = $installRoot
-    Target = $target
-    PosixTarget = ($target -replace '\\', '/')
+  $plugin.Target = $target
+  $plugin.PosixTarget = ($target -replace '\\', '/')
+  $plugin.InstallRoot = $installRoot
+  $plugin.ReplaceExisting = $true
+  return $plugin
+}
+
+function Install-BundledPluginFiles {
+  $bundledRoot = Join-Path $script:Root 'bundled-plugins'
+  if (-not (Test-Path -LiteralPath $bundledRoot -PathType Container)) { return @() }
+  $installRoot = Join-Path $script:LocalAppData 'DSH Industry Research'
+  $plugins = New-Object System.Collections.Generic.List[object]
+  foreach ($slugDir in @(Get-ChildItem -LiteralPath $bundledRoot -Directory -ErrorAction SilentlyContinue)) {
+    foreach ($versionDir in @(Get-ChildItem -LiteralPath $slugDir.FullName -Directory -ErrorAction SilentlyContinue)) {
+      if (-not (Test-Path -LiteralPath (Join-Path $versionDir.FullName 'package.json') -PathType Leaf)) { continue }
+      $plugin = Get-PluginPackage $versionDir.FullName
+      $target = Join-Path $installRoot ('bundled-plugins\' + $plugin.Slug + '\' + $plugin.Version)
+      New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+      if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+      Copy-DirectoryTree $plugin.Source $target
+      $plugin.Target = $target
+      $plugin.PosixTarget = ($target -replace '\\', '/')
+      $plugins.Add($plugin) | Out-Null
+    }
   }
+  return $plugins.ToArray()
 }
 
 function Read-ProfileManifest {
@@ -215,8 +280,8 @@ function Read-ProfileManifest {
   return $manifest
 }
 
-function Update-DesktopProfile {
-  param([string]$DshHome, $Plugin)
+function Read-DesktopProfile {
+  param([string]$DshHome)
   $profileDir = Join-Path $DshHome 'profiles\desktop'
   New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
   $manifestPath = Join-Path $profileDir 'package.json'
@@ -242,13 +307,46 @@ function Update-DesktopProfile {
     }
   }
 
+  return [pscustomobject]@{
+    Directory = $profileDir
+    ManifestPath = $manifestPath
+    Manifest = $manifest
+  }
+}
+
+function Get-PluginLinkPath {
+  param([string]$NodeModules, [string]$Name)
+  $segments = $Name.Split('/')
+  if ($segments.Count -eq 2 -and $segments[0].StartsWith('@')) {
+    return Join-Path (Join-Path $NodeModules $segments[0]) $segments[1]
+  }
+  return Join-Path $NodeModules $Name
+}
+
+function Remove-PluginLink {
+  param([string]$Path)
+  if (-not (Test-Path -LiteralPath $Path)) { return }
+  $item = Get-Item -LiteralPath $Path -Force
+  $linkType = [string](Get-ObjectProperty $item 'LinkType')
+  if ($linkType -eq 'Junction' -or $linkType -eq 'SymbolicLink') {
+    [System.IO.Directory]::Delete($Path, $false)
+  } elseif ($item.PSIsContainer) {
+    throw "Existing plugin directory is not a link: $Path"
+  } else {
+    Remove-Item -LiteralPath $Path -Force
+  }
+}
+
+function Update-DesktopProfile {
+  param([string]$DshHome, $Plugins)
+  $state = Read-DesktopProfile $DshHome
+  $manifest = $state.Manifest
+
   $dependencies = Get-ObjectProperty $manifest 'dependencies'
   if ($null -eq $dependencies) {
     $dependencies = [pscustomobject]@{}
     Set-ObjectProperty $manifest 'dependencies' $dependencies
   }
-  Set-ObjectProperty $dependencies 'dsh-industry-research' ('link:' + $Plugin.PosixTarget)
-
   $dsh = Get-ObjectProperty $manifest 'dsh'
   if ($null -eq $dsh) {
     $dsh = [pscustomobject]@{}
@@ -264,38 +362,51 @@ function Update-DesktopProfile {
   if ($null -ne $bundlesValue) {
     $bundles = @($bundlesValue | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
   }
-  if ($bundles -notcontains 'dsh-industry-research') {
-    $bundles += 'dsh-industry-research'
-  }
-  Set-ObjectProperty $profile 'bundles' $bundles
-  Write-JsonFile $manifestPath $manifest
-
-  $patchPath = Join-Path $profileDir 'cordis.patch.yml'
+  $patchPath = Join-Path $state.Directory 'cordis.patch.yml'
   if (-not (Test-Path -LiteralPath $patchPath -PathType Leaf)) {
     [System.IO.File]::WriteAllText($patchPath, "[]`n", (New-Object System.Text.UTF8Encoding($false)))
   }
-  $workspacePath = Join-Path $profileDir 'pnpm-workspace.yaml'
+  $workspacePath = Join-Path $state.Directory 'pnpm-workspace.yaml'
   if (-not (Test-Path -LiteralPath $workspacePath -PathType Leaf)) {
     $workspace = "packages:`n  - .`n`nnodeLinker: hoisted`nautoInstallPeers: false`n"
     [System.IO.File]::WriteAllText($workspacePath, $workspace, (New-Object System.Text.UTF8Encoding($false)))
   }
 
-  $nodeModules = Join-Path $profileDir 'node_modules'
+  $nodeModules = Join-Path $state.Directory 'node_modules'
   New-Item -ItemType Directory -Path $nodeModules -Force | Out-Null
-  $linkPath = Join-Path $nodeModules 'dsh-industry-research'
-  if (Test-Path -LiteralPath $linkPath) {
-    $item = Get-Item -LiteralPath $linkPath -Force
-    $linkType = [string](Get-ObjectProperty $item 'LinkType')
-    if ($linkType -eq 'Junction' -or $linkType -eq 'SymbolicLink') {
-      [System.IO.Directory]::Delete($linkPath, $false)
-    } elseif ($item.PSIsContainer) {
-      throw "Existing dsh-industry-research directory is not a link: $linkPath"
-    } else {
-      Remove-Item -LiteralPath $linkPath -Force
+  $installed = New-Object System.Collections.Generic.List[object]
+  foreach ($plugin in @($Plugins)) {
+    if ($null -eq $plugin) { continue }
+    $existing = $dependencies.PSObject.Properties[$plugin.Name]
+    $managedPrefix = 'link:' + ((Join-Path $script:LocalAppData ('DSH Industry Research\bundled-plugins\' + $plugin.Slug + '\')) -replace '\\', '/')
+    $replace = [bool]$plugin.ReplaceExisting
+    if ($null -ne $existing) {
+      $existingValue = [string]$existing.Value
+      if (-not $replace -and -not $existingValue.StartsWith($managedPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Write-Log ('Keeping existing plugin dependency: ' + $plugin.Name + ' = ' + $existingValue)
+        continue
+      }
+      $replace = $true
+    }
+    if ($null -eq $existing -or $replace) {
+      $linkPath = Get-PluginLinkPath $nodeModules $plugin.Name
+      $parent = Split-Path -Parent $linkPath
+      New-Item -ItemType Directory -Path $parent -Force | Out-Null
+      Remove-PluginLink $linkPath
+      New-Item -ItemType Junction -Path $linkPath -Target $plugin.Target | Out-Null
+      Set-ObjectProperty $dependencies $plugin.Name ('link:' + $plugin.PosixTarget)
+      if ($bundles -notcontains $plugin.Name) { $bundles += $plugin.Name }
+      $plugin.Installed = $true
+      $installed.Add($plugin) | Out-Null
+      Write-Log ('Linked plugin ' + $plugin.Name + '@' + $plugin.Version + ' at ' + $linkPath)
     }
   }
-  New-Item -ItemType Junction -Path $linkPath -Target $Plugin.Target | Out-Null
-  return $profileDir
+  Set-ObjectProperty $profile 'bundles' $bundles
+  Write-JsonFile $state.ManifestPath $manifest
+  return [pscustomobject]@{
+    ProfileDir = $state.Directory
+    Installed = $installed.ToArray()
+  }
 }
 
 try {
@@ -324,8 +435,20 @@ try {
 
   Write-Step 'installingPlugin'
   $plugin = Install-PluginFiles
-  $profileDir = Update-DesktopProfile -DshHome $dshHome -Plugin $plugin
+  $bundledPlugins = @(Install-BundledPluginFiles)
+  $profileState = Update-DesktopProfile -DshHome $dshHome -Plugins (@($plugin) + $bundledPlugins)
+  $profileDir = $profileState.ProfileDir
+  $installedPlugins = @($profileState.Installed)
+  $marker = [pscustomobject]@{
+    schemaVersion = 1
+    installedAt = (Get-Date).ToUniversalTime().ToString('o')
+    plugins = @($installedPlugins | ForEach-Object {
+      [pscustomobject]@{ name = $_.Name; version = $_.Version; target = $_.Target; posixTarget = $_.PosixTarget }
+    })
+  }
+  Write-JsonFile (Join-Path $plugin.InstallRoot 'installed-plugins.json') $marker
   Write-Log ('Plugin installed at ' + $plugin.Target)
+  foreach ($installedPlugin in $installedPlugins) { Write-Log ('Bundled plugin ' + $installedPlugin.Name + '@' + $installedPlugin.Version + ' at ' + $installedPlugin.Target) }
   Write-Log ('Desktop profile updated at ' + $profileDir)
 
   if ($script:TestMode) {
@@ -333,6 +456,7 @@ try {
       status = 'installed'
       pluginVersion = $plugin.Version
       pluginPath = $plugin.Target
+      bundledPlugins = @($installedPlugins | Where-Object { $_.Name -ne $plugin.Name } | ForEach-Object { [pscustomobject]@{ name = $_.Name; version = $_.Version; target = $_.Target } })
       profilePath = $profileDir
       dshHome = $dshHome
       dshPath = $dshPath
@@ -350,5 +474,5 @@ try {
   else { Show-Message (T 'installSuccess') 'Information' }
   exit 0
 } catch {
-  Fail 'installFailed' $_.Exception.Message
+  Fail 'installFailed' ($_.Exception.Message + "`r`n" + $_.ScriptStackTrace)
 }

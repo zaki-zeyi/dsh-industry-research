@@ -74,6 +74,15 @@ function Write-JsonFile {
   [System.IO.File]::WriteAllText($Path, $json + "`n", (New-Object System.Text.UTF8Encoding($false)))
 }
 
+function Get-PluginLinkPath {
+  param([string]$NodeModules, [string]$Name)
+  $segments = $Name.Split('/')
+  if ($segments.Count -eq 2 -and $segments[0].StartsWith('@')) {
+    return Join-Path (Join-Path $NodeModules $segments[0]) $segments[1]
+  }
+  return Join-Path $NodeModules $Name
+}
+
 try {
   $script:Messages = Read-Messages
   Write-Log 'Uninstaller started.'
@@ -98,31 +107,64 @@ try {
   $backup = $manifestPath + '.bak-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
   Copy-Item -LiteralPath $manifestPath -Destination $backup -Force
 
-  $dependencies = Get-ObjectProperty $manifest 'dependencies'
-  if ($null -ne $dependencies) {
-    $dependency = $dependencies.PSObject.Properties['dsh-industry-research']
-    if ($null -ne $dependency) { $dependencies.PSObject.Properties.Remove('dsh-industry-research') }
+  $localAppData = $env:LOCALAPPDATA
+  if ($script:TestMode) { $localAppData = Join-Path $script:TestRoot 'LocalAppData' }
+  $markerPath = Join-Path (Join-Path $localAppData 'DSH Industry Research') 'installed-plugins.json'
+  $managedPlugins = @()
+  if (Test-Path -LiteralPath $markerPath -PathType Leaf) {
+    try {
+      $marker = ([System.IO.File]::ReadAllText($markerPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json)
+      $managedPlugins = @($marker.plugins)
+    } catch {
+      Write-Log ('Could not read plugin marker, falling back to the main plugin: ' + $_.Exception.Message)
+    }
   }
+  if ($managedPlugins.Count -eq 0) {
+    $managedPlugins = @([pscustomobject]@{ name = 'dsh-industry-research'; posixTarget = $null })
+  }
+
+  $dependencies = Get-ObjectProperty $manifest 'dependencies'
   $dsh = Get-ObjectProperty $manifest 'dsh'
   $profile = Get-ObjectProperty $dsh 'profile'
   $bundlesValue = Get-ObjectProperty $profile 'bundles'
+  $bundles = @()
   if ($null -ne $bundlesValue) {
-    $bundles = @($bundlesValue | ForEach-Object { [string]$_ } | Where-Object { $_ -ne 'dsh-industry-research' })
-    Set-ObjectProperty $profile 'bundles' $bundles
+    $bundles = @($bundlesValue | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
   }
-  Write-JsonFile $manifestPath $manifest
-
-  $linkPath = Join-Path $profileDir 'node_modules\dsh-industry-research'
-  if (Test-Path -LiteralPath $linkPath) {
-    $item = Get-Item -LiteralPath $linkPath -Force
-    $linkType = [string](Get-ObjectProperty $item 'LinkType')
-    if ($linkType -eq 'Junction' -or $linkType -eq 'SymbolicLink') {
-      [System.IO.Directory]::Delete($linkPath, $false)
-    } else {
-      Write-Log ('Left non-link directory untouched: ' + $linkPath)
+  $removedNames = @()
+  foreach ($managed in @($managedPlugins)) {
+    $name = [string](Get-ObjectProperty $managed 'name')
+    if ([string]::IsNullOrWhiteSpace($name)) { continue }
+    $expectedTarget = [string](Get-ObjectProperty $managed 'posixTarget')
+    $removeDependency = $true
+    if ($null -ne $dependencies) {
+      $dependency = $dependencies.PSObject.Properties[$name]
+      if ($null -ne $dependency -and -not [string]::IsNullOrWhiteSpace($expectedTarget)) {
+        $expectedValue = 'link:' + $expectedTarget
+        $removeDependency = [string]$dependency.Value -eq $expectedValue
+      }
+      if ($removeDependency -and $null -ne $dependency) { $dependencies.PSObject.Properties.Remove($name) }
     }
+    if (-not $removeDependency) {
+      Write-Log ('Left changed dependency untouched: ' + $name)
+      continue
+    }
+    $bundles = @($bundles | Where-Object { $_ -ne $name })
+    $linkPath = Get-PluginLinkPath (Join-Path $profileDir 'node_modules') $name
+    if (Test-Path -LiteralPath $linkPath) {
+      $item = Get-Item -LiteralPath $linkPath -Force
+      $linkType = [string](Get-ObjectProperty $item 'LinkType')
+      if ($linkType -eq 'Junction' -or $linkType -eq 'SymbolicLink') {
+        [System.IO.Directory]::Delete($linkPath, $false)
+      } else {
+        Write-Log ('Left non-link directory untouched: ' + $linkPath)
+      }
+    }
+    $removedNames += $name
   }
-  Write-Log ('Removed plugin from profile ' + $profileDir)
+  if ($null -ne $profile) { Set-ObjectProperty $profile 'bundles' $bundles }
+  Write-JsonFile $manifestPath $manifest
+  Write-Log ('Removed managed plugins from profile ' + $profileDir + ': ' + ($removedNames -join ', '))
   if ($script:TestMode) {
     Write-Host (T 'uninstallDone') -ForegroundColor Green
     exit 0

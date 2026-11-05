@@ -60,17 +60,23 @@ npm run plugin:pack
 
 Windows x64 用户优先使用一键安装包：
 
-- `artifacts/DSH-Industry-Research-Windows-Setup-v0.7.2.exe`
+- `artifacts/DSH-Industry-Research-Windows-Setup-v0.8.0.exe`
 
-安装器会先安装官方 DeepSeek Harness（未安装时），再预装并启用行研工作台，无需 Node.js、npm 或手动添加插件。安装包内附未修改的官方 DeepSeek Harness `0.2.0-rc.2` 安装器；已有 DSH 设置、账号和调研数据会保留。
+安装器会先安装官方 DeepSeek Harness（未安装时），再预装并启用行研工作台和 3 个精选插件，无需 Node.js、npm 或手动添加插件：
+
+- 商标 Branding `dsh-brand@0.2.0-rc.6`
+- 插件市场 `dshmarket@1.73.11`
+- IM 机器人 `@xmanrui/dsh-im@5.10.0`（飞书、微信、企业微信、钉钉、QQ、Slack、Telegram、Discord 等）
+
+安装包内附未修改的官方 DeepSeek Harness `0.2.0-rc.2` 安装器；已有 DSH 设置、账号和调研数据会保留。如果已有同名插件，安装器会保留用户当前的插件来源，不覆盖其配置。悬浮球项目是独立的 DeepSeek Orb 桌面应用，不是 DSH 插件，因此不在一键安装包的插件列表中。
 
 运行 `npm run plugin:pack` 后生成：
 
-- `artifacts/dsh-industry-research-0.7.2-desktop.zip`
-- `artifacts/dsh-industry-research-0.7.2.tgz`
-- `artifacts/dsh-industry-research-0.7.2/` 可直接安装目录
+- `artifacts/dsh-industry-research-0.8.0-desktop.zip`
+- `artifacts/dsh-industry-research-0.8.0.tgz`
+- `artifacts/dsh-industry-research-0.8.0/` 可直接安装目录
 
-维护者可在打包插件后运行 `npm run bundle:windows` 重新生成 Windows 一键安装包。需要本机已有官方 DSH 安装器、NSIS，并可通过 `DSH_DESKTOP_INSTALLER` 和 `MAKENSIS` 覆盖默认路径。
+维护者可依次运行 `npm run plugin:pack`、`npm run bundle:plugins`、`npm run bundle:windows` 重新生成 Windows 一键安装包。`bundle:plugins` 会下载 `installer/windows/bundled-plugins.json` 中固定版本的插件包并校验 SHA256。需要本机已有官方 DSH 安装器、NSIS，并可通过 `DSH_DESKTOP_INSTALLER` 和 `MAKENSIS` 覆盖默认路径。
 
 在 DSH 桌面版「添加插件」中填写上述解压目录的绝对路径，按宿主提示启用或重新加载。Windows 和 macOS 使用同一个 ZIP；网页版可以使用 DSH CLI 安装 tgz。详见 [安装说明](docs/plugin-install.md)。
 

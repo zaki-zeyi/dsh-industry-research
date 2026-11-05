@@ -7,10 +7,30 @@ DSH 行研工作台 Windows 一键安装包
 --------
 1. 双击 DSH-Industry-Research-Windows-Setup-v{{PLUGIN_VERSION}}.exe。
 2. 如果电脑还没有 DeepSeek Harness，安装器会先安装官方桌面端。
-3. 安装器会自动把行研工作台装进 DSH，并启动桌面端。
+3. 安装器会自动把行研工作台和精选插件装进 DSH，并启动桌面端。
 4. 打开 DSH 后，在侧栏点击“行研工作台”，按页面提示绑定飞书。
 
 不需要安装 Node.js、npm，也不需要手动添加插件。
+
+预装的精选插件
+--------------
+
+本安装包同时预装以下 DSH 插件：
+
+* 行研工作台（dsh-industry-research）
+* 商标 Branding（dsh-brand）
+* 插件市场（dshmarket）
+* IM 机器人（@xmanrui/dsh-im，支持飞书、微信、企业微信、钉钉、QQ、Slack、Telegram、Discord 等）
+
+如果电脑上已经安装过同名插件，安装器会保留用户已有的插件来源和配置，不覆盖它们。
+
+进入方式：
+
+* 商标：DSH 设置 → 品牌 Branding
+* 插件市场：DSH 设置 → 插件 → 插件市场
+* IM 机器人：DSH 设置 → IM机器人
+
+“悬浮球”项目不是 DSH 插件，而是独立的 DeepSeek Orb 桌面应用，无法作为插件挂载到官方 DSH 中。
 
 如果 Windows 提示“Windows 已保护你的电脑”，请点击“更多信息”，再点击“仍要运行”。这是因为本安装包尚未使用 Windows 代码签名证书；内部发放时属于正常提示。
 
@@ -29,6 +49,7 @@ DSH 行研工作台 Windows 一键安装包
 插件代码：
 
     %LOCALAPPDATA%\DSH Industry Research\plugin\{{PLUGIN_VERSION}}
+    %LOCALAPPDATA%\DSH Industry Research\bundled-plugins\
 
 调研数据仍保存在 DSH 的用户目录中：
 
@@ -42,7 +63,7 @@ DSH 行研工作台 Windows 一键安装包
 
     %LOCALAPPDATA%\DSH Industry Research
 
-卸载只会从 DSH 配置中移除行研工作台，不会删除已有调研数据。DeepSeek Harness 本身请在 Windows“设置 > 应用”中卸载。
+卸载只会从 DSH 配置中移除本安装包添加的行研工作台和精选插件，不会删除已有调研、账号和插件数据。DeepSeek Harness 本身请在 Windows“设置 > 应用”中卸载。
 
 五、排错
 --------

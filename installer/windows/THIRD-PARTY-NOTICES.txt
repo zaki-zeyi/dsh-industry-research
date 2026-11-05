@@ -16,5 +16,22 @@ DSH 行研工作台 Windows 一键安装包 - 第三方说明
    行研工作台插件代码来自 dsh-industry-research 项目。
    插件包含的 Node.js 依赖保留各自的许可证，详见插件目录中的依赖包。
 
+4. 商标 Branding（dsh-brand）
+   版本：0.2.0-rc.6
+   项目：https://github.com/advance-lion/dsh-brand
+   许可证：Apache-2.0，完整文本见插件目录中的 LICENSE。
+
+5. 插件市场（dshmarket）
+   版本：1.73.11
+   项目：https://github.com/dsh-market/dsh-market
+   许可证：MIT，完整文本见插件目录中的 LICENSE。
+   预装依赖 @deepseek-ai/schemastery 3.19.0，保留其各自许可证。
+
+6. IM 机器人（@xmanrui/dsh-im）
+   版本：5.10.0
+   项目：https://github.com/xmanrui/dsh-im
+   许可证：MIT，完整文本见插件目录中的 LICENSE。
+   插件依赖保留各自许可证；第三方说明见插件目录中的 THIRD_PARTY_NOTICES.md。
+
 本说明不构成法律意见。对外公开分发前，请由发布方确认 DeepSeek Harness 的再分发授权、
 品牌使用要求和第三方组件许可义务。

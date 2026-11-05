@@ -13,6 +13,14 @@ const pluginDir = resolve(artifacts, `${pkg.name}-${version}`);
 const pluginManifest = resolve(pluginDir, 'package.json');
 if (!existsSync(pluginManifest)) throw new Error(`缺少插件安装目录：${pluginDir}。请先运行 npm run plugin:pack`);
 if (JSON.parse(readFileSync(pluginManifest, 'utf8')).version !== version) throw new Error('插件安装目录版本与 package.json 不一致，请重新打包插件');
+const bundledRoot = resolve(artifacts, 'bundled-plugins');
+const bundledManifestPath = resolve(bundledRoot, 'manifest.json');
+if (!existsSync(bundledManifestPath)) throw new Error('缺少预装插件目录。请先运行 npm run bundle:plugins');
+const bundledRelease = JSON.parse(readFileSync(bundledManifestPath, 'utf8'));
+for (const plugin of bundledRelease.plugins ?? []) {
+  const directory = resolve(bundledRoot, plugin.slug, plugin.version);
+  if (!existsSync(resolve(directory, 'package.json'))) throw new Error(`预装插件不完整：${plugin.name}@${plugin.version}`);
+}
 
 const officialInstaller = process.env.DSH_DESKTOP_INSTALLER ?? join(process.env.LOCALAPPDATA ?? '', '@deepseek-aidsh-desktop-updater', 'installer.exe');
 if (!existsSync(officialInstaller)) throw new Error(`找不到 DeepSeek Harness 官方安装器：${officialInstaller}。请设置 DSH_DESKTOP_INSTALLER`);
@@ -62,6 +70,9 @@ try {
   });
   copyFileSync(officialInstaller, resolve(stage, 'DeepSeek-Harness-Setup.exe'));
   cpSync(pluginDir, resolve(stage, 'plugin', basename(pluginDir)), { recursive: true });
+  for (const plugin of bundledRelease.plugins ?? []) {
+    cpSync(resolve(bundledRoot, plugin.slug, plugin.version), resolve(stage, 'bundled-plugins', plugin.slug, plugin.version), { recursive: true });
+  }
 
   const readmeTemplate = readFileSync(resolve(installerFiles, 'README.template.txt'), 'utf8');
   writeFileSync(resolve(stage, 'README.txt'), readmeTemplate.replaceAll('{{PLUGIN_VERSION}}', version).replaceAll('{{DESKTOP_VERSION}}', desktopVersion));
@@ -70,6 +81,7 @@ try {
   const metadata = {
     bundle: 'dsh-industry-research-windows',
     plugin: { name: pkg.name, version, directory: basename(pluginDir), tgz: release.filename, sha256: release.sha256 },
+    bundledPlugins: (bundledRelease.plugins ?? []).map(plugin => ({ name: plugin.name, version: plugin.version, license: plugin.license, homepage: plugin.homepage, sourceUrl: plugin.sourceUrl, sha256: plugin.sha256 })),
     deepseekHarness: { version: desktopVersion, installer: 'DeepSeek-Harness-Setup.exe', sha256: officialSha256, signature: signatureStatus },
     builtAt: new Date().toISOString()
   };
@@ -93,10 +105,11 @@ VIAddVersionKey "FileVersion" "${version}"
 Page instfiles
 
 Section "Install"
+  InitPluginsDir
   SetOutPath "$PLUGINSDIR\\payload"
   File /r "${stage}\\*.*"
   DetailPrint "正在配置行研工作台..."
-  ExecWait '"$PLUGINSDIR\\payload\\Install.cmd"' $0
+  ExecWait '"$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\\payload\\Install.ps1"' $0
   IntCmp $0 0 done
     MessageBox MB_ICONSTOP "安装未完成。请查看日志：$TEMP\\dsh-industry-research-bundle.log"
   done:
