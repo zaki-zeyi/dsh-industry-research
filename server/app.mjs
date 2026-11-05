@@ -40,7 +40,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.post('/api/industry/tasks', async (req, res, next) => { try { const key = req.headers['idempotency-key']; if (key) z.string().min(1).max(100).parse(key); res.status(202).json(await service.createAuthorized(companyTaskInput(req.body), key)); } catch (e) { next(e); } });
   app.get('/api/briefings', (req,res) => res.json({items:service.store.list().filter(t => t.briefing && (!req.query.kind || t.briefing.kind === req.query.kind)).map(t => ({id:t.id,direction:t.direction,status:t.status,createdAt:t.createdAt,briefing:t.briefing,stage:t.stage,publication:t.publication,notification:t.notification}))}));
   app.post('/api/briefings', async(req,res,next)=>{try {res.status(202).json(await service.createAuthorized(briefingTask(req.body),req.headers['idempotency-key']));}catch(e){next(e);}});
-  app.post('/api/briefings/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);if(!t.briefing||t.status!=='ready')throw new ServiceError(409,'报告尚未完成');await service.notifications.send(t.id);res.json(service.require(t.id));}catch(e){next(e);}});
+  app.post('/api/briefings/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);if(!t.briefing||t.status!=='ready')throw new ServiceError(409,'报告尚未完成');await service.notifications.send(t.id,{currentUser:true});res.json(service.require(t.id));}catch(e){next(e);}});
   app.get('/api/internal-materials', (_req, res) => res.json({
     items: service.store.list().filter(task => task.internal).map(task => ({
       id: task.id,
@@ -71,7 +71,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     try {
       const task = service.require(req.params.id);
       if (!task.internal || task.status !== 'ready') throw new ServiceError(409, '内部资料解析尚未完成');
-      await service.internalNotifications.send(task.id);
+      await service.internalNotifications.send(task.id,{currentUser:true});
       res.json(service.require(task.id));
     } catch (error) {
       next(error);
