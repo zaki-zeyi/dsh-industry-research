@@ -72,6 +72,39 @@ test('PRD1872 申请平台所需全部生态权限，包含云盘只读列表权
   finally { binding.close(); }
 });
 
+test('云盘目录列表权限只影响首次导入，不阻塞扫码绑定与研究', async () => {
+  const scopes = requiredScopes.filter(scope => scope !== 'space:document:retrieve');
+  const binding = new FeishuBinding({ run: async () => status(true, scopes.join(' ')) });
+  try {
+    const state = await binding.status();
+    assert.equal(state.bound, true);
+    assert.equal(state.importReady, false);
+    assert.deepEqual(state.missingScopes, ['space:document:retrieve']);
+    assert.equal(state.recovery, undefined);
+    assert.equal((await binding.requireBound()).bound, true);
+  } finally { binding.close(); }
+});
+
+test('扫码授权仍在进行时客户端提前返回 pending 会自动续查，不丢失流程', async () => {
+  let bound = false, polls = 0;
+  const binding = new FeishuBinding({ run: async (args, options) => {
+    if (args[1] === 'status') return status(bound);
+    if (args[1] === 'qrcode') { writeQr(args, options); return ''; }
+    if (args.includes('--no-wait')) return { device_code: 'private', verification_url: 'https://accounts.feishu.cn/device?code=pending-retry', expires_in: 600 };
+    if (args.includes('--device-code')) {
+      polls++;
+      if (polls === 1) throw Object.assign(new Error('authorization pending'), { stdout: '{"ok":false,"error":{"type":"authorization","subtype":"authorization_pending"}}' });
+      bound = true; return { success: true };
+    }
+  } });
+  try {
+    const flow = await binding.start();
+    const state = await binding.complete(flow.flowId);
+    assert.equal(polls, 2);
+    assert.equal(state.bound, true);
+  } finally { binding.close(); }
+});
+
 test('FR02 机器人身份不可用时保留文档绑定但明确标记通知未就绪', async () => {
   const binding = new FeishuBinding({ run: async () => ({
     appId: 'cli_fixture',
@@ -217,4 +250,31 @@ test('扫码仍在等待时不阻塞页面，后台完成授权并自动切回�
   assert.equal((await completed).bound,true);
   assert.equal((await binding.status()).bound,true);
  }finally{binding.close();}
+});
+
+test('重启后已完成扫码的待提交绑定会自动落地，不需要再次扫码', async () => {
+  const settings = new Map([
+    ['feishu-application', { mode: 'custom', appId: 'cli_fixture' }],
+    ['feishu-pending-application', { mode: 'same', previousAppId: 'cli_fixture', previousOpenId: 'ou_fixture', createdAt: '2026-11-05T09:00:00.000Z' }],
+  ]);
+  const store = {
+    setting: key => settings.get(key) ?? null,
+    saveSetting: (key, value) => settings.set(key, value),
+    deleteSetting: key => settings.delete(key),
+    runtimeLog: () => {},
+  };
+  const binding = new FeishuBinding({ store, run: async args => {
+    if (args[0] === 'contact') return { data: { user: { union_id: 'on_fixture' } } };
+    return { appId: 'cli_fixture', dpopKeyStatus: 'available', identities: {
+      bot: { status: 'ready', available: true, verified: true },
+      user: { available: true, verified: true, userName: '验收用户', openId: 'ou_fixture', scope: requiredScopes.join(' '), grantedAt: '2026-11-05T10:00:00.000Z' },
+    } };
+  } });
+  try {
+    const state = await binding.status();
+    assert.equal(state.bound, true);
+    assert.equal(state.userName, '验收用户');
+    assert.equal(settings.has('feishu-pending-application'), false);
+    assert.equal(settings.get('feishu-account').openId, 'ou_fixture');
+  } finally { binding.close(); }
 });

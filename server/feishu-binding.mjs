@@ -8,9 +8,12 @@ import { randomUUID } from 'node:crypto';
 import { agentDeliverySchema } from './agent-delivery.mjs';
 import { ServiceError } from './service.mjs';
 import { applicationSchema, cliFor } from './feishu-application.mjs';
-import { larkRecoveryForError, larkRecoveryForStatus } from './lark-health.mjs';
+import { isAuthorizationPending, larkRecoveryForError, larkRecoveryForStatus } from './lark-health.mjs';
 import { qrcodeArgs, qrcodeFailure, qrcodePath, verifyQrcode } from './feishu-qrcode.mjs';
 export const requiredScopes = ['auth:user.id:read', 'contact:user.basic_profile:readonly', 'docx:document:create', 'docx:document:write_only', 'docx:document:readonly', 'docs:document:import', 'docs:document.media:upload', 'docs:document.media:download', 'drive:drive.metadata:readonly', 'space:document:retrieve', 'drive:file:upload', 'drive:file:download', 'space:folder:create', 'offline_access'];
+// Listing a cloud-drive folder is only needed for the first import. Once the
+// company index is known, research and refreshes use the saved manifest URL.
+export const optionalScopes = ['space:document:retrieve'];
 export const requiredTenantScopes = ['im:message:send_as_bot'];
 export class FeishuBinding {
   constructor({ command, run, store, registerApp } = {}) {
@@ -181,22 +184,58 @@ export class FeishuBinding {
       const user = result.identities?.user, scopes = new Set((user?.scope ?? '').split(/[ ,]+/));
       const authenticated = user?.available === true && user?.verified === true;
       const missingScopes = requiredScopes.filter(s => !scopes.has(s));
+      const missingRequiredScopes = missingScopes.filter(s => !optionalScopes.includes(s));
       const accountMismatch = !allowAccountChange && authenticated && application.ownerOpenId && user.openId !== application.ownerOpenId;
-      const recovery = larkRecoveryForStatus(result, { missingScopes, accountMismatch });
+      const recovery = larkRecoveryForStatus(result, { missingScopes: missingRequiredScopes, accountMismatch });
       if (accountMismatch) return { ...metadata, bound: false, available: true, error: '个人授权账号与扫码绑定应用的账号不一致，请使用同一账号授权，或重新扫码登录并绑定新账号的应用', recovery };
-      const bound = authenticated && missingScopes.length === 0;
-      return { ...metadata, bound, authenticated, available: true, ...(bound ? { openId: user.openId, userName: String(user.userName ?? '飞书用户').slice(0, 100) } : { missingScopes, recovery, error: authenticated ? '飞书已登录，但文档与云盘权限不完整，请补充授权后开始调研' : recovery?.message ?? '请绑定飞书并授权文档与云盘访问权限后开始调研' }) };
+      const importReady = !missingScopes.includes('space:document:retrieve');
+      const bound = authenticated && missingRequiredScopes.length === 0;
+      const state = {
+        ...metadata,
+        bound,
+        authenticated,
+        importReady,
+        ...(missingScopes.length ? { missingScopes } : {}),
+        ...(bound
+          ? { openId: user.openId, userName: String(user.userName ?? '飞书用户').slice(0, 100) }
+          : { recovery, error: authenticated ? '飞书已登录，但文档或云盘权限不完整，请补充授权后开始调研' : recovery?.message ?? '请绑定飞书并授权文档与云盘访问权限后开始调研' }),
+      };
+      // Keep the token grant time private but let status() prove that a scan
+      // completed after the pending application switch was staged.
+      const authorizedAt = Date.parse(user?.grantedAt ?? '');
+      if (Number.isFinite(authorizedAt)) Object.defineProperty(state, 'authorizedAt', { value: authorizedAt, enumerable: false });
+      return state;
     } catch (error) {
       const failure = larkRecoveryForError(error);
       return { bound: false, available: false, error: failure.message, recovery: failure };
     }
   }
   async status(application = this.applicationSnapshot(), options = {}) {
-    const state = await this.inspectStatus(application, options);
+    let state = await this.inspectStatus(application, options);
     const operation = this.store?.setting?.('feishu-last-operation');
     if (operation?.status === 'failed') state.operation = operation;
+    const pending = this.pendingApplicationOperation();
+    const pendingAt = Date.parse(pending?.createdAt ?? '');
+    // Only finish a pending switch when the current token was granted after the
+    // switch was staged. This recovers a scan that outlived the in-memory flow
+    // without letting an older token confirm a new application by accident.
+    if (state.bound && pending && Number.isFinite(pendingAt) && state.authorizedAt > pendingAt) {
+      try {
+        const stable = await this.withStableIdentity(state, application);
+        this.commitPendingApplicationOperation(stable);
+        state = stable;
+      } catch (error) {
+        return {
+          ...state,
+          bound: false,
+          ...(state.recovery?.code === 'LARK_DPOP_KEY_UNAVAILABLE' ? { compatibilityAvailable: true } : {}),
+          error: operation?.error ?? error.message,
+          ...(error.recovery ? { recovery: error.recovery } : {}),
+        };
+      }
+    }
     if (state.bound && this.pendingApplicationOperation()) return {
-      ...state, ...(this.flow ? this.publicFlow() : {}), bound: false, error: operation?.error ?? '个人授权已收到，正在校验账号并提交绑定。', ...(operation?.status === 'failed' ? {recovery:{code:operation.code,action:'authorize',automatic:false,message:operation.error}} : {}),
+      ...state, ...(this.flow ? this.publicFlow() : {}), bound: false, ...(state.recovery?.code === 'LARK_DPOP_KEY_UNAVAILABLE' ? { compatibilityAvailable: true } : {}), error: operation?.error ?? '个人授权已收到，正在校验账号并提交绑定。', ...(operation?.status === 'failed' ? {recovery:{code:operation.code,action:'authorize',automatic:false,message:operation.error}} : {}),
     };
     if (!this.flow || state.bound) return state;
     return {
@@ -204,6 +243,7 @@ export class FeishuBinding {
       ...this.publicFlow(),
       bound: false,
       available: true,
+      ...(state.recovery?.code === 'LARK_DPOP_KEY_UNAVAILABLE' ? { compatibilityAvailable: true } : {}),
       error: this.flow.completionError || this.flow.recovery?.message || state.error,
       recovery: this.flow.recovery || state.recovery,
     };
@@ -300,23 +340,33 @@ export class FeishuBinding {
     if (this.completing) return this.completing;
     const flow = this.flow;
     this.completing = (async () => {
-      try {
-        const raw = await this.run(this.selectedArgs(['auth', 'login', '--device-code', flow.deviceCode, '--json'], flow.application), {
-          timeoutMs: Math.min(900000, Math.max(15000, flow.expires - Date.now() + 5000)),
-          onSpawn: (child) => { flow.child = child; },
-        });
-        const payload = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        if (payload?.ok === false) throw Object.assign(new Error(payload?.error?.message || 'authorization failed'), { code: payload?.error?.code });
-      } catch (failure) {
-        const recovery = larkRecoveryForError(failure);
-        if (this.flow === flow) {
-          flow.completionError = recovery.message;
-          flow.recovery = recovery;
+      for (;;) {
+        try {
+          const raw = await this.run(this.selectedArgs(['auth', 'login', '--device-code', flow.deviceCode, '--json'], flow.application), {
+            timeoutMs: Math.min(900000, Math.max(15000, flow.expires - Date.now() + 5000)),
+            onSpawn: (child) => { flow.child = child; },
+          });
+          const payload = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          if (payload?.ok === false) throw Object.assign(new Error(payload?.error?.message || 'authorization failed'), { code: payload?.error?.code });
+          break;
+        } catch (failure) {
+          // Some CLI versions return immediately while the user is still on
+          // the Feishu consent page. Keep the flow alive and poll again.
+          if (isAuthorizationPending(failure) && this.flow === flow && flow.expires > Date.now() + 2000) {
+            flow.child = null;
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            continue;
+          }
+          const recovery = larkRecoveryForError(failure);
+          if (this.flow === flow) {
+            flow.completionError = recovery.message;
+            flow.recovery = recovery;
+          }
+          const error = new ServiceError(409, recovery.message);
+          error.code = recovery.code;
+          error.recovery = recovery;
+          throw error;
         }
-        const error = new ServiceError(409, recovery.message);
-        error.code = recovery.code;
-        error.recovery = recovery;
-        throw error;
       }
       flow.child = null;
       let state = flow.rebind || flow.pending

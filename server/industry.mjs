@@ -15,7 +15,9 @@ const choices = z.array(label).min(1).max(60).transform(v => [...new Set(v)]);
 export const industryInputSchema = z.object({ companies: choices, dimensions: choices, sources: choices, requirements: z.string().trim().max(2000).default(''), prompt: z.string().trim().min(10).max(14000).optional() }).strict();
 export const preferencesSchema = z.object({ dimensions: choices, sources: choices }).strict();
 export function preferences(store) { return store.setting('industry-preferences') ?? { dimensions: DEFAULT_DIMENSIONS, sources: DEFAULT_SOURCES }; }
-export function libraryKey(root, app) { return 'industry-library:' + createHash('sha256').update(JSON.stringify([app?.profile ?? 'default', app?.appId ?? '', root.folderUrl ?? root.rootName])).digest('hex'); }
+// The root name is the stable identity. Adding or changing the folder URL
+// must not orphan the locally cached company index.
+export function libraryKey(root, app) { return 'industry-library:' + createHash('sha256').update(JSON.stringify([app?.profile ?? 'default', app?.appId ?? '', root.rootName ?? root.folderUrl ?? ''])).digest('hex'); }
 export function library(store, root, app) { return store.setting(libraryKey(root, app)) ?? { companies: [], folderToken: null }; }
 export function industryPrompt(input) {
   return `帮我对【${input.companies.join('、')}】在【${input.sources.join('、')}】进行【${input.dimensions.join('、')}】的调研${input.requirements ? `，并满足【${input.requirements}】` : ''}，自动去重增量保存到飞书云盘【全量信息库】中。并呈现本次更新摘要。`;
@@ -146,17 +148,28 @@ function mergeImportedCompanies(store, root, app, current, imported) {
 export async function importLibrary(store, root, app, run = defaultExec, { command } = {}) {
   if (!root?.folderToken) return { status: 'skipped', imported: 0, total: library(store, root, app).companies.length, libraryFolderFound: false, indexFound: false, message: '设置已保存。目录将在首次调研时创建，创建后请再次点击“保存设置并导入”。' };
   const key = libraryKey(root, app), current = library(store, root, app);
-  const rootListing = await listDriveFolder(run, app, root.folderToken, { command });
-  const libraryFolder = rootListing.files.find(file => isFolder(file) && cleanFileName(file.name) === '全量信息库');
-  const libraryFolderToken = fileToken(libraryFolder);
-  const listing = libraryFolderToken ? await listDriveFolder(run, app, libraryFolderToken, { command }) : rootListing;
-  const index = listing.files.find(file => isCompanyDocument(file) && cleanFileName(file.name) === '公司索引');
-  let imported, indexFound = Boolean(index), manifestUrl;
-  if (index) {
-    manifestUrl = String(index.url);
+  // Once the company index is known, read it directly. Folder listing needs an
+  // optional drive scope that many Feishu apps do not request; importing must
+  // not fail just because that one-time discovery permission is absent.
+  const canUseKnownIndex = Boolean(current.manifestUrl) && (!current.rootFolderToken || current.rootFolderToken === root.folderToken);
+  let imported, indexFound, manifestUrl, libraryFolder, libraryFolderToken = current.folderToken, listing;
+  if (canUseKnownIndex) {
+    manifestUrl = current.manifestUrl;
+    indexFound = true;
     imported = parseLibraryManifest(await fetchDocumentContent(run, app, manifestUrl, { command }));
   } else {
-    imported = companiesFromFiles(listing.files);
+    const rootListing = await listDriveFolder(run, app, root.folderToken, { command });
+    libraryFolder = rootListing.files.find(file => isFolder(file) && cleanFileName(file.name) === '全量信息库');
+    libraryFolderToken = fileToken(libraryFolder) ?? libraryFolderToken;
+    listing = libraryFolderToken ? await listDriveFolder(run, app, libraryFolderToken, { command }) : rootListing;
+    const index = listing.files.find(file => isCompanyDocument(file) && cleanFileName(file.name) === '公司索引');
+    indexFound = Boolean(index);
+    if (index) {
+      manifestUrl = String(index.url);
+      imported = parseLibraryManifest(await fetchDocumentContent(run, app, manifestUrl, { command }));
+    } else {
+      imported = companiesFromFiles(listing.files);
+    }
   }
   const syncedAt = new Date().toISOString();
   const companies = mergeImportedCompanies(store, root, app, current.companies, imported);
@@ -164,13 +177,14 @@ export async function importLibrary(store, root, app, run = defaultExec, { comma
     ...current,
     ...(libraryFolderToken ? { folderToken: libraryFolderToken } : {}),
     ...(manifestUrl ? { manifestUrl } : {}),
+    ...(root.folderToken ? { rootFolderToken: root.folderToken } : {}),
     companies,
     syncedAt,
     ...(imported.length ? { importedAt: syncedAt } : {}),
   });
-  if (!imported.length) return { status: 'empty', imported: 0, total: saved.companies.length, libraryFolderFound: Boolean(libraryFolder), indexFound, syncedAt, truncated: listing.truncated, message: '设置已保存，但飞书目录中没有找到可导入的公司。' };
+  if (!imported.length) return { status: 'empty', imported: 0, total: saved.companies.length, libraryFolderFound: Boolean(libraryFolderToken), indexFound, syncedAt, ...(listing ? { truncated: listing.truncated } : {}), message: '设置已保存，但飞书目录中没有找到可导入的公司。' };
   const source = indexFound ? '公司索引' : '公司文档';
-  return { status: 'completed', imported: imported.length, total: saved.companies.length, libraryFolderFound: Boolean(libraryFolder), indexFound, syncedAt, truncated: listing.truncated, message: `已从${source}导入 ${imported.length} 家公司${saved.companies.length > imported.length ? `，当前共收录 ${saved.companies.length} 家` : ''}。` };
+  return { status: 'completed', imported: imported.length, total: saved.companies.length, libraryFolderFound: Boolean(libraryFolderToken), indexFound, syncedAt, ...(listing ? { truncated: listing.truncated } : {}), message: `已从${source}导入 ${imported.length} 家公司${saved.companies.length > imported.length ? `，当前共收录 ${saved.companies.length} 家` : ''}。` };
 }
 export async function refreshLibrary(store, root, app, run = defaultExec, { command } = {}) {
   const key = libraryKey(root, app), current = library(store, root, app);

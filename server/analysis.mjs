@@ -20,7 +20,7 @@ export const analysisInputSchema = z.object({
 }).strict();
 
 export function analysisKey(root, app) {
-  return 'industry-analysis:' + createHash('sha256').update(JSON.stringify([app?.profile ?? 'default', app?.appId ?? '', root.folderUrl ?? root.rootName])).digest('hex');
+  return 'industry-analysis:' + createHash('sha256').update(JSON.stringify([app?.profile ?? 'default', app?.appId ?? '', root.rootName ?? root.folderUrl ?? ''])).digest('hex');
 }
 
 export function analysisLibrary(store, root, app) {

@@ -86,6 +86,10 @@ function errorText(error) {
     .join('\n');
 }
 
+export function isAuthorizationPending(error) {
+  return /authorization_pending|authorization pending|slow_down/i.test(errorText(error));
+}
+
 /**
  * Classify failures without returning command output or credentials to the UI.
  */

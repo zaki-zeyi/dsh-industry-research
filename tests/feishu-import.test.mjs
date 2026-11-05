@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { Store } from '../server/store.mjs';
 import { fixture } from './helpers.mjs';
 import { createApp } from '../server/app.mjs';
-import { importLibrary, library } from '../server/industry.mjs';
+import { importLibrary, library, libraryKey } from '../server/industry.mjs';
 
 const docUrl = name => `https://tenant.feishu.cn/docx/${name}`;
 const root = { rootName: '行研工作台', folderUrl: 'https://tenant.feishu.cn/drive/folder/root123', folderToken: 'root123' };
@@ -46,6 +46,12 @@ function runFor(filesByFolder, indexContent, expectedCommand = '/test/lark-cli')
   };
 }
 
+test('补充或切换根目录链接不会改变公司库索引，已有公司不会消失', () => {
+  const before = libraryKey({ rootName: root.rootName }, app);
+  assert.equal(libraryKey(root, app), before);
+  assert.notEqual(libraryKey({ ...root, rootName: '另一个根目录' }, app), before);
+});
+
 test('保存并导入优先读取全量信息库和公司索引，支持分页且只读', async () => {
   const f = storeFixture();
   try {
@@ -69,6 +75,33 @@ test('保存并导入优先读取全量信息库和公司索引，支持分页�
     assert.equal(saved.folderToken, 'library123');
     assert.equal(saved.manifestUrl, indexUrl);
     assert.deepEqual(saved.companies.map(item => item.name), ['后摩智能', '光羽芯辰']);
+  } finally { f.close(); }
+});
+
+test('已知公司索引时直接读取，不再要求云盘目录列表权限', async () => {
+  const f = storeFixture();
+  try {
+    const indexUrl = docUrl('KnownManifest');
+    f.store.saveSetting(libraryKey(root, app), {
+      folderToken: 'library123',
+      manifestUrl: indexUrl,
+      rootFolderToken: root.folderToken,
+      companies: [],
+    });
+    const calls = [];
+    const run = async (command, args) => {
+      calls.push({ command, args });
+      assert.equal(command, '/test/lark-cli');
+      assert.ok(args.includes('+fetch'));
+      assert.equal(args.includes('list'), false);
+      return { stdout: JSON.stringify({ ok: true, data: { document: { content: JSON.stringify({ companies: [company('后摩智能'), company('光羽芯辰')] }) } } }) };
+    };
+    const result = await importLibrary(f.store, root, app, run, { command: '/test/lark-cli' });
+    assert.equal(result.status, 'completed');
+    assert.equal(result.imported, 2);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].args.includes(indexUrl));
+    assert.equal(library(f.store, root, app).companies.length, 2);
   } finally { f.close(); }
 });
 
