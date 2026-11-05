@@ -26,6 +26,7 @@ async function request(path, options) {
 export function FeishuMonitor({ onClose, embedded = false }) {
   const [items, setItems] = useState([]), [level, setLevel] = useState(''), [error, setError] = useState(''), [result, setResult] = useState(null);
   const [watching, setWatching] = useState(true), [checking, setChecking] = useState(false), [loading, setLoading] = useState(false), [more, setMore] = useState(true);
+  const [traceQuery,setTraceQuery]=useState(''),[traceFilter,setTraceFilter]=useState('');
   const dialog = useRef(null), loadLock = useRef(false), checkLock = useRef(false), revision = useRef(0);
   const mounted = useRef(true), filter = useRef(level); filter.current = level;
   async function load(append = false, force = false) {
@@ -33,7 +34,7 @@ export function FeishuMonitor({ onClose, embedded = false }) {
     const current = revision.current, selected = filter.current;
     loadLock.current = true; setLoading(true);
     try {
-      const query = new URLSearchParams({ limit: '100', ...(selected ? { level: selected } : {}), ...(append && items.length ? { before: String(items.at(-1).seq) } : {}) });
+      const query = new URLSearchParams({ limit: '100', ...(selected ? { level: selected } : {}), ...(traceFilter ? {traceId:traceFilter} : {}), ...(append && items.length ? { before: String(items.at(-1).seq) } : {}) });
       const value = await request('logs?' + query);
       if (!mounted.current || current !== revision.current) return;
       setItems(old => append ? [...old, ...value.items] : value.items); setMore(value.items.length === 100); setError('');
@@ -53,8 +54,8 @@ export function FeishuMonitor({ onClose, embedded = false }) {
     document.addEventListener('keydown', escape);
     return () => { mounted.current = false; revision.current++; document.removeEventListener('keydown', escape); previous?.focus(); };
   }, []);
-  useEffect(() => { revision.current++; setItems([]); void load(false, true); }, [level]);
-  useEffect(() => { if (!watching) return; const timer = setInterval(() => { if (!document.hidden) void load(); }, 5000); return () => clearInterval(timer); }, [watching, level]);
+  useEffect(() => { revision.current++; setItems([]); void load(false, true); }, [level,traceFilter]);
+  useEffect(() => { if (!watching) return; const timer = setInterval(() => { if (!document.hidden) void load(); }, 5000); return () => clearInterval(timer); }, [watching, level,traceFilter]);
   function exportLogs() {
     const url = URL.createObjectURL(new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), result, items }, null, 2)], { type: 'application/json' }));
     const a = document.createElement('a'); a.href = url; a.download = 'feishu-connection-logs.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -73,6 +74,7 @@ export function FeishuMonitor({ onClose, embedded = false }) {
     {error && <div className="industry-error" role="alert">监测服务异常：{error}</div>}
     {result && <section className="feishu-monitor-result" aria-label="连接检测结果"><strong>{result.status === 'ok' ? '连接检查通过' : '发现连接异常'}</strong><small>{time(result.checkedAt)} · {result.durationMs} ms{result.appId && ` · ${result.appId}`}</small><div>{result.checks.map(c => <article key={c.phase} data-status={c.status}><span>{phases[c.phase] ?? c.phase}</span><strong>{codes[c.code]?.[0] ?? c.code}</strong>{codes[c.code]?.[1] && <p>{codes[c.code][1]}</p>}</article>)}</div>{result.missingScopes?.length > 0 && <p>缺少权限：{result.missingScopes.join('、')}</p>}</section>}
     <div className="feishu-monitor-filters"><label>日志级别 <select aria-label="日志级别" value={level} onChange={e => setLevel(e.target.value)}><option value="">全部</option><option value="error">错误</option><option value="warn">提醒</option><option value="info">信息</option></select></label><label><input type="checkbox" checked={watching} onChange={e => setWatching(e.target.checked)}/>每 5 秒刷新日志</label></div>
+    <form className="feishu-trace-filter" onSubmit={e=>{e.preventDefault();const id=traceQuery.trim();if(id&&!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id)){setError('请输入完整的链路编号');return;}setTraceFilter(id);}}><input aria-label="链路编号" placeholder="输入 traceId，查看同一次操作" value={traceQuery} onChange={e=>setTraceQuery(e.target.value)} maxLength={36}/><button className="secondary" type="submit">筛选链路</button>{traceFilter&&<button type="button" className="secondary" onClick={()=>{setTraceQuery('');setTraceFilter('');}}>清除筛选</button>}</form>
     <div className="feishu-monitor-logs" aria-live="polite">{items.map(row => <article key={row.seq} className="feishu-monitor-log" data-level={row.level}><div><time>{time(row.at)}</time><span>{row.level === 'error' ? '错误' : row.level === 'warn' ? '提醒' : '信息'}</span><strong>{phases[row.details.phase] ?? row.event} · {events[row.event] ?? row.event}</strong>{row.details.durationMs !== undefined && <small>{row.details.durationMs} ms</small>}</div>{row.details.code && <p>{codes[row.details.code]?.[0] ?? row.details.code} {codes[row.details.code]?.[1]}</p>}<details><summary>查看诊断字段</summary><pre>{JSON.stringify(row.details, null, 2)}</pre></details></article>)}</div>
     {!loading && !items.length && <p>暂无匹配的飞书日志。可以立即检测，或在绑定操作后查看。</p>}{more && items.length > 0 && <button className="secondary" disabled={loading || watching} onClick={() => load(true)}>加载更早记录（需暂停自动刷新）</button>}
   </section></div>;

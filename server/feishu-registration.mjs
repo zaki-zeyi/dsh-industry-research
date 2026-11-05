@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { ServiceError } from './service.mjs';
 import { saveFeishuProfile } from './feishu-profile.mjs';
+import { observeFlow, recordTrace } from './connection-trace.mjs';
 
 export function registrationUrl(value) {
   try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && !u.port && ['open.feishu.cn', 'open.larksuite.com'].includes(u.hostname) && ['/page/cli', '/page/launcher'].includes(u.pathname) && Boolean(u.searchParams.get('user_code')); } catch { return false; }
@@ -24,6 +25,7 @@ export class FeishuRegistration {
     this.cancel(); this.binding.clear();
     const f = { id: randomUUID(), status: 'initializing', controller: new AbortController(), expires: Date.now() + 600000, directory: mkdtempSync(resolve(tmpdir(), 'research-feishu-app-')) };
     f.qrPath = resolve(f.directory, 'qrcode.png'); this.flow = f;
+    observeFlow(this.binding.store, f);
     f.timer = setTimeout(() => { if (active(f)) { f.controller.abort(); f.status = 'expired'; f.error = '二维码已过期，请重新扫码登录并选择应用'; } }, 600000); f.timer.unref?.();
     this.work = this.execute(f); return this.snapshot();
   }
@@ -38,6 +40,7 @@ export class FeishuRegistration {
           if (this.flow !== f || f.controller.signal.aborted) return;
           if (!registrationUrl(info.url) || !Number.isFinite(info.expireIn) || info.expireIn <= 0) throw new Error('invalid verification response');
           f.url = info.url; f.expires = Date.now() + Math.min(info.expireIn, 600) * 1000; f.status = 'awaiting_scan';
+          recordTrace(this.binding.store,'feishu.registration.waiting',{phase:'app_registration',status:'waiting',flowId:f.id});
           qrWork = this.binding.run(['auth', 'qrcode', f.url, '--output', f.qrPath], { cwd: f.directory });
           // Observe immediately, even when registration continues polling for several minutes.
           qrWork.catch(() => { if (this.flow === f && active(f)) { f.status = 'failed'; f.error = '二维码生成失败，请检查本机 Lark CLI 后重试'; f.controller.abort(); } });
@@ -51,7 +54,9 @@ export class FeishuRegistration {
         const profile = await saveFeishuProfile(this.binding, result.client_id, result.client_secret);
         if (this.flow !== f || f.controller.signal.aborted) return;
         // Do not select the app until both the official page and local credential storage succeed.
+        let previousAppId; try { previousAppId = this.binding.applicationSnapshot()?.appId; } catch {}
         this.binding.store.saveSetting('feishu-application', { mode: 'custom', appId: result.client_id, profile, ownerOpenId: result.user_info.open_id });
+        recordTrace(this.binding.store,'feishu.application.selected',{phase:'binding_commit',status:'completed',previousAppId,appId:result.client_id,profile});
         this.binding.clear(); f.appId = result.client_id; f.status = 'completed';
       } finally { this.binding.configuring = false; }
     } catch (error) {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { traceContext, nativeDiagnostic } from './connection-trace.mjs';
 
 export function classifyFeishuError(error) {
   const text = [error?.code, error?.message, error?.stdout, error?.stderr, error?.cause?.message].filter(Boolean).join('\n');
@@ -46,14 +47,14 @@ export function installFeishuMonitor(binding) {
         else if (user?.available !== true || user?.verified !== true) code = 'USER_AUTH_REQUIRED';
         else if (binding.scopes.some(scope => !new Set(String(user.scope ?? '').split(/[ ,]+/)).has(scope))) code = 'SCOPE_MISSING';
       }
-      const signature = JSON.stringify([profile, value?.appId, value?.dpopKeyStatus, value?.identities, code]);
+      const signature = JSON.stringify([traceContext()?.traceId, profile, value?.appId, value?.dpopKeyStatus, value?.identities, code]);
       if (phase !== 'identity_check' || signature !== lastIdentity) {
-        log('feishu.connection.finished', { phase, operationId, profile, durationMs: Date.now() - started, code, status: rejected ? 'failed' : code !== 'OK' ? 'attention' : 'completed', appId: value?.appId }, rejected ? 'error' : code !== 'OK' ? 'warn' : 'info');
+        log('feishu.connection.finished', { phase, operationId, profile, durationMs: Date.now() - started, code, ...nativeDiagnostic(value), status: rejected ? 'failed' : code !== 'OK' ? 'attention' : 'completed', appId: value?.appId }, rejected ? 'error' : code !== 'OK' ? 'warn' : 'info');
         if (phase === 'identity_check') lastIdentity = signature;
       }
       return raw;
     } catch (error) {
-      log('feishu.connection.failed', { phase, operationId, profile, appId, durationMs: Date.now() - started, code: classifyFeishuError(error) }, 'error');
+      log('feishu.connection.failed', { phase, operationId, profile, appId, durationMs: Date.now() - started, code: classifyFeishuError(error), ...nativeDiagnostic(error) }, 'error');
       throw error;
     }
   };
@@ -62,7 +63,7 @@ export function installFeishuMonitor(binding) {
   binding.status = async (...args) => {
     const result = await status.apply(binding, args);
     const code = result.bound ? 'OK' : /账号.*不一致/.test(result.error ?? '') ? 'ACCOUNT_MISMATCH' : /应用.*不一致/.test(result.error ?? '') ? 'APP_MISMATCH_OR_MISSING' : result.missingScopes?.length ? 'SCOPE_MISSING' : result.available === false ? 'CLI_CHECK_FAILED' : 'USER_AUTH_REQUIRED';
-    const signature = JSON.stringify([result.appId, code]);
+    const signature = JSON.stringify([traceContext()?.traceId,result.appId, code]);
     if (signature !== lastBinding) {
       log('feishu.monitor.check', { phase: 'binding_validation', appId: result.appId, code, status: result.bound ? 'ok' : 'error' }, result.bound ? 'info' : 'warn');
       lastBinding = signature;
@@ -78,7 +79,7 @@ export function installFeishuMonitor(binding) {
       log('feishu.connection.finished', { phase: 'app_registration', operationId, appId: result?.client_id, code: 'OK', status: 'completed', durationMs: Date.now() - started });
       return result;
     } catch (error) {
-      log('feishu.connection.failed', { phase: 'app_registration', operationId, code: classifyFeishuError(error), durationMs: Date.now() - started }, 'error');
+      log('feishu.connection.failed', { phase: 'app_registration', operationId, code: classifyFeishuError(error), ...nativeDiagnostic(error), durationMs: Date.now() - started }, 'error');
       throw error;
     }
   };

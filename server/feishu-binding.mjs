@@ -1,3 +1,4 @@
+import { observeFlow, recordTrace } from './connection-trace.mjs';
 import { FeishuRegistration } from './feishu-registration.mjs';
 import { installFeishuMonitor } from './feishu-monitor.mjs';
 import { saveFeishuProfile } from './feishu-profile.mjs';
@@ -89,6 +90,7 @@ export class FeishuBinding {
       const expiresIn = Number(data.expires_in ?? 600); if (!Number.isFinite(expiresIn) || expiresIn <= 0) throw new Error('invalid expiry');
       const directory = mkdtempSync(resolve(tmpdir(), 'research-feishu-binding-')), qrPath = resolve(directory, 'qrcode.png');
       this.flow = { id: randomUUID(), deviceCode: data.device_code, url, rebind, application, appId: state.appId ?? application.appId, appName: state.appName, expires: Date.now() + Math.min(expiresIn, 1800) * 1000, directory, qrPath };
+      observeFlow(this.store,this.flow);
       await this.run(this.selectedArgs(['auth', 'qrcode', url, '--output', qrPath], application), { cwd: directory }); return this.publicFlow();
     } catch { this.clear(); throw new ServiceError(503, '无法发起飞书绑定，请检查 lark-cli 应用配置与网络后重试'); }
   }
@@ -105,7 +107,7 @@ export class FeishuBinding {
     this.completing = (async () => {
       try { await this.json(['auth', 'login', '--device-code', flow.deviceCode, '--json'], flow.application); } catch { throw new ServiceError(409, '尚未完成授权或确认超时，请确认扫码账号有当前应用的使用权限；其他企业的账号请先更换对应应用再扫码'); }
       const state = await this.requireBound(flow.application);
-      if (flow.appId && state.appId !== flow.appId) throw new ServiceError(409, '授权应用已发生变化，请重新扫码，未完成绑定'); this.clear(); return state;
+      if (flow.appId && state.appId !== flow.appId) throw new ServiceError(409, '授权应用已发生变化，请重新扫码，未完成绑定'); recordTrace(this.store,'feishu.authorization.confirmed',{phase:'personal_authorization',status:'completed',appId:state.appId,flowId:flow.id}); this.clear(); return state;
     })().finally(() => { this.completing = null; }); return this.completing;
   }
   clear() { if (this.flow) rmSync(this.flow.directory, { recursive: true, force: true }); this.flow = null; }

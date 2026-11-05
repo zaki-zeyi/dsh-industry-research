@@ -3,13 +3,16 @@ import { test, expect } from '@playwright/test';
 test('release 连接界面：更换应用和重新绑定生成新流程，保存后手动确认个人授权', async ({ page }) => {
   let registration = { status: 'idle' }, serial = 0, bound = true;
   const posts = [];
+  const telemetry=[];
+  // Even a broken telemetry endpoint must not interrupt binding.
+  await page.route('**/api/feishu-monitor/events',route=>{telemetry.push(route.request().postDataJSON());return route.fulfill({status:503,json:{error:'telemetry unavailable'}});});
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGQAAAABJRU5ErkJggg==', 'base64');
   const identity = () => ({ bound, available: true, appId: serial ? 'cli_new123' : 'cli_old123', appName: serial ? '新应用' : '原应用', userName: '测试用户' });
   await page.route('**/api/feishu-binding**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path.includes('/qr/')) return route.fulfill({ contentType: 'image/png', body: png });
     if (route.request().method() === 'POST') {
-      posts.push({ path, body: route.request().postDataJSON() });
+      posts.push({ path, body: route.request().postDataJSON(), traceId:route.request().headers()['x-feishu-trace-id'] });
       if (path.endsWith('/complete')) { bound = true; return route.fulfill({ json: identity() }); }
       return route.fulfill({ json: { ...identity(), bound: false, flowId: '11111111-2222-4222-8222-222222222222', authorizationUrl: 'https://accounts.feishu.cn/device?code=fixture', expiresAt: new Date(Date.now() + 600000).toISOString() } });
     }
@@ -20,7 +23,7 @@ test('release 连接界面：更换应用和重新绑定生成新流程，保存
     if (path.includes('/qr/')) return route.fulfill({ contentType: 'image/png', body: png });
     if (route.request().method() === 'DELETE') { registration = { status: 'idle' }; return route.fulfill({ json: registration }); }
     if (route.request().method() === 'POST') {
-      posts.push({ path, body: route.request().postDataJSON() }); serial++;
+      posts.push({ path, body: route.request().postDataJSON(), traceId:route.request().headers()['x-feishu-trace-id'] }); serial++;
       registration = { status: 'awaiting_scan', flowId: String(serial), authorizationUrl: 'https://open.feishu.cn/page/cli?user_code=fixture' };
     }
     return route.fulfill({ json: registration });
@@ -39,5 +42,13 @@ test('release 连接界面：更换应用和重新绑定生成新流程，保存
   await expect(page.getByRole('dialog').getByRole('status')).toHaveText('已绑定飞书：测试用户');
   expect(posts.filter(p => p.path.endsWith('/feishu-registration')).map(p => p.body)).toEqual([{ refresh: false }, { refresh: false }]);
   expect(posts.find(p => p.path.endsWith('/feishu-binding')).body).toEqual({ rebind: true });
+  const registrations=posts.filter(p=>p.path.endsWith('/feishu-registration'));
+  expect(registrations[0].traceId).not.toBe(registrations[1].traceId);
+  expect(posts.find(p=>p.path.endsWith('/feishu-binding')).traceId).toBe(registrations[1].traceId);
+  expect(posts.find(p=>p.path.endsWith('/complete')).traceId).toBe(registrations[1].traceId);
+  await expect.poll(()=>telemetry.some(e=>e.event==='rendered'&&e.status==='bound'&&e.traceId===registrations[1].traceId)).toBe(true);
+  await page.evaluate(()=>window.dispatchEvent(new ErrorEvent('error',{message:'SECRET'})));
+  await expect.poll(()=>telemetry.some(e=>e.event==='script_error')).toBe(true);
+  expect(JSON.stringify(telemetry)).not.toContain('SECRET');
   await page.screenshot({ path: 'artifacts/feishu-release-baseline.png', fullPage: true });
 });

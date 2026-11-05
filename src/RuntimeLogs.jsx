@@ -23,6 +23,22 @@ const labels = {
   'feishu.notification.sent':'机器人消息已发送',
   'feishu.notification.failed':'机器人消息发送失败',
   'runtime.started':'工作台服务已启动',
+  'runtime.stopped':'工作台服务已关闭',
+  'runtime.start_failed':'工作台服务启动失败',
+  'runtime.previous_unconfirmed':'上次运行未记录正常关闭，原因待确认',
+  'feishu.http.received':'已接收连接请求',
+  'feishu.http.finished':'连接请求已返回',
+  'feishu.http.pending':'连接请求长时间未结束，等待确认',
+  'feishu.http.disconnected':'请求连接断开，业务结果待确认',
+  'feishu.flow.created':'已创建授权流程',
+  'feishu.credentials.saved':'应用凭据保存完成',
+  'feishu.application.selected':'已提交所选应用',
+  'feishu.authorization.confirmed':'个人授权已确认',
+  'feishu.ui.clicked':'用户发起连接操作',
+  'feishu.ui.response':'界面已收到连接结果',
+  'feishu.ui.rendered':'界面绑定状态已更新',
+  'feishu.ui.request_failed':'界面请求失败',
+  'feishu.ui.script_error':'连接界面发生脚本异常',
 };
 export function RuntimeLogs({ embedded = false }) {
   const [items,setItems]=useState([]), [error,setError]=useState(''), [busy,setBusy]=useState(false);

@@ -17,6 +17,7 @@ import { AgentPublisher } from './agent-delivery.mjs';
 import { createServer } from 'node:http';
 import { mkdirSync, openSync, closeSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { recordTrace, recordRuntimeStart, recordRuntimeStop } from './connection-trace.mjs';
 import { fileURLToPath } from 'node:url';
 export function dataIdentity(path) { return createHash('sha256').update(resolve(path)).digest('hex'); }
 export async function startRuntime({ env = process.env, port = Number(env.PORT ?? 3088), dataDir = resolve(env.DATA_DIR ?? './data'), dist = fileURLToPath(new URL('../dist', import.meta.url)), host, binding, libraryRun } = {}) {
@@ -39,6 +40,7 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     const mode = env.RESEARCH_MODE ?? 'codex';
     if (!['demo', 'live', 'codex', 'native'].includes(mode)) throw new Error('RESEARCH_MODE 只能是 demo、live、codex 或 native');
     store = new Store(resolve(dataDir, 'research.sqlite'));
+    recordRuntimeStart(store);
     const aiSettings = new AISettings(dataDir);
     terminals = new TerminalManager(store, { aiSettings, dshCommand: env.DSH_COMMAND, command: env.CODEX_COMMAND, workRoot: env.CODEX_WORK_ROOT ?? resolve(dataDir, 'codex'), model: env.CODEX_MODEL });
     if (mode === 'native') { if (!host?.sessionController || !host?.permissionPresets) throw new Error('原生会话模式需要在宿主 DSH 插件中运行'); nativeSessions = new NativeSessions(store, host, { workRoot: resolve(dataDir, 'sessions') }); }
@@ -54,17 +56,18 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     service.notifications = new BriefingNotifications(service);
     service.internalNotifications = new InternalMaterialNotifications(service);
     if (nativeSessions) await nativeSessions.reconcileWorkspace();
-    store.runtimeLog('runtime.started',{status:'ready',phase:service.mode});
+    recordTrace(store,'runtime.started',{status:'ready',phase:service.mode});
     service.recover();
     if (service.briefingSchedules) void service.briefingSchedules.catchUpMissed().catch(() => {});
 
     server.on('request', createApp(service, { dist, libraryRun, health: { application: 'industry-research', dataIdentity: dataIdentity(dataDir), transport: researcher.transport ?? 'json' } }));
     terminalSockets = attachTerminalWebSocket(server, terminals);
   } catch (error) {
+    recordTrace(store,'runtime.start_failed',{status:'failed'},'error');
     server.close(); await service?.close(); service?.binding?.close(); await terminals?.close(); nativeSessions?.close(); store?.close(); release(); throw error;
   }
   let closing;
   return { server, service, url: `http://127.0.0.1:${server.address().port}`, close() {
-    return closing ??= (async () => { terminalSockets.close(); server.close(); server.closeAllConnections(); await service.close(); service.binding?.close(); await terminals.close(); nativeSessions?.close(); store.close(); release(); })();
+    return closing ??= (async () => { terminalSockets.close(); server.close(); server.closeAllConnections(); await service.close(); service.binding?.close(); await terminals.close(); nativeSessions?.close(); recordRuntimeStop(store); store.close(); release(); })();
   } };
 }

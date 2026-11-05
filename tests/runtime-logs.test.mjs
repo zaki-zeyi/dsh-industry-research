@@ -8,7 +8,7 @@ test('平台日志保留1000条，白名单过滤敏感字段并支持按游标�
   try {
     f.store.runtimeLog('feishu.registration.failed',{appId:'cli_test123',code:'ETIMEDOUT',appSecret:'private-secret',token:'private-token',authorizationUrl:'https://example.com/?secret=private-secret'},'error');
     const initial=f.store.runtimeLogs()[0]; assert.equal(initial.level,'error');
-    assert.deepEqual(initial.details,{appId:'cli_test123',code:'ETIMEDOUT'});
+    assert.equal(initial.details.appId,'cli_test123');assert.equal(initial.details.code,'ETIMEDOUT');assert.ok(initial.details.instanceId);assert.ok(initial.details.pluginVersion);assert.ok(!JSON.stringify(initial).includes('private-secret'));assert.ok(!JSON.stringify(initial).includes('private-token'));
     for(let i=0;i<1002;i++)f.store.runtimeLog('runtime.started',{attempt:i});
     assert.equal(f.store.db.prepare('SELECT COUNT(*) n FROM runtime_logs').get().n,1000);
     const page=f.store.runtimeLogs({limit:20}),next=f.store.runtimeLogs({limit:20,before:page.at(-1).seq});
