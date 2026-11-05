@@ -11,20 +11,12 @@ export function registrationUrl(value) {
 }
 const active = flow => flow && ['initializing', 'awaiting_scan', 'saving'].includes(flow.status);
 export class FeishuRegistration {
-  constructor(binding, registerApp = registerFeishuApp) { this.binding = binding; this.registerApp = registerApp; }
+  constructor(binding, registerApp = registerFeishuApp) { this.binding = binding; this.registerApp = registerApp; this.delay = ms => new Promise(resolve => setTimeout(resolve, ms)); }
   get busy() { return Boolean(active(this.flow)); }
   snapshot() {
     const f = this.flow; if (!f) return { status: 'idle' };
     if (active(f) && f.expires <= Date.now()) { f.controller.abort(); f.status = 'expired'; f.error = '二维码已过期，请重新扫码登录并选择应用'; }
-    return { flowId: f.id, status: f.status, phase: f.phase ?? 'registration', updatingApp: Boolean(f.targetAppId), ...(f.appId || f.targetAppId ? { appId: f.appId ?? f.targetAppId } : {}), ...(f.url ? { authorizationUrl: f.url } : {}), expiresAt: new Date(f.expires).toISOString(), ...(f.remoteStatus ? { remoteStatus: f.remoteStatus } : {}), ...(f.failureCode ? { failureCode: f.failureCode } : {}), ...(f.error ? { error: f.error } : {}), ...(f.recovery ? { recovery: f.recovery } : {}) };
-  }
-  async existingProfile(appId) {
-    try {
-      const raw = await this.binding.run(['profile', 'list']);
-      const profiles = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      if (!Array.isArray(profiles)) return undefined;
-      return profiles.find(profile => profile?.appId === appId && /^[A-Za-z0-9_-]{1,80}$/.test(profile?.name ?? ''))?.name;
-    } catch { return undefined; }
+    return { flowId: f.id, status: f.status, canRetrySave: Boolean(f.credentials && f.status === 'failed' && f.expires > Date.now()), saveAttempts: f.saveAttempts ?? 0, saveAttempt: f.saveAttempt ?? 0, phase: f.phase ?? 'registration', ...(f.storageDiagnostic ? { storageDiagnostic: f.storageDiagnostic } : {}), updatingApp: Boolean(f.targetAppId), ...(f.appId || f.targetAppId ? { appId: f.appId ?? f.targetAppId } : {}), ...(f.url ? { authorizationUrl: f.url } : {}), expiresAt: new Date(f.expires).toISOString(), ...(f.remoteStatus ? { remoteStatus: f.remoteStatus } : {}), ...(f.failureCode ? { failureCode: f.failureCode } : {}), ...(f.error ? { error: f.error } : {}), ...(f.recovery ? { recovery: f.recovery } : {}) };
   }
   start({ refresh = false, replaceApp = false, accountRebind = false } = {}) {
     if (!this.binding.store) throw new ServiceError(503, '当前服务未启用飞书绑定配置');
@@ -33,7 +25,6 @@ export class FeishuRegistration {
     this.cancel(); this.binding.clear();
     const selected = this.binding.applicationSnapshot();
     const targetAppId = !replaceApp && selected?.mode === 'custom' && /^cli_[A-Za-z0-9]{5,100}$/.test(selected.appId ?? '') ? selected.appId : undefined;
-    const targetProfile = targetAppId && /^[A-Za-z0-9_-]{1,80}$/.test(selected.profile ?? '') ? selected.profile : undefined;
     const f = {
       id: randomUUID(),
       status: 'initializing',
@@ -41,12 +32,12 @@ export class FeishuRegistration {
       expires: Date.now() + 600000,
       directory: mkdtempSync(resolve(tmpdir(), 'research-feishu-app-')),
       targetAppId,
-      targetProfile,
       replaceApp,
       accountRebind,
     };
     f.qrPath = resolve(f.directory, 'qrcode.png'); this.flow = f;
     f.timer = setTimeout(() => { if (active(f)) { f.controller.abort(); f.status = 'expired'; f.error = '二维码已过期，请重新扫码登录并选择应用'; } }, 600000); f.timer.unref?.();
+    this.binding.store?.runtimeLog?.('feishu.registration.started', {previousAppId:selected?.appId, operation:accountRebind?'rebind':replaceApp?'replace':'repair'});
     this.work = this.execute(f); return this.snapshot();
   }
   async execute(f) {
@@ -67,6 +58,7 @@ export class FeishuRegistration {
               f.recovery = larkRecoveryForError(error);
               f.status = 'failed';
               f.error = f.recovery.message;
+      this.binding.store?.runtimeLog?.('feishu.registration.failed', {targetAppId:f.credentials?.client_id,phase:f.phase,code:f.failureCode},'error');
               f.controller.abort();
             }
           });
@@ -79,42 +71,15 @@ export class FeishuRegistration {
       if (f.targetAppId && result.client_id !== f.targetAppId) throw new Error('updated app id mismatch');
       await qrWork;
       if (this.flow !== f || f.controller.signal.aborted || f.expires <= Date.now()) return;
-      f.phase = 'credential_storage'; f.status = 'saving'; this.binding.configuring = true;
-      try {
-        // Rebinding an existing app must update its profile in place. A new
-        // profile with the same app id is rejected and must never create a
-        // second credential entry.
-        const updateExisting = f.targetAppId === result.client_id && Boolean(f.targetProfile);
-        let profile = updateExisting ? f.targetProfile : `research-${randomUUID()}`;
-        const credential = (args) => this.binding.run(args, { input: result.client_secret + '\n' });
-        const updateArgs = () => ['config', 'init', '--name', profile, '--app-id', result.client_id, '--app-secret-stdin', '--brand', 'feishu'];
-        try {
-          await credential(updateExisting ? updateArgs() : ['profile', 'add', '--name', profile, '--app-id', result.client_id, '--app-secret-stdin', '--brand', 'feishu']);
-        } catch (error) {
-          const text = [error?.message, error?.stdout, error?.stderr, error?.cause?.message].filter(Boolean).join('\n');
-          if (updateExisting || !/already used by profile|unique app-id|already exists/i.test(text)) throw error;
-          // A selected app may already have a profile from an earlier attempt.
-          // Update that profile instead of creating a colliding keychain entry.
-          profile = await this.existingProfile(result.client_id);
-          if (!profile) throw error;
-          await credential(updateArgs());
-        }
-        if (this.flow !== f || f.controller.signal.aborted) return;
-        // Do not select the app until both the official page and local credential storage succeed.
-        // The account used to manage an application is not necessarily the
-        // account used for personal authorization. Keep it as metadata and
-        // verify the personal identity only after `auth login` completes.
-        f.phase = 'account_staging';
-        const operationMode = f.accountRebind ? 'different' : (f.replaceApp || f.targetAppId ? 'same' : 'any');
-        await this.binding.stageApplication({
-          mode: 'custom',
-          appId: result.client_id,
-          profile,
-          registeredByOpenId: result.user_info.open_id,
-        }, operationMode);
-        this.binding.clear(); f.appId = result.client_id; f.status = 'completed';
-      } finally { this.binding.configuring = false; }
+      // Retain the received credentials only in memory, for a bounded save retry.
+      f.credentials = result; f.expires = Date.now() + 600000;
+      f.credentialTimer = setTimeout(() => { delete f.credentials; }, 600000); f.credentialTimer.unref?.();
+      await this.persist(f);
     } catch (error) {
+      this.fail(f, error);
+    } finally { clearTimeout(f.timer); }
+  }
+  fail(f, error) {
       if (this.flow !== f || f.controller.signal.aborted) return;
       const failureCode = String(error?.code ?? error?.cause?.code ?? '').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80);
       if (failureCode) f.failureCode = failureCode;
@@ -130,7 +95,86 @@ export class FeishuRegistration {
       }
       f.failureCode ??= f.recovery.code;
       f.error = f.recovery.message;
-    } finally { clearTimeout(f.timer); }
+      this.binding.store?.runtimeLog?.('feishu.registration.failed', {targetAppId:f.credentials?.client_id,phase:f.phase,code:f.failureCode},'error');
+  }
+  retrySave(id) {
+    const f = this.flow;
+    if (!f || f.id !== id || !f.credentials || f.expires <= Date.now()) throw new ServiceError(409, '可重试的应用凭据已失效，请重新扫码');
+    if (f.status === 'saving') return this.snapshot();
+    if (f.status !== 'failed' || this.binding.configuring || this.binding.starting || this.binding.completing) throw new ServiceError(409, '当前流程无法重试保存');
+    this.work = this.persist(f).catch(error => this.fail(f, error));
+    return this.snapshot();
+  }
+  async reusableProfile(appId) {
+    const profiles = await this.binding.json(['profile', 'list']);
+    if (!Array.isArray(profiles)) throw new Error('invalid profile list response');
+    const existing = profiles.find(p => p.appId === appId);
+    if (!existing) return null;
+    try {
+      const application = { mode: 'custom', appId, profile: existing.name };
+      if (!application.profile) throw new Error('missing profile name');
+      const state = await this.binding.json(['auth', 'status', '--json', '--verify'], application);
+      if (state.appId === appId && state.identities?.bot?.available === true && state.identities.bot.verified === true) return existing.name;
+    } catch { /* Never overwrite another profile or its credentials on failure. */ }
+    const message = '本机已存在该飞书应用的 profile，但应用凭据校验未通过。已停止重复创建并保留原配置；请先恢复该应用的本机凭据后重试。';
+    throw Object.assign(new ServiceError(409, message), {
+      code: 'LARK_EXISTING_PROFILE_UNVERIFIED',
+      recovery: { code: 'LARK_EXISTING_PROFILE_UNVERIFIED', action: 'retry', automatic: false, message },
+    });
+  }
+  async persist(f) {
+    f.status = 'saving'; f.saveAttempt = 0; f.phase = 'credential_storage'; this.binding.configuring = true;
+    delete f.error; delete f.recovery; delete f.failureCode;
+    try {
+      const result = f.credentials;
+      // Permission repair keeps the working profile and user login. Recreating
+      // a profile here would strand pending notifications on stale credentials.
+      const current = this.binding.applicationSnapshot();
+      if (f.targetAppId === current.appId && current.profile) {
+        try {
+          const state = await this.binding.json(['auth', 'status', '--json', '--verify'], current);
+          if (state.appId === result.client_id && state.identities?.bot?.verified === true && state.identities.bot.available === true) {
+            if (this.flow !== f || f.controller.signal.aborted) return;
+            this.binding.store?.runtimeLog?.('feishu.registration.completed',{appId:result.client_id}); f.appId = result.client_id; f.status = 'completed'; clearTimeout(f.credentialTimer); delete f.credentials; return;
+          }
+        } catch { /* Missing local credentials still take the normal save path. */ }
+      }
+      let profile = f.savedProfile;
+      if (!profile) for (let attempt = 0; attempt < 3; attempt++) {
+        if (this.flow !== f || f.controller.signal.aborted || f.expires <= Date.now()) return;
+        // The official CLI enforces one profile per app-id, not just unique names.
+        // Recheck on retries as an earlier attempt may have partially succeeded.
+        const existing = await this.reusableProfile(result.client_id);
+        if (existing) { profile = f.savedProfile = existing; break; }
+        const candidate = 'research-' + randomUUID();
+        f.saveAttempt = attempt + 1; f.saveAttempts = (f.saveAttempts ?? 0) + 1;
+        try {
+          const raw = await this.binding.run(['profile', 'add', '--name', candidate, '--app-id', result.client_id, '--app-secret-stdin', '--brand', 'feishu'], { input: result.client_secret + '\n' });
+          let payload; try { payload = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch {}
+          if (payload?.ok === false) throw Object.assign(new Error('credential storage rejected'), { code: payload.error?.code });
+          profile = f.savedProfile = candidate; break;
+        } catch (error) {
+          // A timeout can arrive after the CLI has written the profile. Verify
+          // that exact candidate before creating another one or asking to scan.
+          let credentialStatus = 'unconfirmed';
+          try {
+            const saved = await this.binding.json(['auth', 'status', '--json', '--verify'], { mode: 'custom', appId: result.client_id, profile: candidate });
+            if (saved.appId === result.client_id && saved.identities?.bot?.available === true && saved.identities.bot.verified === true) {
+              credentialStatus = 'verified'; profile = f.savedProfile = candidate;
+            }
+          } catch { /* Preserve the original storage failure below. */ }
+          f.storageDiagnostic = { code: String(error?.code ?? 'unknown').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80), killed: Boolean(error?.killed), credentialStatus };
+          if (profile) break;
+          if (attempt === 2) throw error;
+          await this.delay(300 * 2 ** attempt);
+        }
+      }
+      if (this.flow !== f || f.controller.signal.aborted || f.expires <= Date.now()) return;
+      f.phase = 'account_staging';
+      await this.binding.stageApplication({ mode: 'custom', appId: result.client_id, profile, registeredByOpenId: result.user_info.open_id }, f.accountRebind ? 'different' : (f.replaceApp || f.targetAppId ? 'same' : 'any'));
+      this.binding.store?.runtimeLog?.('feishu.registration.completed',{appId:result.client_id});
+      this.binding.clear(); f.appId = result.client_id; f.status = 'completed'; clearTimeout(f.credentialTimer); delete f.credentials;
+    } finally { this.binding.configuring = false; clearTimeout(f.timer); }
   }
   qr(id) {
     this.snapshot(); const f = this.flow;
@@ -141,7 +185,7 @@ export class FeishuRegistration {
   cancel() {
     const f = this.flow; if (!f) return;
     if (f.status === 'saving') throw new ServiceError(409, '应用凭据正在保存，请稍后再试');
-    f.controller.abort(); clearTimeout(f.timer); rmSync(f.directory, { recursive: true, force: true }); this.flow = null;
+    clearTimeout(f.credentialTimer); delete f.credentials; f.controller.abort(); clearTimeout(f.timer); rmSync(f.directory, { recursive: true, force: true }); this.flow = null;
   }
-  close() { if (this.flow) { this.flow.controller.abort(); clearTimeout(this.flow.timer); rmSync(this.flow.directory, { recursive: true, force: true }); this.flow = null; } }
+  close() { if (this.flow) { clearTimeout(this.flow.credentialTimer); delete this.flow.credentials; this.flow.controller.abort(); clearTimeout(this.flow.timer); rmSync(this.flow.directory, { recursive: true, force: true }); this.flow = null; } }
 }

@@ -5,9 +5,8 @@ export function applicationRunner({defaultBound=true,defaultUserName='默认用�
  const calls=[],profiles=new Map(),defaultAccount={appId:'cli_default123',bound:defaultBound,userName:defaultUserName,openId:'ou_scanned',unionId:'on_scanned',logins:[]};let fail=false,mismatch=false,issued=0;
  const run=async(args,options={})=>{
   calls.push({args,options});const profile=args[0]==='--profile'?args[1]:null;const cmd=profile?args.slice(2):args;
-  if(cmd[0]==='profile'&&cmd[1]==='list')return [...profiles].map(([name,p])=>({name,appId:p.appId}));
-  if(cmd[0]==='profile'&&cmd[1]==='add'){if(fail)throw new Error('credential-secret');const name=cmd[cmd.indexOf('--name')+1],appId=cmd[cmd.indexOf('--app-id')+1];if([...profiles.values()].some(p=>p.appId===appId))throw new Error(`app-id "${appId}" is already used by profile "existing"; each profile must have a unique app-id`);profiles.set(name,{appId,bound:false,userName:'自定义用户',openId:'ou_scanned',unionId:'on_scanned',logins:[]});return 'saved';}
-  if(cmd[0]==='config'&&cmd[1]==='init'){if(fail)throw new Error('credential-secret');const name=cmd[cmd.indexOf('--name')+1],appId=cmd[cmd.indexOf('--app-id')+1];profiles.set(name,{...(profiles.get(name)??{bound:false,userName:'自定义用户',openId:'ou_scanned',unionId:'on_scanned',logins:[]}),appId});return {appId,appSecret:'****',brand:'feishu'};}
+  if(cmd[0]==='profile'&&cmd[1]==='list')return [{name:'default',appId:defaultAccount.appId},...Array.from(profiles,([name,a])=>({name,appId:a.appId}))];
+  if(cmd[0]==='profile'&&cmd[1]==='add'){if(fail)throw new Error('credential-secret');const appId=cmd[cmd.indexOf('--app-id')+1];if(appId===defaultAccount.appId||[...profiles.values()].some(a=>a.appId===appId))throw Object.assign(new Error('each profile must have a unique app-id'),{code:2});profiles.set(cmd[cmd.indexOf('--name')+1],{appId,bound:false,userName:'自定义用户',openId:'ou_scanned',unionId:'on_scanned',logins:[]});return 'saved';}
   const account=profile?profiles.get(profile):defaultAccount;
   if(!account)throw new Error('missing profile');
   if(cmd[1]==='status')return {appId:mismatch?'cli_wrong123':account.appId,identities:{bot:{status:'ready',available:true,verified:true,appName:profile?'自定义应用':'默认应用'},user:{available:account.bound,verified:account.bound,userName:account.userName,openId:account.openId??'ou_scanned',scope:requiredScopes.join(' ')}}};

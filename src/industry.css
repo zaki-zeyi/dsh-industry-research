@@ -389,3 +389,5 @@
     grid-template-columns:1fr
   }
 }
+
+.runtime-log-row{background:#fff;border:1px solid #dfe5da;border-radius:12px;padding:16px 20px;margin-bottom:12px}.runtime-log-row>div{display:flex;flex-wrap:wrap;gap:12px;align-items:center}.runtime-log-row time,.runtime-log-row span{font-size:13px;color:#68766c}.runtime-log-row pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;margin:10px 0 0;color:#526454}

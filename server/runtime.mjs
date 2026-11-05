@@ -54,6 +54,7 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     service.notifications = new BriefingNotifications(service);
     service.internalNotifications = new InternalMaterialNotifications(service);
     if (nativeSessions) await nativeSessions.reconcileWorkspace();
+    store.runtimeLog('runtime.started',{status:'ready',phase:service.mode});
     service.recover();
     if (service.briefingSchedules) void service.briefingSchedules.catchUpMissed().catch(() => {});
 

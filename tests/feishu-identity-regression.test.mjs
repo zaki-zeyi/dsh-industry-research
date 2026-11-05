@@ -18,11 +18,11 @@ test('PRD1917 同应用同账号缺失unionId时不误判换号', () => {
   f.b.commitPendingApplicationOperation({ openId: 'ou_person' });
   assert.equal(f.committed(), true);
 });
-test('PRD1917 跨应用身份字段缺失应报告无法确认身份，不能判成不同账号', () => {
+test('PRD1917 跨应用身份字段缺失明确失败，不自动回滚应用', () => {
   for (const mode of ['same', 'different']) {
     const f = operation(mode, false, { previousOpenId: 'ou_old', previousUnionId: 'on_person' });
     assert.throws(() => f.b.commitPendingApplicationOperation({ openId: 'ou_new' }), e => e.code === 'LARK_STABLE_IDENTITY_REQUIRED');
-    assert.equal(f.restored(), true);
+    assert.equal(f.restored(), false);
     assert.equal(f.committed(), false);
   }
 });

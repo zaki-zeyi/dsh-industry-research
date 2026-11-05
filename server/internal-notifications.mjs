@@ -20,10 +20,12 @@ export class InternalMaterialNotifications {
     if (!task.internal || task.status !== 'ready' || task.publication.status !== 'published' || task.notification?.status === 'sent') return task;
     try {
       const recipient = task.notificationRecipient;
-      const application = task.notificationApp ?? task.feishuApp;
+      const expected = task.notificationApp ?? task.feishuApp;
+      const current = service.binding.applicationSnapshot?.();
+      const application = { ...expected, ...current, appId: current?.appId ?? expected?.appId };
       if (!/^ou_[A-Za-z0-9]+$/.test(recipient ?? '')) throw new Error('missing recipient');
-      if (!notificationApplicationMatches(application, service.binding.applicationSnapshot?.())) throw new Error('current binding application changed');
-      const identity = await service.binding.json(['auth', 'status', '--json'], application);
+      if (!notificationApplicationMatches(expected, current)) throw new Error('current binding application changed');
+      const identity = await service.binding.json(['auth', 'status', '--json', '--verify'], application);
       if (identity.identities?.user?.openId !== recipient
         || identity.identities.user.available !== true
         || (application.appId && identity.appId !== application.appId)) throw new Error('identity changed');
@@ -34,11 +36,13 @@ export class InternalMaterialNotifications {
         'im', '+messages-send', '--as', 'bot', '--user-id', recipient,
         '--text', internalNotificationText(task), '--idempotency-key', task.id,
       ], application);
-      if (response.ok !== true) throw new Error('unconfirmed');
+      if (response.ok !== true) throw Object.assign(new Error('unconfirmed notification'), { stderr: JSON.stringify(response) });
       const messageId = response.data?.message_id ?? response.message_id;
       task.notification = { ...task.notification, status: 'sent', sentAt: new Date().toISOString(), ...(messageId ? { messageId: String(messageId) } : {}) };
       service.save(task);
+      service.store?.runtimeLog?.('feishu.notification.sent',{taskId:task.id,appId:application.appId});
     } catch (error) {
+      service.store?.runtimeLog?.('feishu.notification.failed',{taskId:task.id,appId:(task.notificationApp??task.feishuApp)?.appId},'error');
       const failure = notificationFailure(error);
       task.notification = {
         ...task.notification,
