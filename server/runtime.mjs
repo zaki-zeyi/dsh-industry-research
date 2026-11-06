@@ -49,6 +49,8 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     const publisher = mode === 'demo' ? new DemoPublisher(store) : new AgentPublisher(store, terminals);
     service = new ResearchService(store, researcher, publisher, { mode });
     service.cloudOnly = mode === 'native'; service.binding = binding ?? new FeishuBinding({ command: env.LARK_CLI_COMMAND, store });
+    terminals.config.larkCommand = service.binding.command;
+    if (nativeSessions) nativeSessions.larkCommand = service.binding.command;
     // Injected bindings belong to offline hosts/tests. Production native runs
     // always resolve directories on the server before authorizing cloud writes.
     service.directories = directories ?? (service.cloudOnly && !binding ? new FeishuDirectories(store, { command: service.binding.command }) : undefined);

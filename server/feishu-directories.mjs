@@ -1,7 +1,5 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
-import { larkLaunch } from './lark-launch.mjs';
+import { runLark } from './lark-cli.mjs';
 import { folderCacheKey } from './feishu-folder.mjs';
 import { listDriveFolder, importLibrary, library } from './industry.mjs';
 import { analysisKey, analysisLibrary } from './analysis.mjs';
@@ -10,7 +8,6 @@ import { internalFolderKey } from './internal-materials.mjs';
 import { recordTrace } from './connection-trace.mjs';
 import { classifyFeishuError } from './feishu-monitor.mjs';
 
-const execute = promisify(execFile);
 const failure = (code, message) => Object.assign(new Error(message), { code, status: 409 });
 const tokenOf = file => file.shortcut_info?.target_token ?? file.token;
 const typeOf = file => file.shortcut_info?.target_type ?? file.type;
@@ -36,13 +33,12 @@ export class FeishuDirectories {
   }
   async json(app, args) {
     const selected = [...(app?.profile ? ['--profile', app.profile] : []), ...args];
-    const launch = this.run ? { command: this.command, args: selected } : larkLaunch(this.command, selected);
     let response;
     try {
-      const result = await (this.run ?? execute)(launch.command, launch.args, {
+      const result = await runLark(this.command, selected, {
         timeout: 20000, maxBuffer: 1024 * 1024, windowsHide: true,
         env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' },
-      });
+      }, this.run);
       response = JSON.parse(typeof result === 'string' ? result : result.stdout);
     } catch (cause) {
       throw Object.assign(failure(classifyFeishuError(cause), '飞书目录创建未确认，请检查 CLI 或网络后重试；不会盲目重复创建'), { cause, notStarted: cause.code === 'ENOENT' });

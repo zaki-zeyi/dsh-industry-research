@@ -1,9 +1,9 @@
 import { observeFlow, recordTrace } from './connection-trace.mjs';
 import { FeishuRegistration } from './feishu-registration.mjs';
-import { installFeishuMonitor } from './feishu-monitor.mjs';
+import { installFeishuMonitor, classifyFeishuError } from './feishu-monitor.mjs';
 import { saveFeishuProfile } from './feishu-profile.mjs';
-import { larkLaunch } from './lark-launch.mjs';
-import { execFile } from 'node:child_process';
+import { runLark } from './lark-cli.mjs';
+import { inspectLarkCli } from './lark-setup.mjs';
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { resolve } from 'node:path';
@@ -19,14 +19,8 @@ export class FeishuBinding {
     this.store = store; this.scopes = requiredScopes; this.optionalScopes = optionalScopes; this.tenantScopes = requiredTenantScopes; this.registration = new FeishuRegistration(this, registerApp);
     const local = resolve(homedir(), '.local/bin/lark-cli');
     this.command = command ?? (existsSync(local) ? local : 'lark-cli');
-    this.run = run ?? ((args, options = {}) => new Promise((resolveRun, reject) => {
-      const launch = larkLaunch(this.command, args);
-      const child = execFile(launch.command, launch.args, { timeout: 15000, maxBuffer: 128 * 1024, cwd: options.cwd, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }, (error, stdout, stderr) => {
-        if (!error) return resolveRun(stdout);
-        error.stdout = stdout; error.stderr = stderr; reject(error);
-      });
-      child.stdin?.on('error', () => {}); child.stdin?.end(options.input ?? '');
-    }));
+    if (!run) this.inspectCLI = () => inspectLarkCli(this.command);
+    this.run = run ?? (async (args, options = {}) => (await runLark(this.command, args, { timeout: 15000, maxBuffer: 128 * 1024, ...options })).stdout);
     installFeishuMonitor(this);
   }
   applicationSnapshot() { return this.store?.setting('feishu-application') ?? { mode: 'default' }; }
@@ -66,7 +60,10 @@ export class FeishuBinding {
       if (accountMismatch) return { ...metadata, bound: false, available: true, error: '个人授权账号与扫码绑定应用的账号不一致，请使用同一账号授权，或重新扫码登录并绑定新账号的应用' };
       const bound = authenticated && missingScopes.length === 0;
       return { ...metadata, bound, authenticated, importReady:scopes.has('space:document:retrieve'), available: true, ...(bound ? { ...(/^ou_[A-Za-z0-9]+$/.test(user.openId ?? '') ? {openId:user.openId} : {}), userName: String(user.userName ?? '飞书用户').slice(0, 100) } : { missingScopes, error: authenticated ? '飞书已登录，但文档与云盘权限不完整，请补充授权后开始调研' : '请绑定飞书并授权文档与云盘访问权限后开始调研' }) };
-    } catch { return { bound: false, available: false, error: '无法检查飞书授权，请确认已安装并配置 lark-cli，或稍后重试' }; }
+    } catch (error) {
+      const code = error.code === 'ENOENT' ? 'LARK_CLI_NOT_FOUND' : classifyFeishuError(error);
+      return { bound: false, available: false, code, error: code === 'LARK_CLI_NOT_FOUND' ? '未找到飞书 CLI，请先检查飞书环境并安装或修复 CLI' : '无法检查飞书授权，请查看连接日志后重试；不要将此错误直接当作未安装 CLI' };
+    }
   }
   async requireBound(application = this.applicationSnapshot()) {
     const state = await this.status(application);

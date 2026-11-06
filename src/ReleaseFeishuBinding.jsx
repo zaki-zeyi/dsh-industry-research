@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Library, X } from 'lucide-react';
 import { newConnectionTrace, connectionEvent, tracedConnectionRequest } from './connection-trace.mjs';
+import { LarkCliSetup } from './LarkCliSetup.jsx';
 
 // Adapter for the manual device-flow API in release@59371f1.
 export function ReleaseFeishuBinding({ onClose, onBound, onStatus, onRepaired, repair, initialAction, onLocateTask, onOpenTask }) {
@@ -43,7 +44,8 @@ export function ReleaseFeishuBinding({ onClose, onBound, onStatus, onRepaired, r
     <p className="modal-intro">先扫码选择或创建飞书应用，再完成个人文档授权。</p>
     <section className="binding-application" aria-label="授权应用"><div><strong>当前应用</strong><p>{state?.appName || state?.appId || '尚未绑定应用'}</p>{state?.appName && state?.appId && <small>{state.appId}</small>}</div><button className="secondary" disabled={busy || !state} onClick={() => openRegistration('replace')}>更换应用</button></section>
     {state?.bound ? <p role="status">已绑定飞书：{state.userName}</p> : state?.authorizationUrl ? <div className="binding-qr"><a className="doc-link" href={state.authorizationUrl} target="_blank" rel="noreferrer">打开飞书授权页</a><img src={`/api/feishu-binding/qr/${state.flowId}`} alt="绑定飞书授权二维码" onError={()=>connectionEvent(trace.current,'qr_error','binding',{status:'failed'})}/><p>扫码完成个人授权后，点击“我已授权”检查结果。</p></div> : <p>{state?.error ?? '正在检查飞书授权…'}</p>}
-    {error && <BindingError error={error} onLocateTask={onLocateTask} onOpenTask={onOpenTask}/>}
+    {error && <BindingError error={error} cliHelp={state?.available !== false} onLocateTask={onLocateTask} onOpenTask={onOpenTask}/>}
+    {state?.available === false && <LarkCliSetup onReady={async () => { const value = await api('/feishu-binding'); setState(value); onStatus?.(value); }}/>}
     <div className="modal-footer"><span>个人身份 · 报告仅存飞书</span>{state?.bound ? <><button className="secondary" disabled={busy} onClick={() => openRegistration('rebind')}>重新绑定</button><button className="primary" disabled={busy} onClick={() => onBound(state)}>完成</button></> : <><button className="primary" disabled={busy || !state} onClick={() => state?.appId ? authorize() : openRegistration('bind')}>{state?.appId ? '重新获取个人授权二维码' : '扫码登录并选择应用'}</button>{state?.flowId && <button className="primary" disabled={busy} onClick={() => authorize(true)}>我已授权</button>}</>}</div>
   </Dialog>;
 }
@@ -95,10 +97,11 @@ function Registration({ onClose, onSaved, trace, repairBot = false, onLocateTask
   </Dialog>;
 }
 
-function BindingError({error,onLocateTask,onOpenTask}) {
+function BindingError({error,onLocateTask,onOpenTask,cliHelp=true}) {
   const reasons={queued:'排队中',researching:'调研中',waiting_save:'等待保存',uploading:'上传中',upload_pending:'上传待确认',finishing:'正在收尾'};
   const blockers=error?.code==='FEISHU_TASKS_BUSY' ? error.blockers??[] : [];
   return <div className="form-error binding-task-error" role="alert"><p>{typeof error==='string'?error:error.message}</p>
+    {cliHelp && (error?.code === 'LARK_CLI_NOT_FOUND' || /(?:Lark|lark|飞书)\s*CLI/.test(error?.message ?? error ?? '')) && <LarkCliSetup/>}
     {blockers.length>0 && <ul aria-label="阻塞绑定的任务">{blockers.map(item=><li key={item.id}><div><strong>{item.title}</strong><span>{reasons[item.reason]??'执行中'}</span></div><div className="binding-task-actions">
       {onLocateTask && <button className="secondary" onClick={()=>onLocateTask(item)}>定位卡片</button>}
       {item.canOpenSession && onOpenTask && <button className="secondary" onClick={()=>onOpenTask(item)}>打开会话</button>}

@@ -12,8 +12,9 @@ import { ServiceError } from './service.mjs';
 import { prepareInternalMaterial, internalDirectorySchema } from './internal-materials.mjs';
 import { traceMiddleware, traceFor, withTrace, traceActions } from './connection-trace.mjs';
 import { requireIdleBinding } from './binding-blockers.mjs';
+import { inspectLarkCli } from './lark-setup.mjs';
 
-export function createApp(service, { dist = resolve('dist'), health = {}, libraryRun, libraryImportRun, analysisRun, publicationRun } = {}) {
+export function createApp(service, { dist = resolve('dist'), health = {}, libraryRun, libraryImportRun, analysisRun, publicationRun, cliRun } = {}) {
   const app = express(); app.disable('x-powered-by');
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer');
@@ -26,6 +27,10 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   });
   app.use(express.json({ limit: '32kb' }));
   app.use(traceMiddleware(service.store));
+  app.get('/api/feishu-cli', async (_req, res, next) => { try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(await inspectLarkCli(service.binding?.command, { run: cliRun }));
+  } catch (error) { next(error); } });
   const telemetryBudget = new Map();
   app.post('/api/feishu-monitor/events', (req, res, next) => { try {
     const data = z.object({ traceId:z.string().uuid(), attempt:z.number().int().min(1).max(1000), action:z.enum(traceActions), event:z.enum(['clicked','response','request_failed','rendered','script_error','qr_error']), phase:z.enum(['binding','registration','ui_sync','frontend']), flowId:z.string().uuid().optional(), appId:z.string().regex(/^cli_[A-Za-z0-9]{5,100}$/).optional(), status:z.enum(['started','waiting','completed','failed','bound','unbound','cancelled','expired']).optional() }).strict().parse(req.body);
@@ -114,7 +119,13 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.get('/api/feishu-application', async (_req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.applicationInfo()); } catch(e) { next(e); } });
   app.put('/api/feishu-application', async (req, res, next) => { try { requireIdleBinding(service,'切换飞书应用'); res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.configureApplication(req.body)); } catch(e) { next(e); } });
   app.get('/api/feishu-registration', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json(service.binding.registration.snapshot()); });
-  app.post('/api/feishu-registration', (req, res, next) => { try { const input = z.object({ refresh: z.boolean().optional(), repairBot: z.boolean().optional() }).strict().parse(req.body ?? {}); requireIdleBinding(service); res.setHeader('Cache-Control', 'no-store'); res.json(service.binding.registration.start(input)); } catch(e) { next(e); } });
+  app.post('/api/feishu-registration', async (req, res, next) => { try { const input = z.object({ refresh: z.boolean().optional(), repairBot: z.boolean().optional() }).strict().parse(req.body ?? {}); requireIdleBinding(service);
+    const cli = await service.binding.inspectCLI?.();
+    if (cli && cli.status !== 'ready') throw Object.assign(new ServiceError(503, cli.message), { code: cli.code });
+    // Recheck after the asynchronous probe, since another operation may have
+    // begun while it was running. This cannot bypass the existing idle guard.
+    requireIdleBinding(service); res.setHeader('Cache-Control', 'no-store'); res.json(service.binding.registration.start(input));
+  } catch(e) { next(e); } });
   app.delete('/api/feishu-registration', (_req, res, next) => { try { service.binding.registration.cancel(); res.json({ status: 'idle' }); } catch(e) { next(e); } });
   app.get('/api/feishu-registration/qr/:id', (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.type('png').send(service.binding.registration.qr(req.params.id)); } catch(e) { next(e); } });
   app.get('/api/feishu-binding', async (_req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.status()); } catch(e) { next(e); } });

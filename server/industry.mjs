@@ -1,7 +1,5 @@
-import { larkLaunch } from './lark-launch.mjs';
+import { larkExec as defaultExec, runLark } from './lark-cli.mjs';
 import { companyReceiptSchema } from './agent-delivery.mjs';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { z } from 'zod';
 import { homedir } from 'node:os';
 import { existsSync } from 'node:fs';
@@ -80,16 +78,14 @@ export function parseLibraryManifest(content) {
   if (new Set(companies.map(c => c.name)).size !== companies.length || new Set(companies.map(c => c.url)).size !== companies.length) throw new LibraryRefreshError('LIBRARY_DUPLICATES', '公司索引存在重复公司或文档，请在原会话核对；本地已同步记录保留');
   return companies.map(c => ({ ...c, updatedAt: new Date(c.updatedAt).toISOString() }));
 }
-const defaultExec = promisify(execFile);
 const importPageSize = 200, importLimit = 1000;
 const importExcludedNames = new Set(['公司索引', '分析报告索引', '友商分析', '日报', '周报', '内部资料']);
 function cliArgs(app, args) { return [...(app?.profile ? ['--profile', app.profile] : []), ...args]; }
 async function runLarkCli(run, app, args, { command, timeout = 20000 } = {}) {
   const local = resolve(homedir(), '.local/bin/lark-cli');
   const executable = command ?? (existsSync(local) ? local : 'lark-cli');
-  const launch = run === defaultExec ? larkLaunch(executable, args) : { command: executable, args };
   try {
-    const result = await run(launch.command, launch.args, { timeout, maxBuffer: 1024 * 1024, windowsHide: true, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } });
+    const result = await runLark(executable, args, { timeout, maxBuffer: 1024 * 1024, windowsHide: true, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }, run);
     return typeof result === 'string' ? result : result?.stdout ?? '';
   } catch (error) { throw libraryReadError(error); }
 }
@@ -222,8 +218,7 @@ export async function refreshLibrary(store, root, app, run = defaultExec, { comm
   let stdout;
   try {
     const executable = command ?? (existsSync(local) ? local : 'lark-cli');
-    const launch = run === defaultExec ? larkLaunch(executable, args) : { command: executable, args };
-    ({ stdout } = await run(launch.command, launch.args, { timeout: 20000, maxBuffer: 1024 * 1024, windowsHide: true, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }));
+    ({ stdout } = await runLark(executable, args, { timeout: 20000, maxBuffer: 1024 * 1024, windowsHide: true, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }, run));
   } catch (e) {
     const error = libraryReadError(e);
     if (error.code === 'LIBRARY_DOCUMENT_DELETED' && rootToken(root)) {

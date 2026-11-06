@@ -2,7 +2,7 @@ import { cliFor } from './feishu-application.mjs';
 import { ANALYSIS_FOLDER_NAME } from './analysis-defaults.mjs';
 
 export function analysisCloudPrompt(task, meta) {
-  const cli = cliFor(task.feishuApp);
+  const cli = cliFor(task.feishuApp, meta);
   const selected = new Set(task.analysis.companies);
   const sourceCompanies = (task.analysisSources?.companies ?? [])
     .filter(company => selected.has(company.name) && company.url)

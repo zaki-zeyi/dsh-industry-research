@@ -7,6 +7,7 @@ import { uploadPrompt } from './upload-prompt.mjs';
 import { agentDeliverySchema } from './agent-delivery.mjs';
 import { cloudPrompt, waitCloudDelivery, RESEARCH_TIMEOUT_MS } from './cloud-research.mjs';
 import { ServiceError } from './service.mjs';
+import { prepareLarkAgent } from './lark-agent-files.mjs';
 
 // The host owns model credentials, tools, message history and Agent lifetime.
 export class NativeSessions {
@@ -85,6 +86,7 @@ export class NativeSessions {
     const meta = { id, taskId: task.id, agent: 'dsh-native', sessionId, workspaceId: workspace.id, agentPreset: created?.agentPreset ?? prior?.agentPreset, cwd, reportPath: resolve(cwd, `report-${id}.json`), promptPath: resolve(cwd, `prompt-${id}.txt`), status: 'running', activity: 'waiting_input', workflow: 'manual-upload', createdAt: new Date().toISOString() };
     if (task.cloudOnly) { meta.workflow = 'cloud-only'; meta.targetFolderToken = task.feishuRoot.folderToken; meta.reportPath = undefined; meta.deliveryRequestId = newId(); meta.deliveryPath = resolve(cwd, `delivery-${meta.deliveryRequestId}.json`); }
     if(task.cloudOnly){meta.writeClientPath=resolve(cwd,'cloud-write-client.mjs');meta.writeConfigPath=resolve(cwd,'cloud-write-config.json');copyFileSync(new URL('./cloud-write-client.mjs',import.meta.url),meta.writeClientPath);writeFileSync(meta.writeConfigPath,JSON.stringify({taskId:task.id,requestId:meta.deliveryRequestId,endpointFile:resolve(this.workRoot,'briefing-endpoint.json')}));}
+    prepareLarkAgent(meta, this.larkCommand);
     writeFileSync(meta.promptPath, task.cloudOnly ? cloudPrompt(task, meta) : `${executionPrompt(task)}\n\n请将完整报告 JSON 保存到 ${meta.reportPath}。本轮只生成报告，完成后立即结束当前轮次并等待用户新要求，不重复调研。平台会在本轮结束后自动发送保存指令；收到该独立指令后再执行保存或授权。`);
     this.store.saveTerminal(meta); this.bySession.set(sessionId, id); return meta;
   }
@@ -112,6 +114,7 @@ export class NativeSessions {
   }
   queueUpload(task, requestId) {
     const meta = this.get(task.terminalId);
+    prepareLarkAgent(meta, this.larkCommand);
     if (meta.activity !== 'waiting_input') throw new ServiceError(409, '宿主会话正在处理其他要求，请等待本轮结束后上传');
     const markdownName = `upload-report-${requestId}.md`;
     writeFileSync(resolve(meta.cwd, markdownName), `# ${task.report.title}\n\n${task.report.summary}\n\n${task.report.markdown}\n\n## 数据来源\n${task.report.sources.map(s => `${s.id} · ${s.title}\n${s.url}\n${s.excerpt}`).join('\n\n')}`);

@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Activity, Download, RefreshCw, X } from 'lucide-react';
 import './feishu-monitor.css';
+import { LarkCliSetup } from './LarkCliSetup.jsx';
 
-const phases = { notification_preflight: '通知发送前检查', binding_validation: '绑定结果校验', app_registration: '应用扫码登记', credential_storage: '本机凭据保存', qr_generation: '二维码生成', identity_check: '身份及服务验证', authorization_start: '发起个人授权', authorization_confirm: '确认个人授权', bot_message: '机器人消息', cli_request: '飞书 CLI 调用', application: '应用配置', local_key: '本机登录密钥', user_authorization: '个人授权', document_permissions: '文档及云盘权限', account: '账号一致性', bot_identity: '机器人身份' };
+const phases = { directory_resolution: '目录唯一性检查', notification_preflight: '通知发送前检查', binding_validation: '绑定结果校验', app_registration: '应用扫码登记', credential_storage: '本机凭据保存', qr_generation: '二维码生成', identity_check: '身份及服务验证', authorization_start: '发起个人授权', authorization_confirm: '确认个人授权', bot_message: '机器人消息', cli_request: '飞书 CLI 调用', application: '应用配置', local_key: '本机登录密钥', user_authorization: '个人授权', document_permissions: '文档及云盘权限', account: '账号一致性', bot_identity: '机器人身份' };
 const codes = {
   MISSING_RECIPIENT:['任务缺少接收账号','历史任务没有账号快照，无法安全推断接收人。请重新生成报告。'],
   RECIPIENT_UNVERIFIED:['接收账号未验证','请在原应用下验证任务保存的原账号，再重试通知。'],
@@ -74,6 +75,7 @@ export function FeishuMonitor({ onClose, embedded = false }) {
   return <div className={embedded ? 'platform-feishu-monitor' : 'industry-modal-backdrop'}><section ref={dialog} className="feishu-monitor" role={embedded ? 'region' : 'dialog'} aria-modal={embedded ? undefined : 'true'} aria-labelledby="feishu-monitor-title" onKeyDown={keyDown}>
     <header><div><Activity size={20}/><h2 id="feishu-monitor-title">飞书连接监测</h2></div>{!embedded && <button className="industry-icon" aria-label="关闭飞书连接监测" onClick={onClose}><X size={20}/></button>}</header>
     <p>按阶段追踪飞书连接。最近 1000 条平台日志共用保留额度；不记录密钥、令牌、二维码链接或消息正文。</p>
+    <LarkCliSetup/>
     <div className="feishu-monitor-actions"><button className="primary" disabled={checking} onClick={check}><Activity size={16}/>{checking ? '检测中…' : '立即检测连接'}</button><button className="secondary" disabled={loading} onClick={() => load()}><RefreshCw size={16}/>刷新日志</button><button className="secondary" disabled={!items.length && !result} onClick={exportLogs}><Download size={16}/>导出当前记录</button></div>
     <p className="feishu-monitor-note">检测会验证当前应用、个人授权及机器人身份，不发送测试消息，不自动重新绑定。消息发送权限和接收范围以实际发送日志为准。</p>
     {error && <div className="industry-error" role="alert">监测服务异常：{error}</div>}

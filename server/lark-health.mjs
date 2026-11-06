@@ -110,7 +110,7 @@ export function larkRecoveryForError(error) {
       'LARK_CLI_NOT_FOUND',
       'install_cli',
       false,
-      '未找到 lark-cli。请由工作台安装程序修复命令行组件后重试。',
+      '未找到 lark-cli。请打开工作台的飞书环境检查，按官方指引安装或修复 CLI 后重新检测。',
     );
   }
 
