@@ -203,3 +203,17 @@ test('扫码仍在等待时不阻塞页面，后台完成授权并自动切回�
   assert.equal((await binding.status()).bound,true);
  }finally{binding.close();}
 });
+
+test('已绑定用户不会被遗留的应用扫码窗口阻断启动', async () => {
+  const binding = new FeishuBinding({ run: async () => status(true) });
+  Object.defineProperty(binding.registration, 'busy', { value: true });
+  try { assert.equal((await binding.requireBound()).bound, true); }
+  finally { binding.close(); }
+});
+
+test('未绑定时遗留扫码窗口给出明确的取消提示', async () => {
+  const binding = new FeishuBinding({ run: async () => status(false) });
+  Object.defineProperty(binding.registration, 'busy', { value: true });
+  try { await assert.rejects(binding.requireBound(), e => e.status === 428 && /二维码仍在等待扫码/.test(e.message)); }
+  finally { binding.close(); }
+});
