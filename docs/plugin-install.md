@@ -4,12 +4,12 @@
 
 1. Windows 10/11 x64 用户优先运行 `DSH-Industry-Research-Windows-Setup-v0.8.1-x64.exe`；安装器会安装官方 DSH（如未安装）并预装行研工作台和精选插件。32 位 Windows 10 无法运行官方 64 位 DSH，安装器会在解压前阻止安装。
 2. 维护者流程：`npm ci` 安装依赖，`npm run acceptance` 验收，`npm run plugin:pack` 打包，再运行 `npm run bundle:plugins` 准备精选插件，最后运行 `npm run bundle:windows` 生成 Windows 一键安装包。
-3. ZIP 用户解压 `artifacts/dsh-industry-research-0.8.1-desktop.zip`，在 DSH「添加插件」填写解压后包含 package.json 的目录。安装后保留该目录。
+3. ZIP 用户解压 `artifacts/dsh-industry-research-0.8.7-desktop.zip`，在 DSH「添加插件」填写解压后包含 package.json 的目录。安装后保留该目录。0.8.7 提供 ZIP/TGZ，不包含新版 Windows 一体化 EXE。
 4. 安装并启用，按宿主提示重新加载。插件 ZIP 支持 macOS 与 Windows 的 x64、arm64；Windows 一体化安装包目前只提供 x64。Windows 建议使用较短路径。
 5. 网页版通过 `dsh plugin --profile <你的profile> add <tgz绝对路径>` 安装；使用配置好的 DSH 网页宿主运行。
 6. 宿主需有模型和检索工具；其运行环境需安装 Lark CLI。
 7. 点击「绑定飞书」，完成目标账号、应用及个人文档授权；切换账号需要重新绑定匹配应用。日报/周报机器人通知还要求应用具备 `im:message:send_as_bot`，且绑定用户处于机器人可用范围内。
-8. 可设置根目录名字（默认「行研工作台」）或已有飞书文件夹链接。不会读取目录列表。
+8. 可设置根目录名字（默认「行研工作台」）或已有飞书文件夹链接。调研无需目录列表权限；从目录导入和同步历史文档需要对应的可选读取权限，失败会保留本地记录并提示。内部资料页可在存储位置旁设置目录，新任务使用新目录，历史任务保留原链接。
 9. 点击「更新全量信息库」，配置公司、维度、信源，启动原生 AI 会话。完成后卡片跳转公司飞书文档。
 10. 点击「友商分析」，选择至少两家已收录公司和对比维度，按需修改默认 Prompt 后启动。报告保存在「友商分析」子目录；卡片可打开报告或回到对应 AI 会话，资料不足会明确标注。
 

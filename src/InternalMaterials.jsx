@@ -1,5 +1,5 @@
 import { NotificationRetry } from './NotificationRetry.jsx';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { AlertCircle, ArrowUpRight, FileText, LoaderCircle, RefreshCw } from 'lucide-react';
 
 async function api(path, options = {}) {
@@ -29,21 +29,38 @@ function sourceHost(task) {
   try { return new URL(task.internal.source).hostname; } catch { return ''; }
 }
 
-export function InternalMaterials({ config, onCreate, onOpen, onRetry, onFixNotification, notificationRevision }) {
+export function InternalMaterials({ config, onConfigChanged, onCreate, onOpen, onRetry, onFixNotification, notificationRevision }) {
   const [items, setItems] = useState([]);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const scope=(config?.publicationScope??'')+':'+(config?.internalDirectoryName??'内部资料');
+  const activeScope=useRef(scope);activeScope.current=scope;
+  const [editingDirectory, setEditingDirectory] = useState(false);
+  const [directoryName, setDirectoryName] = useState('');
+  const [savingDirectory, setSavingDirectory] = useState(false);
+  async function saveDirectory(event) {
+    event.preventDefault();
+    if (savingDirectory) return;
+    setSavingDirectory(true); setError('');
+    try {
+      const value = await api('/settings', { method: 'PUT', body: JSON.stringify({ directoryName }) });
+      onConfigChanged?.(value.directoryName); setEditingDirectory(false);
+    } catch (cause) { setError(cause.message); }
+    finally { setSavingDirectory(false); }
+  }
 
   async function load() {
+    const requestedScope=scope;
     try {
-      const value = await api('');
+      const value = await api('?refresh=true');
+      if(activeScope.current!==requestedScope)return;
       setItems(value.items);
-      setError('');
+      setError(value.syncError ?? '');
     } catch (cause) {
-      setError(cause.message);
+      if(activeScope.current===requestedScope)setError(cause.message);
     } finally {
-      setLoading(false);
+      if(activeScope.current===requestedScope)setLoading(false);
     }
   }
 
@@ -59,13 +76,13 @@ export function InternalMaterials({ config, onCreate, onOpen, onRetry, onFixNoti
         if (live) setLoading(false);
       }
     };
-    run();
+    load();
     const timer = setInterval(run, 4000);
     return () => {
       live = false;
       clearInterval(timer);
     };
-  }, [notificationRevision]);
+  }, [notificationRevision, config?.internalDirectoryName, config?.publicationScope]);
 
   const visible = items.filter(task =>
     task.direction.toLowerCase().includes(query.toLowerCase())
@@ -79,9 +96,14 @@ export function InternalMaterials({ config, onCreate, onOpen, onRetry, onFixNoti
       <button className="primary" onClick={onCreate}><FileText size={17}/>解析内部资料</button>
     </div>
     <div className="industry-overview briefing-overview"><div className="industry-storage briefing-storage">
-      <span>存储位置</span>
+      <span>存储位置 <button className="secondary" onClick={() => { setDirectoryName(config?.internalDirectoryName ?? '内部资料'); setEditingDirectory(true); }}>设置目录</button></span>
       <strong>飞书云盘 / {config?.feishuRoot?.rootName ?? '行研工作台'} / {config?.internalDirectoryName ?? '内部资料'}</strong>
       <small>下设原始资料、逐字稿和会议纪要 · 本地文件上传上限 100 MB</small>
+      {editingDirectory && <form className="material-directory-settings" onSubmit={saveDirectory}>
+        <label>内部资料目录名称<input required maxLength={120} value={directoryName} onChange={event => setDirectoryName(event.target.value)} disabled={savingDirectory}/></label>
+        <small>新任务使用此目录；历史任务保留原目录和文档。</small>
+        <div><button className="primary" disabled={savingDirectory}>{savingDirectory ? '保存中…' : '保存目录'}</button> <button type="button" className="secondary" disabled={savingDirectory} onClick={() => setEditingDirectory(false)}>取消</button></div>
+      </form>}
     </div></div>
     <div className="industry-toolbar">
       <label className="industry-search"><input aria-label="搜索内部资料" placeholder="搜索内部资料" value={query} onChange={event => setQuery(event.target.value)}/></label>
@@ -92,8 +114,8 @@ export function InternalMaterials({ config, onCreate, onOpen, onRetry, onFixNoti
     {!loading && visible.length > 0 && <div className="industry-cards">{visible.map(task => <article className="industry-company" key={task.id}>
       <div className="company-top"><span className="company-monogram"><FileText size={18}/></span><span className={'task-status ' + task.status}>{statusLabel(task)}</span></div>
       <h2 title={sourceDisplay(task)}>{sourceDisplay(task)}</h2>
-      <p className="card-meta">{task.internal.sourceType === 'local' ? '本地文件' : `网络资料${sourceHost(task) ? ` · ${sourceHost(task)}` : ''}`}{task.internal.fileSize != null ? ` · ${(task.internal.fileSize / 1024 / 1024).toFixed(1)} MB` : ''}</p>
-      <div className="company-dimensions"><span>{task.internal.uploadEligible ? '原始资料可上传' : task.internal.sourceType === 'local' ? '原始材料超过上传上限' : '保留原始链接'}</span></div>
+      <p className="card-meta">{task.remoteOnly ? '飞书历史逐字稿' : task.internal.sourceType === 'local' ? '本地文件' : `网络资料${sourceHost(task) ? ` · ${sourceHost(task)}` : ''}`}{task.internal.fileSize != null ? ` · ${(task.internal.fileSize / 1024 / 1024).toFixed(1)} MB` : ''}</p>
+      <div className="company-dimensions"><span>{task.remoteOnly ? '云端文档' : task.internal.uploadEligible ? '原始资料可上传' : task.internal.sourceType === 'local' ? '原始材料超过上传上限' : '保留原始链接'}</span></div>
       {task.error && <div className="industry-error" role="alert">{task.error}</div>}
       <p className="card-caption">目录：{task.internal.directoryName ?? "内部解析资料（历史）"}</p>
       {(task.publication?.url || task.publication?.minutesUrl || task.publication?.sourceMaterialUrl) && <div className="material-actions">
@@ -104,7 +126,7 @@ export function InternalMaterials({ config, onCreate, onOpen, onRetry, onFixNoti
       {task.notification?.status === 'sent' && <><p className="card-caption">飞书机器人已通知</p>{task.notification.notice && <p className="card-caption notification-redirect-notice" role="status">{task.notification.notice}</p>}</>}
       {task.notification?.status === 'failed' && <div className="card-alert" role="alert"><AlertCircle size={15}/><span>{task.notification.error}</span><div className="card-alert-actions"><NotificationRetry task={task} base="internal-materials" onRepair={onFixNotification} onUpdated={value=>setItems(old=>old.map(item=>item.id===value.id?value:item))}/></div></div>}
       <footer>
-        <button onClick={() => onOpen(task)}>AI 会话详情 ↗</button>
+        <button disabled={task.remoteOnly} title={task.remoteOnly ? '此资料没有本机 AI 会话记录' : undefined} onClick={() => onOpen(task)}>AI 会话详情 ↗</button>
         {['failed', 'interrupted'].includes(task.status) && <button onClick={() => onRetry(task)}>重试</button>}
       </footer>
     </article>)}</div>}

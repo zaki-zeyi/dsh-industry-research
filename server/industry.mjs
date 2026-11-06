@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { LibraryRefreshError, libraryReadError } from './library-errors.mjs';
 import { createHash } from 'node:crypto';
+import { folderTokenFromUrl } from './feishu-folder.mjs';
 import { DEFAULT_COMPANIES, DEFAULT_DIMENSIONS, DEFAULT_SOURCES } from './industry-defaults.mjs';
 export { DEFAULT_COMPANIES, DEFAULT_DIMENSIONS, DEFAULT_SOURCES };
 const label = z.string().trim().min(1).max(120).refine(v => !/[\x00-\x1f\x7f]/.test(v), '名称不能包含控制字符');
@@ -15,10 +16,29 @@ const choices = z.array(label).min(1).max(60).transform(v => [...new Set(v)]);
 export const industryInputSchema = z.object({ companies: choices, dimensions: choices, sources: choices, requirements: z.string().trim().max(2000).default(''), prompt: z.string().trim().min(10).max(14000).optional() }).strict();
 export const preferencesSchema = z.object({ dimensions: choices, sources: choices }).strict();
 export function preferences(store) { return store.setting('industry-preferences') ?? { dimensions: DEFAULT_DIMENSIONS, sources: DEFAULT_SOURCES }; }
-// The root name is the stable identity. Adding or changing the folder URL
-// must not orphan the locally cached company index.
-export function libraryKey(root, app) { return 'industry-library:' + createHash('sha256').update(JSON.stringify([app?.profile ?? 'default', app?.appId ?? '', root.rootName ?? root.folderUrl ?? ''])).digest('hex'); }
-export function library(store, root, app) { return store.setting(libraryKey(root, app)) ?? { companies: [], folderToken: null }; }
+// Keep the logical namespace for existing scheduler/lock records. Company
+// documents use the actual root token once known, independently of its label.
+export function libraryNamespaceKey(root, app) { return 'industry-library:' + createHash('sha256').update(JSON.stringify([app?.profile ?? 'default', app?.appId ?? '', root.rootName ?? root.folderUrl ?? ''])).digest('hex'); }
+const rootToken = root => root.folderToken ?? folderTokenFromUrl(root.folderUrl);
+export function libraryKey(root, app) {
+  const token=rootToken(root);
+  return token ? 'industry-library-root:' + createHash('sha256').update(JSON.stringify([app?.profile ?? 'default',app?.appId ?? '',token])).digest('hex') : libraryNamespaceKey(root,app);
+}
+export function library(store, root, app) {
+  const key=libraryKey(root,app), token=rootToken(root), exact=store.setting(key);
+  if(exact)return exact;
+  const legacy=token && store.setting(libraryNamespaceKey(root,app));
+  if(legacy){
+    // Old releases did not always stamp the root. Recover only when task
+    // receipts prove a unique root for the cached document; never guess by name.
+    const roots=new Set((store.list?.()??[]).filter(t=>libraryNamespaceKey(t.feishuRoot??{},t.feishuApp)===libraryNamespaceKey(root,app)
+      && t.feishuRoot?.folderToken && (legacy.manifestUrl && (t.industryLibrary?.manifestUrl===legacy.manifestUrl || t.analysisSources?.manifestUrl===legacy.manifestUrl)
+        || legacy.companies?.some(c=>c.url===t.publication?.url))).map(t=>t.feishuRoot.folderToken));
+    const provenRoot=legacy.rootFolderToken ?? (roots.size===1?[...roots][0]:null);
+    if(provenRoot===token)return store.saveSetting(key,{...legacy,rootFolderToken:token});
+  }
+  return {companies:[],folderToken:null};
+}
 export function industryPrompt(input) {
   return `帮我对【${input.companies.join('、')}】在【${input.sources.join('、')}】进行【${input.dimensions.join('、')}】的调研${input.requirements ? `，并满足【${input.requirements}】` : ''}，按维度就地合并到飞书云盘【全量信息库】对应公司文档，不新增“增量更新”章节。并呈现本次更新摘要。`;
 }
@@ -39,7 +59,7 @@ export function mergeCompanyDelivery(store, task, delivery) {
   }
   const byName = new Map(current.companies.map(c => [c.name, c]));
   for (const c of delivery.companies ?? []) byName.set(c.name, { ...c, dimensions: [...new Set([...(byName.get(c.name)?.dimensions ?? []), ...c.dimensions])], updatedAt: c.updatedAt ?? new Date().toISOString(), taskId: task.id });
-  store.saveSetting(key, { folderToken: delivery.libraryFolderToken, manifestUrl: delivery.manifestUrl ?? current.manifestUrl, companies: [...byName.values()] });
+  store.saveSetting(key, { rootFolderToken:rootToken(task.feishuRoot), folderToken: delivery.libraryFolderToken, manifestUrl: delivery.manifestUrl ?? current.manifestUrl, companies: [...byName.values()] });
 }
 export function companyTaskInput(input) { const v = industryInputSchema.parse(input); return { direction: `更新全量信息库 · ${v.companies.length} 家公司`, sources: v.sources.join('、'), prompt: v.prompt ?? industryPrompt(v), industry: v }; }
 
@@ -89,17 +109,19 @@ function fileUpdatedAt(file) {
   if (!Number.isFinite(value) || value <= 0) return new Date().toISOString();
   return new Date(value > 1e12 ? value : value * 1000).toISOString();
 }
-async function listDriveFolder(run, app, token, options = {}) {
+export async function listDriveFolder(run = defaultExec, app, token, options = {}) {
   const files = []; let pageToken; let pages = 0;
   do {
     const args = cliArgs(app, ['drive', 'files', 'list', '--folder-token', token, '--as', 'user', '--json', '--page-size', String(importPageSize), ...(pageToken ? ['--page-token', pageToken] : [])]);
     const stdout = await runLarkCli(run, app, args, options);
     const response = parseLarkJson(stdout); throwLarkFailure(response, stdout);
-    const data = larkData(response); files.push(...(Array.isArray(data.files) ? data.files : []));
+    const data = larkData(response);
+    if(!Array.isArray(data.files))throw new LibraryRefreshError('LIBRARY_INVALID_RESPONSE','飞书目录响应缺少文件列表，当前目录缓存已保留，请重试');
+    files.push(...data.files);
     pageToken = data.has_more === false ? null : (data.next_page_token ?? data.page_token ?? null);
     pages++;
   } while (pageToken && pages < Math.ceil(importLimit / importPageSize));
-  return { files: files.slice(0, importLimit), truncated: files.length > importLimit };
+  return { files: files.slice(0, importLimit), truncated: Boolean(pageToken) || files.length > importLimit };
 }
 async function fetchDocumentContent(run, app, docUrl, options = {}) {
   const stdout = await runLarkCli(run, app, cliArgs(app, ['docs', '+fetch', '--doc', docUrl, '--doc-format', 'markdown', '--as', 'user']), options);
@@ -118,32 +140,23 @@ function companiesFromFiles(files) {
   }
   return companies;
 }
-function relatedTaskId(store, root, app, name) {
+function relatedTaskId(store, root, app, name, url) {
   const key = libraryKey(root, app);
-  return store.list?.().find(task => task.industry?.companies?.includes(name) && libraryKey(task.feishuRoot, task.feishuApp) === key)?.id;
+  return store.list?.().find(task => task.industry?.companies?.includes(name) && libraryKey(task.feishuRoot, task.feishuApp) === key
+    && (task.publication?.url===url || task.industryLibrary?.companies?.some(c=>c.name===name&&c.url===url)))?.id;
 }
-function mergeImportedCompanies(store, root, app, current, imported) {
-  const byName = new Map(current.map(company => [company.name, company]));
-  for (const company of imported) {
-    const previous = byName.get(company.name);
-    if (!previous) {
-      const taskId = relatedTaskId(store, root, app, company.name);
-      byName.set(company.name, { ...company, ...(taskId ? { taskId } : {}) });
-      continue;
-    }
-    const previousTime = Date.parse(previous.updatedAt) || 0, remoteTime = Date.parse(company.updatedAt) || 0;
-    const preferRemote = remoteTime >= previousTime;
-    byName.set(company.name, {
-      ...company,
-      ...previous,
-      url: preferRemote ? company.url : previous.url,
-      updatedAt: preferRemote ? company.updatedAt : previous.updatedAt,
-      dimensions: [...new Set([...(previous.dimensions ?? []), ...(company.dimensions ?? [])])],
-      added: Math.max(previous.added ?? 0, company.added ?? 0),
-      conflicts: Math.max(previous.conflicts ?? 0, company.conflicts ?? 0),
-    });
-  }
-  return [...byName.values()];
+function mergeImportedCompanies(store, root, app, before, latest, imported) {
+  const companies=imported.map(company=>{
+    const previous=latest.find(c=>c.name===company.name && c.url===company.url);
+    if(!previous)return {...company,taskId:relatedTaskId(store,root,app,company.name,company.url)};
+    return {...previous,...company,taskId:previous.taskId??relatedTaskId(store,root,app,company.name,company.url),
+      dimensions:[...new Set([...(previous.dimensions??[]),...(company.dimensions??[])])]};
+  });
+  // Preserve only deliveries made while this read was in flight. Pre-existing
+  // entries absent from the complete remote snapshot are no longer displayed.
+  const names=new Set(companies.map(c=>c.name));
+  for(const c of latest)if(!names.has(c.name)&&!before.some(old=>JSON.stringify(old)===JSON.stringify(c)))companies.push(c);
+  return companies;
 }
 export async function importLibrary(store, root, app, run = defaultExec, { command } = {}) {
   if (!root?.folderToken) return { status: 'skipped', imported: 0, total: library(store, root, app).companies.length, libraryFolderFound: false, indexFound: false, message: '设置已保存。目录将在首次调研时创建，创建后请再次点击“保存设置并导入”。' };
@@ -151,7 +164,7 @@ export async function importLibrary(store, root, app, run = defaultExec, { comma
   // Once the company index is known, read it directly. Folder listing needs an
   // optional drive scope that many Feishu apps do not request; importing must
   // not fail just because that one-time discovery permission is absent.
-  const canUseKnownIndex = Boolean(current.manifestUrl) && (!current.rootFolderToken || current.rootFolderToken === root.folderToken);
+  const canUseKnownIndex = Boolean(current.manifestUrl) && (current.rootFolderToken === root.folderToken || Boolean(store.setting(key)) && key.startsWith('industry-library-root:'));
   let imported, indexFound, manifestUrl, libraryFolder, libraryFolderToken = current.folderToken, listing;
   if (canUseKnownIndex) {
     manifestUrl = current.manifestUrl;
@@ -159,9 +172,11 @@ export async function importLibrary(store, root, app, run = defaultExec, { comma
     imported = parseLibraryManifest(await fetchDocumentContent(run, app, manifestUrl, { command }));
   } else {
     const rootListing = await listDriveFolder(run, app, root.folderToken, { command });
+    if(rootListing.truncated)throw new LibraryRefreshError('LIBRARY_TOO_LARGE','目录读取未完成，已保留当前目录缓存，请缩小目录后重试');
     libraryFolder = rootListing.files.find(file => isFolder(file) && cleanFileName(file.name) === '全量信息库');
-    libraryFolderToken = fileToken(libraryFolder) ?? libraryFolderToken;
-    listing = libraryFolderToken ? await listDriveFolder(run, app, libraryFolderToken, { command }) : rootListing;
+    libraryFolderToken = fileToken(libraryFolder) ?? null;
+    listing = libraryFolderToken ? await listDriveFolder(run, app, libraryFolderToken, { command }) : {files:[],truncated:false};
+    if(listing.truncated)throw new LibraryRefreshError('LIBRARY_TOO_LARGE','公司目录读取未完成，已保留当前目录缓存，请缩小目录后重试');
     const index = listing.files.find(file => isCompanyDocument(file) && cleanFileName(file.name) === '公司索引');
     indexFound = Boolean(index);
     if (index) {
@@ -172,11 +187,13 @@ export async function importLibrary(store, root, app, run = defaultExec, { comma
     }
   }
   const syncedAt = new Date().toISOString();
-  const companies = mergeImportedCompanies(store, root, app, current.companies, imported);
+  const latest=library(store,root,app);
+  if(latest.manifestUrl!==current.manifestUrl||latest.folderToken!==current.folderToken)throw new LibraryRefreshError('LIBRARY_CHANGED','同步期间公司目录已变化，请刷新重试',409);
+  const companies = mergeImportedCompanies(store, root, app, current.companies, latest.companies, imported);
   const saved = store.saveSetting(key, {
     ...current,
-    ...(libraryFolderToken ? { folderToken: libraryFolderToken } : {}),
-    ...(manifestUrl ? { manifestUrl } : {}),
+    folderToken: libraryFolderToken ?? null,
+    manifestUrl: manifestUrl ?? null,
     ...(root.folderToken ? { rootFolderToken: root.folderToken } : {}),
     companies,
     syncedAt,
@@ -188,7 +205,7 @@ export async function importLibrary(store, root, app, run = defaultExec, { comma
 }
 export async function refreshLibrary(store, root, app, run = defaultExec, { command } = {}) {
   const key = libraryKey(root, app), current = library(store, root, app);
-  if (!current.manifestUrl) return current;
+  if (!current.manifestUrl) return rootToken(root) ? importLibrary(store,root,app,run,{command}) : current;
   const args = [...(app?.profile ? ['--profile', app.profile] : []), 'docs', '+fetch', '--doc', current.manifestUrl, '--doc-format', 'markdown', '--as', 'user'];
   const local = resolve(homedir(), '.local/bin/lark-cli');
   let stdout;
@@ -208,8 +225,8 @@ export async function refreshLibrary(store, root, app, run = defaultExec, { comm
   const localByName = new Map(latest.companies.map(c => [c.name, c]));
   const companies = remote.map(c => {
     const local = localByName.get(c.name);
-    if (local && Date.parse(local.updatedAt) > Date.parse(c.updatedAt)) return local;
-    const related = local?.taskId ?? store.list?.().find(t => t.industry?.companies.includes(c.name) && libraryKey(t.feishuRoot, t.feishuApp) === key)?.id;
+    if (local?.url===c.url && Date.parse(local.updatedAt) > Date.parse(c.updatedAt)) return local;
+    const related = (local?.url===c.url ? local.taskId : undefined) ?? relatedTaskId(store,root,app,c.name,c.url);
     return { ...c, taskId: related };
   });
   const known = new Set(companies.map(c => c.name));

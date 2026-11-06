@@ -22,7 +22,13 @@ export class NativeSessions {
       this.workspacePromise = (async () => {
         if (!this.host.workspaceRegistry?.create) throw new ServiceError(503, '宿主未提供工作区注册服务，无法绑定插件会话');
         const path = resolve(this.workRoot, 'workspace'); mkdirSync(path, { recursive: true });
-        const workspace = await this.host.workspaceRegistry.create(path, '行研工作台');
+        const workspace = await this.host.workspaceRegistry.create(path, 'dsh-industry-research');
+        // create() reuses the canonical path without changing an existing title.
+        // Rename the same host record so upgrades retain its ID and sessions.
+        if (workspace.title !== 'dsh-industry-research') {
+          if (!workspace.setTitle) throw new ServiceError(503, '宿主不支持工作区更名，请更新 DSH 后重试');
+          await workspace.setTitle('dsh-industry-research');
+        }
         this.store.saveSetting('native-workspace', { id: workspace.id, path: workspace.path, title: workspace.title });
         return workspace;
       })().catch(error => { this.workspacePromise = null; throw error; });

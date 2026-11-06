@@ -1,6 +1,7 @@
+import { cloudPublications, mergePublicationCards } from './cloud-publications.mjs';
 import { briefingTask } from './briefings.mjs';
 import { libraryReadError } from './library-errors.mjs';
-import { refreshLibrary, importLibrary, preferences, preferencesSchema, library, companyTaskInput } from './industry.mjs';
+import { refreshLibrary, importLibrary, preferences, preferencesSchema, library, companyTaskInput, libraryKey } from './industry.mjs';
 import { refreshAnalysisLibrary, analysisLibrary, analysisTaskInput } from './analysis.mjs';
 import { createRequire } from 'node:module';
 const express = createRequire(import.meta.url)('express');
@@ -8,10 +9,10 @@ import { resolve, dirname } from 'node:path';
 import { existsSync, realpathSync, readFileSync, statSync } from 'node:fs';
 import { z } from 'zod';
 import { ServiceError } from './service.mjs';
-import { prepareInternalMaterial } from './internal-materials.mjs';
+import { prepareInternalMaterial, internalDirectorySchema } from './internal-materials.mjs';
 import { traceMiddleware, traceFor, withTrace, traceActions } from './connection-trace.mjs';
 
-export function createApp(service, { dist = resolve('dist'), health = {}, libraryRun, libraryImportRun, analysisRun } = {}) {
+export function createApp(service, { dist = resolve('dist'), health = {}, libraryRun, libraryImportRun, analysisRun, publicationRun } = {}) {
   const app = express(); app.disable('x-powered-by');
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer');
@@ -39,11 +40,20 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.put('/api/industry/preferences', (req, res, next) => { try { res.json(service.store.saveSetting('industry-preferences', preferencesSchema.parse(req.body))); } catch (e) { next(e); } });
   app.get('/api/industry/library', async (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); const root = service.feishuSettings(), app = service.binding?.applicationSnapshot?.(); res.json(req.query.refresh === 'true' ? await refreshLibrary(service.store, root, app, libraryRun, { command: service.binding?.command }) : library(service.store, root, app)); } catch (e) { next(libraryReadError(e)); } });
   app.post('/api/industry/tasks', async (req, res, next) => { try { const key = req.headers['idempotency-key']; if (key) z.string().min(1).max(100).parse(key); res.status(202).json(await service.createAuthorized(companyTaskInput(req.body), key)); } catch (e) { next(e); } });
-  app.get('/api/briefings', (req,res) => res.json({items:service.store.list().filter(t => t.briefing && (!req.query.kind || t.briefing.kind === req.query.kind)).map(t => ({id:t.id,direction:t.direction,status:t.status,createdAt:t.createdAt,briefing:t.briefing,stage:t.stage,publication:t.publication,notification:t.notification}))}));
+  async function readPublications(kind, refresh) {
+    try { return await cloudPublications(service,kind,{refresh,run:publicationRun}); }
+    catch(error) {
+      const safe=libraryReadError(error);
+      service.store.runtimeLog('feishu.publications.read',{phase:'cloud_read',code:safe.code,status:'failed'},'warn');
+      const cached=await cloudPublications(service,kind); return {...cached,syncError:safe.message};
+    }
+  }
+  app.get('/api/briefings', async (req,res,next) => { try { const kind = z.enum(['daily','weekly']).optional().parse(req.query.kind); const kinds = kind ? [kind] : ['daily','weekly']; const results=await Promise.all(kinds.map(k => readPublications(k,req.query.refresh === 'true'))); const remote=results.flatMap(v=>v.items); const local=service.store.list().filter(t => t.briefing && (!kind || t.briefing.kind === kind)).map(t => ({id:t.id,direction:t.direction,status:t.status,createdAt:t.createdAt,briefing:t.briefing,stage:t.stage,publication:t.publication,notification:t.notification})); res.json({items:mergePublicationCards(local,remote),syncError:results.find(v=>v.syncError)?.syncError}); } catch(error) { next(libraryReadError(error)); } });
   app.post('/api/briefings', async(req,res,next)=>{try {res.status(202).json(await service.createAuthorized(briefingTask(req.body),req.headers['idempotency-key']));}catch(e){next(e);}});
   app.post('/api/briefings/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);if(!t.briefing||t.status!=='ready')throw new ServiceError(409,'报告尚未完成');await service.notifications.send(t.id,{currentUser:true});res.json(service.require(t.id));}catch(e){next(e);}});
-  app.get('/api/internal-materials', (_req, res) => res.json({
-    items: service.store.list().filter(task => task.internal).map(task => ({
+  app.get('/api/internal-materials', async (req, res, next) => { try {
+    const remote=await readPublications('internal',req.query.refresh === 'true');
+    res.json({items: mergePublicationCards(service.store.list().filter(task => task.internal).map(task => ({
       id: task.id,
       direction: task.direction,
       status: task.status,
@@ -54,8 +64,15 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
       publication: task.publication,
       notification: task.notification,
       error: task.error,
-    })),
-  }));
+    })), remote.items), syncError:remote.syncError});
+  } catch(error) { next(libraryReadError(error)); } });
+  app.put('/api/internal-materials/settings', (req, res, next) => {
+    try {
+      const { directoryName } = z.object({ directoryName: internalDirectorySchema }).strict().parse(req.body);
+      service.store.saveSetting('internal-directory-name', directoryName);
+      res.json({ directoryName });
+    } catch (error) { next(error); }
+  });
   app.post('/api/internal-materials', async (req, res, next) => {
     try {
       const key = req.headers['idempotency-key'];
@@ -111,11 +128,14 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     try { settings = service.setFeishuSettings(req.body); }
     catch (error) { next(error); return; }
     const application = service.binding?.applicationSnapshot?.();
+    const targetChanged=()=>libraryKey(service.feishuSettings(),service.binding?.applicationSnapshot?.())!==libraryKey(settings,application);
     res.setHeader('Cache-Control', 'no-store');
     try {
       const summary = await importLibrary(service.store, settings, application, libraryImportRun, { command: service.binding?.command });
+      if(targetChanged())return res.status(409).json({error:'同步期间飞书根目录或应用已改变，旧目录结果已保留，请刷新当前目录'});
       res.json({ settings, import: summary, library: library(service.store, settings, application) });
     } catch (error) {
+      if(targetChanged())return res.status(409).json({error:'同步期间飞书根目录或应用已改变，请刷新当前目录'});
       const safe = libraryReadError(error);
       const current = library(service.store, settings, application);
       res.json({
@@ -125,7 +145,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
       });
     }
   });
-  app.get('/api/config', (_req, res) => res.json({ mode: service.mode, nativeWorkspace: service.nativeSessions?.workspaceState?.() ?? null, cloudOnly: Boolean(service.cloudOnly), analysisAvailable: Boolean(service.cloudOnly), terminalAvailable: Boolean(service.terminals), nativeSessionAvailable: Boolean(service.nativeSessions), transport: service.researcher.transport ?? 'json', terminalPermissions: service.terminals?.permissions ?? null, publicationTarget: service.publisher.kind ?? 'demo', publicationOwner: 'agent', singleUser: true, feishuTarget: service.feishuSettings().folderUrl ? '飞书云盘 / 指定文件夹' : `飞书云盘 / ${service.feishuSettings().rootName}`, feishuRoot: service.feishuSettings(), internalDirectoryName: service.store.setting("internal-directory-name") ?? "内部资料" }));
+  app.get('/api/config', (_req, res) => res.json({ mode: service.mode, nativeWorkspace: service.nativeSessions?.workspaceState?.() ?? null, cloudOnly: Boolean(service.cloudOnly), analysisAvailable: Boolean(service.cloudOnly), terminalAvailable: Boolean(service.terminals), nativeSessionAvailable: Boolean(service.nativeSessions), transport: service.researcher.transport ?? 'json', terminalPermissions: service.terminals?.permissions ?? null, publicationTarget: service.publisher.kind ?? 'demo', publicationOwner: 'agent', singleUser: true, feishuTarget: service.feishuSettings().folderUrl ? '飞书云盘 / 指定文件夹' : `飞书云盘 / ${service.feishuSettings().rootName}`, feishuRoot: service.feishuSettings(), internalDirectoryName: service.store.setting("internal-directory-name") ?? "内部资料", publicationScope: libraryKey(service.feishuSettings(), service.binding?.applicationSnapshot?.())+':'+(service.feishuSettings().folderToken??'') }));
   app.get('/api/tasks/:id/agent-qr', (req, res, next) => { try {
     const t = service.require(req.params.id);
     if (t.publication.status !== 'awaiting_authorization' || !t.terminalId || !service.terminals) throw new ServiceError(404, '当前没有待扫描的授权二维码');

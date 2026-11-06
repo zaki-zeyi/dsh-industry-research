@@ -12,7 +12,7 @@ export function mockHost({ failFirst = false, noReport = false, defaultPreset = 
     workspaceRegistry: {
       async create(path,title) {
         const prior=[...workspaces.values()].find(w=>w.path===path);if(prior)return prior;
-        const w={id:'workspace-'+(workspaces.size+1),path,title,sessionIds:[],async attachSession(id){if(sessionCwds.get(id)!==path)throw new Error('cwd mismatch');if(!this.sessionIds.includes(id))this.sessionIds.push(id);}};workspaces.set(w.id,w);return w;
+        const w={id:'workspace-'+(workspaces.size+1),path,title,sessionIds:[],async setTitle(value){this.title=value;},async attachSession(id){if(sessionCwds.get(id)!==path)throw new Error('cwd mismatch');if(!this.sessionIds.includes(id))this.sessionIds.push(id);}};workspaces.set(w.id,w);return w;
       },
       get(id){return workspaces.get(id);},list(){return [...workspaces.values()];},
     },
