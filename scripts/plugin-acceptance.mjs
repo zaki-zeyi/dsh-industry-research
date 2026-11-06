@@ -37,3 +37,8 @@ try {
   });
   console.log(`PASS: 已安装 dsh-industry-research ${manifest.version}；页面、服务复用、权限、来源限制、原生 PTY 均通过`);
 } finally { await runtime?.close(); rmSync(dataDir, { recursive: true, force: true }); }
+// node-pty may retain a Windows worker MessagePort after its child exits.
+// All assertions, runtime shutdown and cleanup have completed at this point.
+// Explicitly finish this command-line acceptance process; thrown failures above
+// still exit non-zero and cannot reach this line.
+process.exit(0);
