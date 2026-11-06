@@ -68,7 +68,14 @@ export class FeishuBinding {
       return { ...metadata, bound, authenticated, importReady:scopes.has('space:document:retrieve'), available: true, ...(bound ? { ...(/^ou_[A-Za-z0-9]+$/.test(user.openId ?? '') ? {openId:user.openId} : {}), userName: String(user.userName ?? '飞书用户').slice(0, 100) } : { missingScopes, error: authenticated ? '飞书已登录，但文档与云盘权限不完整，请补充授权后开始调研' : '请绑定飞书并授权文档与云盘访问权限后开始调研' }) };
     } catch { return { bound: false, available: false, error: '无法检查飞书授权，请确认已安装并配置 lark-cli，或稍后重试' }; }
   }
-  async requireBound(application = this.applicationSnapshot()) { if (this.registration.busy) throw new ServiceError(428, '请先完成扫码登录和应用绑定，再启动调研'); const state = await this.status(application); if (!state.bound) throw new ServiceError(428, state.error); return state; }
+  async requireBound(application = this.applicationSnapshot()) {
+    const state = await this.status(application);
+    // An abandoned application-registration QR must not block work that already
+    // has a valid user token. Only report it when the binding is really absent.
+    if (state.bound) return state;
+    if (this.registration.busy) throw new ServiceError(428, '飞书应用绑定二维码仍在等待扫码，请完成扫码或取消该窗口后再启动调研');
+    throw new ServiceError(428, state.error ?? '请先完成扫码登录和应用绑定，再启动调研');
+  }
   async start({ rebind = false } = {}) {
     if (this.registration.busy || this.configuring) throw new ServiceError(409, '飞书应用配置正在处理中，请稍后再试');
     if (this.completing) throw new ServiceError(409, '授权确认正在处理中，请稍后再重新绑定');
