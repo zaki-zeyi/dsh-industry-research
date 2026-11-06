@@ -1,5 +1,5 @@
 import { internalFolderKey } from './internal-materials.mjs';
-import {library,libraryKey} from './industry.mjs';
+import {library,libraryNamespaceKey} from './industry.mjs';
 import {briefingKey} from './briefings.mjs';
 
 // Serialize remote mutations, not research sessions. Locks live only as long as
@@ -11,7 +11,7 @@ export class CloudWrites {
     const s=this.service,t=s.require(id),active=s.active.get(id);
     const meta=t.terminalId&&s.store.terminal(t.terminalId);
     if(!active||active.controller.signal.aborted||meta?.deliveryRequestId!==requestId)throw Object.assign(new Error('任务轮次已失效'),{status:409});
-    const key=libraryKey(t.feishuRoot,t.feishuApp);
+    const key=libraryNamespaceKey(t.feishuRoot,t.feishuApp);
     const uncertain=s.store.setting('cloud-write-pending:'+key);
     if(uncertain&&s.store.terminal(uncertain.terminalId)?.activity==='working')throw Object.assign(new Error('前一保存会话尚未确认结束，请核对原会话后重试'),{status:409});
     let lock=this.locks.get(key);if(!lock){lock={owner:null,waiters:[]};this.locks.set(key,lock);}
@@ -34,7 +34,7 @@ export class CloudWrites {
     t.stage='research';s.save(t);
     return {feishuRoot:t.feishuRoot,industryLibrary:t.industryLibrary,briefingLibrary:t.briefingLibrary,internalFolders:t.internalFolders};
   }
-  assertOwner(t){const lock=this.locks.get(libraryKey(t.feishuRoot,t.feishuApp));if(lock?.owner&&lock.owner!==t.id)throw new Error('其他任务正在写入信息库，请先获取本轮写入锁');}
+  assertOwner(t){const lock=this.locks.get(libraryNamespaceKey(t.feishuRoot,t.feishuApp));if(lock?.owner&&lock.owner!==t.id)throw new Error('其他任务正在写入信息库，请先获取本轮写入锁');}
   release(id){for(const [key,lock] of this.locks){
     if(lock.owner!==id)continue;
     const t=this.service.require(id),meta=t.terminalId&&this.service.store.terminal(t.terminalId);

@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { industryInputSchema, preferences, DEFAULT_COMPANIES, libraryKey } from './industry.mjs';
+import { industryInputSchema, preferences, DEFAULT_COMPANIES, libraryNamespaceKey } from './industry.mjs';
 import { cliFor } from './feishu-application.mjs';
 export const briefingInput = industryInputSchema.extend({ kind: z.enum(['daily', 'weekly']) });
 export const labelFor = kind => kind === 'daily' ? '日报' : '周报';
@@ -11,7 +11,7 @@ export function briefingTask(input, now) {
   const v = briefingInput.parse(input), window = reportWindow(v.kind, now);
   return { direction: `${labelFor(v.kind)} · ${window.display}`, sources: v.sources.join('、'), prompt: v.prompt?.replaceAll('{{时间范围}}',window.display) ?? briefingPrompt(v,window), briefing: { ...v, window } };
 }
-export const briefingKey = task => `briefing:${task.briefing.kind}:${libraryKey(task.feishuRoot,task.feishuApp)}`;
+export const briefingKey = task => `briefing:${task.briefing.kind}:${libraryNamespaceKey(task.feishuRoot,task.feishuApp)}`;
 export function briefingCloudPrompt(task, meta) {
   const b = task.briefing, prior = task.briefingLibrary ?? {}, name = labelFor(b.kind);
   return `${task.prompt}

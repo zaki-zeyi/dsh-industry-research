@@ -128,11 +128,14 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     try { settings = service.setFeishuSettings(req.body); }
     catch (error) { next(error); return; }
     const application = service.binding?.applicationSnapshot?.();
+    const targetChanged=()=>libraryKey(service.feishuSettings(),service.binding?.applicationSnapshot?.())!==libraryKey(settings,application);
     res.setHeader('Cache-Control', 'no-store');
     try {
       const summary = await importLibrary(service.store, settings, application, libraryImportRun, { command: service.binding?.command });
+      if(targetChanged())return res.status(409).json({error:'同步期间飞书根目录或应用已改变，旧目录结果已保留，请刷新当前目录'});
       res.json({ settings, import: summary, library: library(service.store, settings, application) });
     } catch (error) {
+      if(targetChanged())return res.status(409).json({error:'同步期间飞书根目录或应用已改变，请刷新当前目录'});
       const safe = libraryReadError(error);
       const current = library(service.store, settings, application);
       res.json({

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { cliFor } from './feishu-application.mjs';
 import { internalMaterialPrompt, internalTranscriptFormat } from './internal-material-prompt.mjs';
 export { internalMaterialPrompt } from './internal-material-prompt.mjs';
-import { libraryKey } from './industry.mjs';
+import { libraryNamespaceKey } from './industry.mjs';
 import { ServiceError } from './service-error.mjs';
 
 export const MAX_LOCAL_UPLOAD_BYTES = 100 * 1024 * 1024;
@@ -93,7 +93,7 @@ export function prepareInternalMaterial(input) {
 }
 
 export const internalFolderKey = task =>
-  `internal-material-folders:${libraryKey(task.feishuRoot, task.feishuApp)}${task.internal.directoryName ? ":" + task.internal.directoryName : ""}`;
+  `internal-material-folders:${libraryNamespaceKey(task.feishuRoot, task.feishuApp)}${task.internal.directoryName ? ":" + task.internal.directoryName : ""}`;
 
 export function internalMaterialCloudPrompt(task, meta) {
   const internal = task.internal;

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { Store } from '../server/store.mjs';
 import { fixture } from './helpers.mjs';
 import { createApp } from '../server/app.mjs';
-import { importLibrary, library, libraryKey } from '../server/industry.mjs';
+import { importLibrary, library, libraryKey, libraryNamespaceKey, refreshLibrary } from '../server/industry.mjs';
 
 const docUrl = name => `https://tenant.feishu.cn/docx/${name}`;
 const root = { rootName: '行研工作台', folderUrl: 'https://tenant.feishu.cn/drive/folder/root123', folderToken: 'root123' };
@@ -46,10 +46,96 @@ function runFor(filesByFolder, indexContent, expectedCommand = '/test/lark-cli')
   };
 }
 
-test('补充或切换根目录链接不会改变公司库索引，已有公司不会消失', () => {
+test('PRD4632 公司库以实际根目录隔离，同一目录改名不改变索引', () => {
   const before = libraryKey({ rootName: root.rootName }, app);
-  assert.equal(libraryKey(root, app), before);
-  assert.notEqual(libraryKey({ ...root, rootName: '另一个根目录' }, app), before);
+  assert.notEqual(libraryKey(root, app), before);
+  assert.equal(libraryKey({ ...root, rootName: '另一个名字' }, app), libraryKey(root,app));
+  assert.notEqual(libraryKey({...root,folderToken:'otherRoot'},app),libraryKey(root,app));
+});
+
+test('PRD4632 同名根目录切换后只显示新目录公司，旧任务与旧缓存保留',async()=>{
+ const f=storeFixture();try{
+  const old={...company('后摩智能','2099-01-01T00:00:00Z'),url:docUrl('OldHoumo'),taskId:'old-task'};
+  f.store.saveSetting(libraryKey(root,app),{rootFolderToken:root.folderToken,folderToken:'oldLibrary',manifestUrl:docUrl('OldIndex'),companies:[old,company('旧公司')]});
+  f.store.save({id:'old-task',createdAt:'2026-11-01T00:00:00Z',feishuRoot:root,feishuApp:app,industry:{companies:['后摩智能']},publication:{url:old.url}});
+  const next={...root,folderToken:'root456',folderUrl:'https://tenant.feishu.cn/drive/folder/root456'};
+  const imported={...company('后摩智能','2020-01-01T00:00:00Z'),url:docUrl('NewHoumo')};
+  const mock=runFor({'root456:':{files:[{name:'全量信息库',token:'newLibrary',type:'folder'}],has_more:false},'newLibrary:':{files:[{name:'公司索引',type:'docx',url:docUrl('NewIndex')}],has_more:false}},JSON.stringify({companies:[imported]}));
+  await importLibrary(f.store,next,app,mock.run,{command:'/test/lark-cli'});
+  const current=library(f.store,next,app);assert.equal(current.companies.length,1);assert.equal(current.companies[0].url,imported.url);assert.equal(current.companies[0].taskId,undefined);
+  assert.ok(mock.calls.every(c=>!c.args.includes('oldLibrary')&&!c.args.includes(docUrl('OldIndex'))));
+  assert.equal(library(f.store,root,app).companies.length,2);assert.equal(f.store.get('old-task').publication.url,old.url);
+ }finally{f.close();}
+});
+
+test('PRD4632 已有同名公司链接也以当前索引为准，不由旧文档更新时间决定',async()=>{
+ const f=storeFixture();try{
+  f.store.saveSetting(libraryKey(root,app),{folderToken:'library123',manifestUrl:docUrl('Index'),rootFolderToken:root.folderToken,companies:[{...company('后摩智能','2099-01-01T00:00:00Z'),url:docUrl('Old')},company('已移走公司')]});
+  const expected={...company('后摩智能','2020-01-01T00:00:00Z'),url:docUrl('Current')};
+  await importLibrary(f.store,root,app,runFor({},JSON.stringify({companies:[expected]})).run,{command:'/test/lark-cli'});
+  assert.deepEqual(library(f.store,root,app).companies.map(c=>c.url),[expected.url]);
+  f.store.saveSetting(libraryKey(root,app),{...library(f.store,root,app),companies:[{...expected,url:docUrl('Stale'),updatedAt:'2099-01-01T00:00:00Z'}]});
+  await refreshLibrary(f.store,root,app,runFor({},JSON.stringify({companies:[expected]})).run,{command:'/test/lark-cli'});
+  assert.equal(library(f.store,root,app).companies[0].url,expected.url);
+ }finally{f.close();}
+});
+
+test('PRD4632 新根目录为空时清空当前视图，不回退旧公司目录或导入根目录杂项',async()=>{
+ const f=storeFixture();try{
+  f.store.saveSetting(libraryNamespaceKey(root,app),{rootFolderToken:'oldRoot',folderToken:'oldLibrary',manifestUrl:docUrl('OldIndex'),companies:[company('旧公司')]});
+  const mock=runFor({'root123:':{files:[{name:'无关文档',type:'docx',url:docUrl('Unrelated')}],has_more:false}},null);
+  const result=await importLibrary(f.store,root,app,mock.run,{command:'/test/lark-cli'});
+  assert.equal(result.status,'empty');assert.deepEqual(library(f.store,root,app).companies,[]);assert.equal(library(f.store,root,app).folderToken,null);assert.equal(mock.calls.length,1);
+ }finally{f.close();}
+});
+
+test('PRD4632 旧缓存仅在能证明根目录一致时迁移，不按同名猜测归属',()=>{
+ const f=storeFixture();try{
+  const legacy={rootFolderToken:root.folderToken,folderToken:'library123',manifestUrl:docUrl('KnownIndex'),companies:[company('后摩智能')]};
+  f.store.saveSetting(libraryNamespaceKey(root,app),legacy);
+  assert.equal(library(f.store,root,app).companies.length,1);assert.equal(f.store.setting(libraryKey(root,app)).rootFolderToken,root.folderToken);
+  assert.equal(library(f.store,{...root,folderToken:'unknownRoot'},app).companies.length,0);
+  f.store.saveSetting(libraryNamespaceKey(root,app),{folderToken:'unproven',manifestUrl:docUrl('UnprovenIndex'),companies:[company('旧公司')]});
+  assert.equal(library(f.store,{...root,folderToken:'thirdRoot'},app).companies.length,0);
+ }finally{f.close();}
+});
+
+test('PRD4632 旧版未记录根目录时根据唯一历史交付证明迁移',()=>{
+ const f=storeFixture();try{
+  const c=company('后摩智能');f.store.saveSetting(libraryNamespaceKey(root,app),{folderToken:'library123',companies:[c]});
+  f.store.save({id:'old-delivery',createdAt:'2026-11-01T00:00:00Z',feishuRoot:root,feishuApp:app,publication:{url:c.url}});
+  assert.equal(library(f.store,root,app).companies[0].url,c.url);
+ }finally{f.close();}
+});
+
+test('PRD4632 同步中交付的新公司保留，不保留同步前已移走的公司',async()=>{
+ const f=storeFixture();try{
+  f.store.saveSetting(libraryKey(root,app),{folderToken:'library123',manifestUrl:docUrl('KnownIndex'),companies:[company('已移走公司')]});
+  const run=async()=>{const saved=library(f.store,root,app);f.store.saveSetting(libraryKey(root,app),{...saved,companies:[...saved.companies,company('并行新公司')]});return{stdout:JSON.stringify({ok:true,data:{document:{content:JSON.stringify({companies:[company('后摩智能')]})}}})};};
+  await importLibrary(f.store,root,app,run);
+  assert.deepEqual(library(f.store,root,app).companies.map(c=>c.name),['后摩智能','并行新公司']);
+ }finally{f.close();}
+});
+
+test('PRD4632 旧目录导入晚返回时API拒绝覆盖当前目录设置',async()=>{
+ const f=fixture();let release,started;const gate=new Promise(r=>release=r),observed=new Promise(r=>started=r);
+ const server=createApp(f.service,{libraryImportRun:async()=>{started();await gate;return{stdout:JSON.stringify({ok:true,data:{files:[],has_more:false}})};}}).listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const base='http://127.0.0.1:'+server.address().port;
+ try{
+  const pending=fetch(base+'/api/feishu-settings/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folderUrl:root.folderUrl})});await observed;
+  f.service.setFeishuSettings({folderUrl:'https://tenant.feishu.cn/drive/folder/newRoot'});release();
+  assert.equal((await pending).status,409);assert.equal(f.service.feishuSettings().folderToken,'newRoot');assert.equal(library(f.store,f.service.feishuSettings()).companies.length,0);
+ }finally{release();server.closeAllConnections();await new Promise(r=>server.close(r));await f.close();}
+});
+
+test('PRD4632 不完整或异常目录响应不被当成空目录清除卡片',async()=>{
+ const f=storeFixture();try{
+  f.store.saveSetting(libraryKey(root,app),{folderToken:'library123',companies:[company('后摩智能')]});
+  const before=library(f.store,root,app);
+  for(const data of [{unexpected:true},{files:[],has_more:true,next_page_token:'repeat'}]){
+   await assert.rejects(importLibrary(f.store,root,app,async()=>({stdout:JSON.stringify({ok:true,data})})),e=>['LIBRARY_TOO_LARGE','LIBRARY_INVALID_RESPONSE'].includes(e.code));
+   assert.deepEqual(library(f.store,root,app),before);
+  }
+ }finally{f.close();}
 });
 
 test('保存并导入优先读取全量信息库和公司索引，支持分页且只读', async () => {
