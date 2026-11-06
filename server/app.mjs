@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { ServiceError } from './service.mjs';
 import { prepareInternalMaterial, internalDirectorySchema } from './internal-materials.mjs';
 import { traceMiddleware, traceFor, withTrace, traceActions } from './connection-trace.mjs';
+import { requireIdleBinding } from './binding-blockers.mjs';
 
 export function createApp(service, { dist = resolve('dist'), health = {}, libraryRun, libraryImportRun, analysisRun, publicationRun } = {}) {
   const app = express(); app.disable('x-powered-by');
@@ -111,14 +112,13 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.connectionMonitor.check());
   } catch (e) { next(e); } });
   app.get('/api/feishu-application', async (_req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.applicationInfo()); } catch(e) { next(e); } });
-  app.put('/api/feishu-application', async (req, res, next) => { try { if (service.active.size || service.queue.length || service.store.list().some(t => ['queued', 'running'].includes(t.status) || t.publication.status === 'publishing')) throw new ServiceError(409, '有调研或上传正在执行，请完成后再切换飞书应用'); res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.configureApplication(req.body)); } catch(e) { next(e); } });
-  function requireIdleBinding() { if (service.active.size || service.queue.length || service.store.list().some(t => ['queued', 'running'].includes(t.status) || t.publication.status === 'publishing')) throw new ServiceError(409, '有调研或上传正在执行，请完成后再重新绑定'); }
+  app.put('/api/feishu-application', async (req, res, next) => { try { requireIdleBinding(service,'切换飞书应用'); res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.configureApplication(req.body)); } catch(e) { next(e); } });
   app.get('/api/feishu-registration', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json(service.binding.registration.snapshot()); });
-  app.post('/api/feishu-registration', (req, res, next) => { try { const input = z.object({ refresh: z.boolean().optional(), repairBot: z.boolean().optional() }).strict().parse(req.body ?? {}); requireIdleBinding(); res.setHeader('Cache-Control', 'no-store'); res.json(service.binding.registration.start(input)); } catch(e) { next(e); } });
+  app.post('/api/feishu-registration', (req, res, next) => { try { const input = z.object({ refresh: z.boolean().optional(), repairBot: z.boolean().optional() }).strict().parse(req.body ?? {}); requireIdleBinding(service); res.setHeader('Cache-Control', 'no-store'); res.json(service.binding.registration.start(input)); } catch(e) { next(e); } });
   app.delete('/api/feishu-registration', (_req, res, next) => { try { service.binding.registration.cancel(); res.json({ status: 'idle' }); } catch(e) { next(e); } });
   app.get('/api/feishu-registration/qr/:id', (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.type('png').send(service.binding.registration.qr(req.params.id)); } catch(e) { next(e); } });
   app.get('/api/feishu-binding', async (_req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.status()); } catch(e) { next(e); } });
-  app.post('/api/feishu-binding', async (req, res, next) => { try { const input = z.object({ rebind: z.boolean().optional() }).strict().parse(req.body ?? {}); if (input.rebind) requireIdleBinding(); res.setHeader('Cache-Control', 'no-store'); const flow = await service.binding.start({ rebind: input.rebind }); res.json(flow); } catch(e) { next(e); } });
+  app.post('/api/feishu-binding', async (req, res, next) => { try { const input = z.object({ rebind: z.boolean().optional() }).strict().parse(req.body ?? {}); if (input.rebind) requireIdleBinding(service); res.setHeader('Cache-Control', 'no-store'); const flow = await service.binding.start({ rebind: input.rebind }); res.json(flow); } catch(e) { next(e); } });
   app.post('/api/feishu-binding/complete', async (req, res, next) => { try { const { flowId } = z.object({ flowId: z.string().uuid() }).strict().parse(req.body); res.json(await service.binding.complete(flowId)); } catch(e) { next(e); } });
   app.get('/api/feishu-binding/qr/:id', (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.type('png').send(service.binding.qr(req.params.id)); } catch(e) { next(e); } });
   app.get('/api/feishu-settings', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json(service.feishuSettings()); });
@@ -209,6 +209,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     res.status(status).json({
       ...((typeof err.code==='string'&&/^(?:LIBRARY_|LARK_|FEISHU_)/.test(err.code)) ? { code: err.code } : {}),
       ...(err.recovery ? { recovery: err.recovery } : {}),
+      ...(err.code==='FEISHU_TASKS_BUSY' ? {blockers:err.blockers} : {}),
       error: err instanceof z.ZodError ? err.issues.map(i => i.message).join('；') : status === 500 ? '服务内部异常，请稍后重试' : err.message,
     });
   });

@@ -34,3 +34,11 @@
     padding-left: 0;
   }
 }
+.binding-task-error > p { margin: 0; }
+.binding-task-error ul { list-style: none; padding: 0; margin: 12px 0 0; max-height: 35vh; overflow: auto; }
+.binding-task-error li { padding: 12px 0; border-top: 1px solid #eadbd2; }
+.binding-task-error li > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.binding-task-error strong { overflow-wrap: anywhere; color: #34493c; font-size: 14px; }
+.binding-task-error li span { flex-shrink: 0; font-size: 12px; }
+.binding-task-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.task-card-target { outline: 3px solid #6c9376 !important; outline-offset: 4px; box-shadow: 0 0 0 7px #6c93761a; scroll-margin: 80px; }

@@ -19,7 +19,7 @@ export async function tracedConnectionRequest(path, body, method, trace) {
   try {
     const response=await fetch(`/api${path}`,{ method:body===undefined?'GET':method,headers:{'Content-Type':'application/json','X-Feishu-Trace-Id':trace.traceId,'X-Feishu-Attempt':String(trace.attempt),'X-Feishu-Action':trace.action},...(body===undefined?{}:{body:JSON.stringify(body)}) });
     const value=await response.json();
-    if(!response.ok)throw new Error(value.error??'请求失败');
+    if(!response.ok)throw Object.assign(new Error(value.error??'请求失败'),{code:value.code,...(value.code==='FEISHU_TASKS_BUSY'&&Array.isArray(value.blockers)?{blockers:value.blockers}:{})});
     return value;
   } catch(error) { connectionEvent(trace,'request_failed',phase,{status:'failed'}); throw error; }
 }

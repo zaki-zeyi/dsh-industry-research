@@ -29,7 +29,7 @@ function sourceHost(task) {
   try { return new URL(task.internal.source).hostname; } catch { return ''; }
 }
 
-export function InternalMaterials({ config, onConfigChanged, onCreate, onOpen, onRetry, onFixNotification, notificationRevision }) {
+export function InternalMaterials({ config, onConfigChanged, onCreate, onOpen, onRetry, onFixNotification, notificationRevision, focusRequest }) {
   const [items, setItems] = useState([]);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
@@ -84,6 +84,7 @@ export function InternalMaterials({ config, onConfigChanged, onCreate, onOpen, o
     };
   }, [notificationRevision, config?.internalDirectoryName, config?.publicationScope]);
 
+  useEffect(()=>{if(focusRequest)setQuery('');},[focusRequest]);
   const visible = items.filter(task =>
     task.direction.toLowerCase().includes(query.toLowerCase())
     || sourceDisplay(task).toLowerCase().includes(query.toLowerCase())
@@ -111,7 +112,7 @@ export function InternalMaterials({ config, onConfigChanged, onCreate, onOpen, o
     </div>
     {error && <div className="industry-error" role="alert"><AlertCircle size={17}/>{error}</div>}
     {loading && <div className="industry-empty"><LoaderCircle className="spin"/>正在读取内部资料…</div>}
-    {!loading && visible.length > 0 && <div className="industry-cards">{visible.map(task => <article className="industry-company" key={task.id}>
+    {!loading && visible.length > 0 && <div className="industry-cards">{visible.map(task => <article className="industry-company" key={task.id} id={'task-card-'+task.id} tabIndex={-1}>
       <div className="company-top"><span className="company-monogram"><FileText size={18}/></span><span className={'task-status ' + task.status}>{statusLabel(task)}</span></div>
       <h2 title={sourceDisplay(task)}>{sourceDisplay(task)}</h2>
       <p className="card-meta">{task.remoteOnly ? '飞书历史逐字稿' : task.internal.sourceType === 'local' ? '本地文件' : `网络资料${sourceHost(task) ? ` · ${sourceHost(task)}` : ''}`}{task.internal.fileSize != null ? ` · ${(task.internal.fileSize / 1024 / 1024).toFixed(1)} MB` : ''}</p>
