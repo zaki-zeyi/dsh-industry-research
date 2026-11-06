@@ -18,8 +18,9 @@ ${sourceCompanies.map(company => `- ${company.name}: ${company.url}`).join('\n')
 每家公司都必须读取成功。某家公司或某个维度资料不足时，在报告中明确写“资料不足”，不得推断或编造，并把对应公司写入回执的 insufficient；资料不足不影响报告生成。输出相同点、差异点和分析建议；适合时使用图表，表格对比中的优势数据使用高亮样式。每一条可核对的数据后附全量信息库中保留的原始来源链接与日期。
 
 所有飞书操作固定使用 ${cli}，使用用户身份，不切换 profile。先读取该 CLI 的 docs、drive skills 和 --help。飞书已绑定，授权失效则失败并让用户回工作台重新绑定，不重新发起登录。不调用目录列表或文档搜索。
-${task.feishuRoot.folderToken ? `目标根目录 ID：${task.feishuRoot.folderToken}。这是根目录，禁止改用其他根目录。` : `根目录名：${JSON.stringify(task.feishuRoot.rootName)}。${task.feishuRoot.creationUncertain ? '先核对原会话的创建结果，结果不确定不得重复创建；提示用户提供文件夹链接。' : '首次创建根目录一次，取得 token 后立即回传 publishing。'}`}
-根目录下使用【${ANALYSIS_FOLDER_NAME}】子文件夹。${knownAnalysis.folderToken ? `已有子文件夹 token：${knownAnalysis.folderToken}，必须复用。` : task.runs?.length > 1 ? '本次为重试，先从原会话结果恢复友商分析子文件夹 ID；如果创建结果不确定不得重复创建，回传失败让用户核对。' : '首次创建友商分析子文件夹一次，立即把 analysisFolderToken 写入回执，后续任务复用。'}
+根目录以保存锁返回的 feishuRoot.folderToken 为准，禁止切换根目录或自行创建文件夹。
+${knownAnalysis.folderToken ? `已有子文件夹 token：${knownAnalysis.folderToken}（以保存锁最新结果为准）。` : ''}
+根目录下使用【${ANALYSIS_FOLDER_NAME}】子文件夹，以保存锁返回的 analysisIndex.folderToken 为准，必须复用；缺少 token 时停止，禁止自行新建。
 报告标题：${JSON.stringify(task.direction)}。内部任务标识：${task.id}，仅用于核对与重试，禁止写入报告标题、索引 title 或卡片标题。重试先核对本会话历史与已有回执，已完成且有报告链接则复用，不重复建文档。使用 docs +create --parent-token 将正文从 stdin（--content -）或内存直接传给 CLI；禁止 @本地报告文件，不保存报告正文副本。report.title 必须使用上述报告标题，不带任务 UUID。
 在友商分析子目录维护一个【分析报告索引】飞书文档，正文为 JSON {"reports":[{"title":"报告标题","url":"飞书链接","companies":["公司"],"dimensions":["维度"],"updatedAt":"ISO8601时间","insufficient":["资料不足公司"]}]}。${knownAnalysis.manifestUrl ? `已知索引：${knownAnalysis.manifestUrl}，先读取并保留原有报告，再更新。` : '首次创建索引后立即回传 analysisManifestUrl；重试时从会话工具结果恢复该链接，禁止盲目重复创建。'}
 创建/取得目录后先原子更新 ${meta.deliveryPath}，本次 requestId 固定为 ${meta.deliveryRequestId}：

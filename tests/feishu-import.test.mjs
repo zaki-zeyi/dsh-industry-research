@@ -265,3 +265,41 @@ test('导入权限失败时设置仍保存，错误不泄露 CLI 输出', async 
     assert.ok(!JSON.stringify(body).includes('secret-must-not-leak'));
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await f.close(); }
 });
+
+
+test('公司索引被删除后自动从飞书目录重新发现，导入与刷新均可恢复', async () => {
+  const f = storeFixture();
+  try {
+    const oldIndex = docUrl('DeletedIndex');
+    const newIndex = docUrl('RecoveredIndex');
+    const seed = () => f.store.saveSetting(libraryKey(root, app), {
+      folderToken: 'library123',
+      manifestUrl: oldIndex,
+      rootFolderToken: root.folderToken,
+      companies: [company('后摩智能')],
+    });
+    const run = async (command, args) => {
+      assert.equal(command, '/test/lark-cli');
+      if (args.includes('list')) {
+        const folder = args[args.indexOf('--folder-token') + 1];
+        if (folder === 'root123') return { stdout: JSON.stringify({ ok: true, data: { files: [{ name: '全量信息库', token: 'library123', type: 'folder' }], has_more: false } }) };
+        return { stdout: JSON.stringify({ ok: true, data: { files: [{ name: '公司索引', token: 'new-index', type: 'docx', url: newIndex }], has_more: false } }) };
+      }
+      if (args.includes(oldIndex)) return { stdout: JSON.stringify({ ok: false, error: { code: 3380003, msg: 'Document page has been deleted' } }) };
+      if (args.includes(newIndex)) return { stdout: JSON.stringify({ ok: true, data: { document: { content: JSON.stringify({ companies: [company('后摩智能'), company('光羽芯辰')] }) } } }) };
+      throw new Error('unexpected command: ' + args.join(' '));
+    };
+
+    seed();
+    const imported = await importLibrary(f.store, root, app, run, { command: '/test/lark-cli' });
+    assert.equal(imported.status, 'completed');
+    assert.equal(imported.indexFound, true);
+    assert.equal(library(f.store, root, app).manifestUrl, newIndex);
+    assert.deepEqual(library(f.store, root, app).companies.map(item => item.name), ['后摩智能', '光羽芯辰']);
+
+    seed();
+    const refreshed = await refreshLibrary(f.store, root, app, run, { command: '/test/lark-cli' });
+    assert.equal(refreshed.manifestUrl, newIndex);
+    assert.equal(refreshed.companies.length, 2);
+  } finally { f.close(); }
+});

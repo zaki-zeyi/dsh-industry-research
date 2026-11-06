@@ -9,6 +9,9 @@ import { analysisReportSchema } from './agent-delivery.mjs';
 import { ANALYSIS_FOLDER_NAME, analysisDefaultPrompt, cleanAnalysisTitle } from './analysis-defaults.mjs';
 import { library } from './industry.mjs';
 import { LibraryRefreshError, libraryReadError } from './library-errors.mjs';
+import { larkLaunch } from './lark-launch.mjs';
+
+const defaultExec = promisify(execFile);
 
 const label = z.string().trim().min(1).max(120).refine(v => !/[\x00-\x1f\x7f]/.test(v), '名称不能包含控制字符');
 const uniqueChoices = z.array(label).max(60).transform(v => [...new Set(v)]).refine(v => v.length >= 1, '至少选择一项');
@@ -106,14 +109,16 @@ function analysisReadError(error) {
   return mapped;
 }
 
-export async function refreshAnalysisLibrary(store, root, app, run = promisify(execFile), { command } = {}) {
+export async function refreshAnalysisLibrary(store, root, app, run = defaultExec, { command } = {}) {
   const key = analysisKey(root, app), current = analysisLibrary(store, root, app);
   if (!current.manifestUrl) return current;
   const args = [...(app?.profile ? ['--profile', app.profile] : []), 'docs', '+fetch', '--doc', current.manifestUrl, '--doc-format', 'markdown', '--as', 'user'];
   const local = resolve(homedir(), '.local/bin/lark-cli');
+  const executable = command ?? (existsSync(local) ? local : 'lark-cli');
+  const launch = run === defaultExec ? larkLaunch(executable, args) : { command: executable, args };
   let stdout;
   try {
-    ({ stdout } = await run(command ?? (existsSync(local) ? local : 'lark-cli'), args, { timeout: 20000, maxBuffer: 1024 * 1024, windowsHide: true, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }));
+    ({ stdout } = await run(launch.command, launch.args, { timeout: 20000, maxBuffer: 1024 * 1024, windowsHide: true, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }));
   } catch (error) {
     throw analysisReadError(error);
   }

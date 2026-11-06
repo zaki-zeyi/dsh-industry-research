@@ -24,17 +24,19 @@ export class CloudWrites {
         lock.waiters.push(waiter);active.controller.signal.addEventListener('abort',abort,{once:true});
       });
     }else lock.owner=id;
-    try{if(active.controller.signal.aborted)throw Object.assign(new Error('任务已取消'),{status:409});return this.snapshot(s.require(id));}catch(e){this.release(id);throw e;}
+    try{if(active.controller.signal.aborted)throw Object.assign(new Error('任务已取消'),{status:409});return await this.snapshot(s.require(id));}catch(e){this.release(id);throw e;}
   }
-  snapshot(t){
-    const s=this.service;s.prepareCloudRoot(t);
+  async snapshot(t){
+    const s=this.service;
+    if(s.directories)await s.directories.prepare(t,s.active.get(t.id)?.controller.signal);
+    else s.prepareCloudRoot(t);
     t.industryLibrary=library(s.store,t.feishuRoot,t.feishuApp);
     if(t.briefing)t.briefingLibrary=s.store.setting(briefingKey(t))??{};
     if(t.internal)t.internalFolders=s.store.setting(internalFolderKey(t))??{};
     t.stage='research';s.save(t);
-    return {feishuRoot:t.feishuRoot,industryLibrary:t.industryLibrary,briefingLibrary:t.briefingLibrary,internalFolders:t.internalFolders};
+    return {feishuRoot:t.feishuRoot,industryLibrary:t.industryLibrary,briefingLibrary:t.briefingLibrary,internalFolders:t.internalFolders,analysisIndex:t.analysisIndex};
   }
-  assertOwner(t){const lock=this.locks.get(libraryNamespaceKey(t.feishuRoot,t.feishuApp));if(lock?.owner&&lock.owner!==t.id)throw new Error('其他任务正在写入信息库，请先获取本轮写入锁');}
+  assertOwner(t){const lock=this.locks.get(libraryNamespaceKey(t.feishuRoot,t.feishuApp));if(this.service.directories&&lock?.owner!==t.id||lock?.owner&&lock.owner!==t.id)throw new Error('请先获取本轮保存锁与已确认的唯一目录，再回传交付结果');}
   release(id){for(const [key,lock] of this.locks){
     if(lock.owner!==id)continue;
     const t=this.service.require(id),meta=t.terminalId&&this.service.store.terminal(t.terminalId);

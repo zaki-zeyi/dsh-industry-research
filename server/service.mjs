@@ -102,7 +102,7 @@ export class ResearchService {
           t.analysisIndex = analysisLibrary(this.store, t.feishuRoot, t.feishuApp);
           this.save(t);
         }
-        if (t.cloudOnly) { await this.binding.requireBound(t.feishuApp ?? { mode: 'default' }); const pendingRoot=this.store.setting(folderCacheKey(t.feishuRoot));if(this.researcher.transport!=='dsh-native'||(pendingRoot?.owner&&!pendingRoot.folderToken&&pendingRoot.owner!==t.id&&!this.active.has(pendingRoot.owner)))this.prepareCloudRoot(t); this.save(t); }
+        if (t.cloudOnly) { await this.binding.requireBound(t.feishuApp ?? { mode: 'default' }); const pendingRoot=this.store.setting(folderCacheKey(t.feishuRoot));if(!this.directories&&(this.researcher.transport!=='dsh-native'||(pendingRoot?.owner&&!pendingRoot.folderToken&&pendingRoot.owner!==t.id&&!this.active.has(pendingRoot.owner))))this.prepareCloudRoot(t); this.save(t); }
         const report = await this.researcher.run(t, {
           signal,
           emit: (type, data) => this.event(id, type, type === 'cli' ? { ...data, runId: run.id } : data),

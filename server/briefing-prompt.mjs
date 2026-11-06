@@ -7,5 +7,5 @@ export function reportWindow(kind, now = new Date()) {
   return { start: start.toISOString(), end: end.toISOString(), display: `${fmt(start)} 至 ${fmt(new Date(end - 60000))}（北京时间）` };
 }
 export function briefingPrompt(input, window) {
-  return `帮我统计【${window.display}】内，对【${input.companies.join('、')}】在【${input.sources.join('、')}】的【${input.dimensions.join('、')}】相关动态，并满足【${input.requirements || '无其他要求'}】，保存到飞书云盘根目录的【${labelFor(input.kind)}】目录中，同时自动去重增量保存到飞书云盘根目录的【全量信息库】中。并呈现本次更新摘要。报告按公司组织，公司名称下按当前配置维度分条列出动态，每条附原始来源链接、披露日、事件发生日和入库日；未知日期标为待核对。按披露日统计，无更新的公司不列出，全部公司无更新时注明“本${input.kind === 'daily' ? '日' : '周'}无更新”。`;
+  return `帮我统计【${window.display}】内，对【${input.companies.join('、')}】在【${input.sources.join('、')}】的【${input.dimensions.join('、')}】相关动态，并满足【${input.requirements || '无其他要求'}】，保存到飞书云盘根目录的【${labelFor(input.kind)}】目录中，同时按维度就地合并到飞书云盘根目录的【全量信息库】对应公司文档，不新增“增量更新”章节。并呈现本次更新摘要。报告按公司组织，公司名称下按当前配置维度分条列出动态，每条附原始来源链接、披露日、事件发生日和入库日；未知日期标为待核对。按披露日统计，无更新的公司不列出，全部公司无更新时注明“本${input.kind === 'daily' ? '日' : '周'}无更新”。`;
 }

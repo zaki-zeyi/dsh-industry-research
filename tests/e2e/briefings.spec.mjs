@@ -3,7 +3,7 @@ test('FR02 日报周报入口、可编辑任务、报告卡片、续聊和独立
  await page.goto('/');await page.getByRole('button',{name:'日报',exact:true}).click();
  await expect(page.getByRole('heading',{name:'日报',exact:true})).toBeVisible();
  await page.getByRole('button',{name:'手动生成日报',exact:true}).click();
- const dialog=page.getByRole('dialog');await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/同时自动去重增量保存/);
+ const dialog=page.getByRole('dialog');await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/同时按维度就地合并.*全量信息库/);await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/不新增“增量更新”章节/);
  await dialog.getByRole('button',{name:'启动',exact:true}).click();await expect(page.getByRole('button',{name:'← 返回工作台'})).toBeVisible();await page.getByRole('button',{name:'← 返回工作台'}).click();
  await expect(page.getByRole('link',{name:'打开飞书日报'})).toHaveAttribute('href',/feishu.cn\/docx\//);await expect(page.getByText('本日无更新')).toBeVisible();
  const card=page.locator('.briefing-card').filter({hasText:'日报 ·'}).first(),status=card.locator('.company-top .task-status');await expect(status).toHaveText('已完成');

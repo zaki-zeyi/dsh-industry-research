@@ -40,7 +40,7 @@ export function library(store, root, app) {
   return {companies:[],folderToken:null};
 }
 export function industryPrompt(input) {
-  return `帮我对【${input.companies.join('、')}】在【${input.sources.join('、')}】进行【${input.dimensions.join('、')}】的调研${input.requirements ? `，并满足【${input.requirements}】` : ''}，自动去重增量保存到飞书云盘【全量信息库】中。并呈现本次更新摘要。`;
+  return `帮我对【${input.companies.join('、')}】在【${input.sources.join('、')}】进行【${input.dimensions.join('、')}】的调研${input.requirements ? `，并满足【${input.requirements}】` : ''}，按维度就地合并到飞书云盘【全量信息库】对应公司文档，不新增“增量更新”章节。并呈现本次更新摘要。`;
 }
 export function mergeCompanyDelivery(store, task, delivery) {
   const research = task.industry ?? task.briefing ?? task.internal?.research;
@@ -119,6 +119,7 @@ export async function listDriveFolder(run = defaultExec, app, token, options = {
     if(!Array.isArray(data.files))throw new LibraryRefreshError('LIBRARY_INVALID_RESPONSE','飞书目录响应缺少文件列表，当前目录缓存已保留，请重试');
     files.push(...data.files);
     pageToken = data.has_more === false ? null : (data.next_page_token ?? data.page_token ?? null);
+    if(data.has_more === true && !pageToken)throw new LibraryRefreshError('LIBRARY_INVALID_RESPONSE','飞书目录分页响应不完整，无法确认目录是否存在；未创建文件夹');
     pages++;
   } while (pageToken && pages < Math.ceil(importLimit / importPageSize));
   return { files: files.slice(0, importLimit), truncated: Boolean(pageToken) || files.length > importLimit };
@@ -158,33 +159,43 @@ function mergeImportedCompanies(store, root, app, before, latest, imported) {
   for(const c of latest)if(!names.has(c.name)&&!before.some(old=>JSON.stringify(old)===JSON.stringify(c)))companies.push(c);
   return companies;
 }
-export async function importLibrary(store, root, app, run = defaultExec, { command } = {}) {
+async function discoverLibrary(run, app, root, { command, libraryFolderToken: selectedToken } = {}) {
+  const rootListing = selectedToken ? {files:[],truncated:false} : await listDriveFolder(run, app, root.folderToken, { command });
+  if (rootListing.truncated) throw new LibraryRefreshError('LIBRARY_TOO_LARGE', '目录读取未完成，已保留当前目录缓存，请缩小目录后重试');
+  const matches = rootListing.files.filter(file => isFolder(file) && cleanFileName(file.name) === '全量信息库');
+  if(matches.length > 1)throw new LibraryRefreshError('LIBRARY_FOLDER_AMBIGUOUS','根目录下存在多个【全量信息库】，请先核对唯一目录后再导入；本地记录保留',409);
+  const libraryFolderToken = selectedToken ?? fileToken(matches[0]) ?? null;
+  const listing = libraryFolderToken ? await listDriveFolder(run, app, libraryFolderToken, { command }) : { files: [], truncated: false };
+  if (listing.truncated) throw new LibraryRefreshError('LIBRARY_TOO_LARGE', '公司目录读取未完成，已保留当前目录缓存，请缩小目录后重试');
+  const indexes = listing.files.filter(file => isCompanyDocument(file) && cleanFileName(file.name) === '公司索引');
+  if(indexes.length > 1)throw new LibraryRefreshError('LIBRARY_INDEX_AMBIGUOUS','信息库存在多个【公司索引】，请先核对；本地记录保留',409);
+  const index = indexes[0];
+  if (!index) return { imported: companiesFromFiles(listing.files), indexFound: false, manifestUrl: null, libraryFolderToken, listing };
+  const manifestUrl = String(index.url);
+  const imported = parseLibraryManifest(await fetchDocumentContent(run, app, manifestUrl, { command }));
+  return { imported, indexFound: true, manifestUrl, libraryFolderToken, listing };
+}
+export async function importLibrary(store, root, app, run = defaultExec, { command, rediscover = false, libraryFolderToken: selectedToken } = {}) {
   if (!root?.folderToken) return { status: 'skipped', imported: 0, total: library(store, root, app).companies.length, libraryFolderFound: false, indexFound: false, message: '设置已保存。目录将在首次调研时创建，创建后请再次点击“保存设置并导入”。' };
   const key = libraryKey(root, app), current = library(store, root, app);
   // Once the company index is known, read it directly. Folder listing needs an
   // optional drive scope that many Feishu apps do not request; importing must
   // not fail just because that one-time discovery permission is absent.
-  const canUseKnownIndex = Boolean(current.manifestUrl) && (current.rootFolderToken === root.folderToken || Boolean(store.setting(key)) && key.startsWith('industry-library-root:'));
-  let imported, indexFound, manifestUrl, libraryFolder, libraryFolderToken = current.folderToken, listing;
+  const canUseKnownIndex = !rediscover && Boolean(current.manifestUrl) && (current.rootFolderToken === root.folderToken || Boolean(store.setting(key)) && key.startsWith('industry-library-root:'));
+  let imported, indexFound, manifestUrl, libraryFolderToken = current.folderToken, listing;
   if (canUseKnownIndex) {
     manifestUrl = current.manifestUrl;
     indexFound = true;
-    imported = parseLibraryManifest(await fetchDocumentContent(run, app, manifestUrl, { command }));
-  } else {
-    const rootListing = await listDriveFolder(run, app, root.folderToken, { command });
-    if(rootListing.truncated)throw new LibraryRefreshError('LIBRARY_TOO_LARGE','目录读取未完成，已保留当前目录缓存，请缩小目录后重试');
-    libraryFolder = rootListing.files.find(file => isFolder(file) && cleanFileName(file.name) === '全量信息库');
-    libraryFolderToken = fileToken(libraryFolder) ?? null;
-    listing = libraryFolderToken ? await listDriveFolder(run, app, libraryFolderToken, { command }) : {files:[],truncated:false};
-    if(listing.truncated)throw new LibraryRefreshError('LIBRARY_TOO_LARGE','公司目录读取未完成，已保留当前目录缓存，请缩小目录后重试');
-    const index = listing.files.find(file => isCompanyDocument(file) && cleanFileName(file.name) === '公司索引');
-    indexFound = Boolean(index);
-    if (index) {
-      manifestUrl = String(index.url);
+    try {
       imported = parseLibraryManifest(await fetchDocumentContent(run, app, manifestUrl, { command }));
-    } else {
-      imported = companiesFromFiles(listing.files);
+    } catch (error) {
+      // The cached index can be deleted or replaced in Feishu. Fall through to
+      // folder discovery so the user does not have to clear local state.
+      if (error?.code !== 'LIBRARY_DOCUMENT_DELETED') throw error;
     }
+  }
+  if (imported === undefined) {
+    ({ imported, indexFound, manifestUrl, libraryFolderToken, listing } = await discoverLibrary(run, app, root, { command, libraryFolderToken: selectedToken }));
   }
   const syncedAt = new Date().toISOString();
   const latest=library(store,root,app);
@@ -213,10 +224,24 @@ export async function refreshLibrary(store, root, app, run = defaultExec, { comm
     const executable = command ?? (existsSync(local) ? local : 'lark-cli');
     const launch = run === defaultExec ? larkLaunch(executable, args) : { command: executable, args };
     ({ stdout } = await run(launch.command, launch.args, { timeout: 20000, maxBuffer: 1024 * 1024, windowsHide: true, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }));
-  } catch (e) { throw libraryReadError(e); }
+  } catch (e) {
+    const error = libraryReadError(e);
+    if (error.code === 'LIBRARY_DOCUMENT_DELETED' && rootToken(root)) {
+      await importLibrary(store, root, app, run, { command, rediscover: true });
+      return library(store, root, app);
+    }
+    throw error;
+  }
   let response;
   try { response = JSON.parse(stdout); } catch { throw new LibraryRefreshError('LIBRARY_INVALID_RESPONSE', 'Lark CLI 返回格式异常，请检查 CLI 后重试；本地已同步记录保留'); }
-  if (!response.ok) throw libraryReadError({ stdout });
+  if (!response.ok) {
+    const error = libraryReadError({ stdout });
+    if (error.code === 'LIBRARY_DOCUMENT_DELETED' && rootToken(root)) {
+      await importLibrary(store, root, app, run, { command, rediscover: true });
+      return library(store, root, app);
+    }
+    throw error;
+  }
   const remote = parseLibraryManifest(response.data?.document?.content);
   // A task may deliver another company while the remote fetch is in flight. Merge
   // against the latest local index and retain entries newer than this snapshot.
