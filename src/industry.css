@@ -394,3 +394,6 @@
 .industry-success{margin:15px 25px;padding:13px;background:#edf6ec;color:#3f6947;border:1px solid #cfe2cd;display:flex;align-items:center;gap:9px;font-size:12px;line-height:1.7}.industry-success button{border:0;background:none;color:inherit;margin-left:auto}
 
 .industry-company p.notification-redirect-notice{padding:12px 14px;border:1px solid #dce7d7;border-radius:8px;background:#f0f6ec;color:#426044;line-height:1.7;white-space:normal}
+.material-directory-settings { display: grid; gap: 12px; margin-top: 16px; max-width: 520px; }
+.material-directory-settings label { display: grid; gap: 8px; font-size: 14px; }
+.material-directory-settings input { width: 100%; min-height: 42px; padding: 10px 12px; border: 1px solid #dce3d8; border-radius: 8px; font: inherit; background: white; }

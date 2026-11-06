@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto';
 import { recordTrace, recordRuntimeStart, recordRuntimeStop } from './connection-trace.mjs';
 import { fileURLToPath } from 'node:url';
 export function dataIdentity(path) { return createHash('sha256').update(resolve(path)).digest('hex'); }
-export async function startRuntime({ env = process.env, port = Number(env.PORT ?? 3088), dataDir = resolve(env.DATA_DIR ?? './data'), dist = fileURLToPath(new URL('../dist', import.meta.url)), host, binding, libraryRun, libraryImportRun, analysisRun } = {}) {
+export async function startRuntime({ env = process.env, port = Number(env.PORT ?? 3088), dataDir = resolve(env.DATA_DIR ?? './data'), dist = fileURLToPath(new URL('../dist', import.meta.url)), host, binding, libraryRun, libraryImportRun, analysisRun, publicationRun } = {}) {
   dataDir = resolve(dataDir);
   mkdirSync(dataDir, { recursive: true });
   const lock = resolve(dataDir, '.runtime.lock');
@@ -60,7 +60,7 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     service.recover();
     if (service.briefingSchedules) void service.briefingSchedules.catchUpMissed().catch(() => {});
 
-    server.on('request', createApp(service, { dist, libraryRun, libraryImportRun, analysisRun, health: { application: 'industry-research', dataIdentity: dataIdentity(dataDir), transport: researcher.transport ?? 'json' } }));
+    server.on('request', createApp(service, { dist, libraryRun, libraryImportRun, analysisRun, publicationRun, health: { application: 'industry-research', dataIdentity: dataIdentity(dataDir), transport: researcher.transport ?? 'json' } }));
     terminalSockets = attachTerminalWebSocket(server, terminals);
   } catch (error) {
     recordTrace(store,'runtime.start_failed',{status:'failed'},'error');

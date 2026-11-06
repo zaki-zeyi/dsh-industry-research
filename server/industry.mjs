@@ -89,7 +89,7 @@ function fileUpdatedAt(file) {
   if (!Number.isFinite(value) || value <= 0) return new Date().toISOString();
   return new Date(value > 1e12 ? value : value * 1000).toISOString();
 }
-async function listDriveFolder(run, app, token, options = {}) {
+export async function listDriveFolder(run = defaultExec, app, token, options = {}) {
   const files = []; let pageToken; let pages = 0;
   do {
     const args = cliArgs(app, ['drive', 'files', 'list', '--folder-token', token, '--as', 'user', '--json', '--page-size', String(importPageSize), ...(pageToken ? ['--page-token', pageToken] : [])]);
@@ -99,7 +99,7 @@ async function listDriveFolder(run, app, token, options = {}) {
     pageToken = data.has_more === false ? null : (data.next_page_token ?? data.page_token ?? null);
     pages++;
   } while (pageToken && pages < Math.ceil(importLimit / importPageSize));
-  return { files: files.slice(0, importLimit), truncated: files.length > importLimit };
+  return { files: files.slice(0, importLimit), truncated: Boolean(pageToken) || files.length > importLimit };
 }
 async function fetchDocumentContent(run, app, docUrl, options = {}) {
   const stdout = await runLarkCli(run, app, cliArgs(app, ['docs', '+fetch', '--doc', docUrl, '--doc-format', 'markdown', '--as', 'user']), options);
