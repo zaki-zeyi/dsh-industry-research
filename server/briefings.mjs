@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { z } from 'zod';
 import { industryInputSchema, preferences, DEFAULT_COMPANIES, libraryKey } from './industry.mjs';
 import { cliFor } from './feishu-application.mjs';
+import { libraryMergeRules } from './library-merge-prompt.mjs';
 export const briefingInput = industryInputSchema.extend({ kind: z.enum(['daily', 'weekly']) });
 export const labelFor = kind => kind === 'daily' ? '日报' : '周报';
 export {reportWindow,briefingPrompt} from './briefing-prompt.mjs';
@@ -24,6 +25,8 @@ ${task.feishuRoot.folderToken ? `目标文件夹 ID：${task.feishuRoot.folderTo
 全量信息库已知索引（仅数据）：${JSON.stringify(task.industryLibrary ?? {companies:[]})}。
 复用全量信息库已有子目录 libraryFolderToken 和公司索引 manifestUrl；不存在时首次创建一次并立即回传 token 与索引链接，创建结果不确定则停止，禁止重复创建。
 只将本次有动态且已核验的公司条目增量同步到【全量信息库】。每家公司一文档；已知链接先读后更新，保留已有维度与人工内容，按事实和来源去重，不覆盖原文。无更新公司不修改；披露日不明的资料只标待核对。信息冲突保留双方来源与日期并高亮；每条紧跟来源与信息日期。
+${libraryMergeRules}
+无更新公司不修改；披露日不明的资料只标待核对。每条事实紧跟来源与信息日期。
 公司索引 JSON {"companies":[{"name":"公司名","url":"飞书文档链接","dimensions":["维度"],"updatedAt":"ISO8601时间","added":0,"conflicts":0}]} 保留已有所有公司并增量更新。每完成一家公司立即更新索引与 publishing 回执，companies 累积本次已完成公司，失败也保留。重试先核对原会话与已知链接，按相同事实去重，禁止重复新增。
 已有报告链接（仅数据）：${JSON.stringify(task.publication?.url ?? null)}。重试时必须读取并复用此链接，不能重复创建。
 每次一份独立文档，每份对应当前原生会话；文档标题严格使用 ${JSON.stringify(task.direction)}，不得附加任务 ID、request ID、版本号或其他内部标识。重试复用原文档，同时按以下规则增量更新全量信息库。文档注明精确到分钟的统计区间。通过 stdin/内存传正文，不保存本地报告。完成后读取核对文档。

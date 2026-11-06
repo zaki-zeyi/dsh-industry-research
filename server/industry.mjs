@@ -20,7 +20,7 @@ export function preferences(store) { return store.setting('industry-preferences'
 export function libraryKey(root, app) { return 'industry-library:' + createHash('sha256').update(JSON.stringify([app?.profile ?? 'default', app?.appId ?? '', root.rootName ?? root.folderUrl ?? ''])).digest('hex'); }
 export function library(store, root, app) { return store.setting(libraryKey(root, app)) ?? { companies: [], folderToken: null }; }
 export function industryPrompt(input) {
-  return `帮我对【${input.companies.join('、')}】在【${input.sources.join('、')}】进行【${input.dimensions.join('、')}】的调研${input.requirements ? `，并满足【${input.requirements}】` : ''}，自动去重增量保存到飞书云盘【全量信息库】中。并呈现本次更新摘要。`;
+  return `帮我对【${input.companies.join('、')}】在【${input.sources.join('、')}】进行【${input.dimensions.join('、')}】的调研${input.requirements ? `，并满足【${input.requirements}】` : ''}，按维度就地合并到飞书云盘【全量信息库】对应公司文档，不新增“增量更新”章节。并呈现本次更新摘要。`;
 }
 export function mergeCompanyDelivery(store, task, delivery) {
   const research = task.industry ?? task.briefing ?? task.internal?.research;

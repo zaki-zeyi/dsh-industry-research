@@ -1,4 +1,5 @@
 import { cliFor } from './feishu-application.mjs';
+import { libraryMergeRules } from './library-merge-prompt.mjs';
 export function industryCloudPrompt(task, meta) {
   const cli = cliFor(task.feishuApp), previous = task.industryLibrary ?? { companies: [] };
   return `${task.prompt}
@@ -11,6 +12,8 @@ ${JSON.stringify({ ...task.industry, prompt: undefined, knownLibrary: previous }
 ${task.feishuRoot.folderToken ? `目标文件夹 ID：${task.feishuRoot.folderToken}。这是根目录，禁止改用其他根目录。` : `根目录名：${JSON.stringify(task.feishuRoot.rootName)}。${task.feishuRoot.creationUncertain ? '先核对原会话的创建结果，结果不确定不得重复创建；提示用户提供文件夹链接。' : '首次创建根目录一次，取得 token 后立即回传 publishing。'}`}
 根目录下使用【全量信息库】子文件夹。${previous.folderToken ? `已有子文件夹 token：${previous.folderToken}，必须复用。` : task.runs?.length > 1 ? '本次为重试，先从原会话结果恢复子文件夹 ID；如果创建结果不确定不得重复创建，回传失败让用户核对。' : '首次创建子文件夹一次，立即把 libraryFolderToken 写入回执，后续任务复用。'}
 每家公司一个文档，标题为公司名称。已知文档必须先用 docs +fetch 读取原文并用 docs +update 增量更新，保留已有条目；同一事实、来源去重，不能覆盖未调研维度或重复建文档。只对无已知文档的公司用 docs +create --parent-token 在全量信息库子目录新建。创建结果不确定时，从原会话已知工具结果恢复链接；找不到则失败，不能盲目重复创建。
+${libraryMergeRules}
+无已知文档的新公司先按维度建立清晰结构，再写入事实；不要先把整段调研摘要写入文档。
 按所选维度分节。每条事实后紧跟原始来源链接（尽可能定位具体位置）和信息日期；缺失或不可访问的资料明确说明，不编造。冲突事实保留双方来源和日期，用醒目的【信息冲突】标记并使用高亮样式（CLI 支持时）。云岫资本图片识别结果关联原图片链接并继续查找相关报道；内部材料仅在可访问时使用。除非选择全网查询，否则优先在所选信源研究。
 全量信息库子目录维护一个【公司索引】飞书文档，正文为 JSON {"companies":[{"name":"公司名","url":"飞书链接","dimensions":["维度"],"updatedAt":"ISO8601时间","conflicts":0,"added":0}]}，保存全部已收录公司。${previous.manifestUrl ? `已知索引：${previous.manifestUrl}，先读取并保留原有公司，再更新。` : '首次创建索引后立即回传 manifestUrl；重试时从会话工具结果恢复该链接，禁止盲目重复创建。'} 每完成一家公司更新此索引；回执带 manifestUrl，供工作台按已知链接读取，无需目录列表权限。
 每完成一家公司便原子更新回执，companies 累积本次已完成的所有公司（仅元信息，无正文），即使后续失败也保留其链接。已有子目录 token 必须始终一致。根目录 folderToken 与子目录 libraryFolderToken 不可混淆。
