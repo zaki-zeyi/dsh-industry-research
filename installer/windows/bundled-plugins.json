@@ -27,6 +27,14 @@
       "homepage": "https://github.com/xmanrui/dsh-im",
       "sourceUrl": "https://registry.npmjs.org/@xmanrui/dsh-im/-/dsh-im-5.10.0.tgz",
       "sha256": "e9518676cf57e4af88fc5a2bf4cc2d838073c579ddc0c6fd256e72ba88339f25"
+    },
+    {
+      "name": "dsh-orb",
+      "version": "0.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/mini-yifan/dsh-orb-cordis",
+      "sourceUrl": "https://github.com/mini-yifan/dsh-orb-cordis/releases/download/plugin-v0.2.0/dsh-orb-0.2.0.tgz",
+      "sha256": "cdf25778e7bea99606a67d04e054c405866f0812e12d6cc30e7270ae28f4c72e"
     }
   ]
 }
