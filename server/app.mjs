@@ -9,6 +9,7 @@ import { existsSync, realpathSync, readFileSync, statSync } from 'node:fs';
 import { z } from 'zod';
 import { ServiceError } from './service.mjs';
 import { prepareInternalMaterial } from './internal-materials.mjs';
+import { traceMiddleware, traceFor, withTrace, traceActions } from './connection-trace.mjs';
 
 export function createApp(service, { dist = resolve('dist'), health = {}, libraryRun, libraryImportRun, analysisRun } = {}) {
   const app = express(); app.disable('x-powered-by');
@@ -22,6 +23,17 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     next();
   });
   app.use(express.json({ limit: '32kb' }));
+  app.use(traceMiddleware(service.store));
+  const telemetryBudget = new Map();
+  app.post('/api/feishu-monitor/events', (req, res, next) => { try {
+    const data = z.object({ traceId:z.string().uuid(), attempt:z.number().int().min(1).max(1000), action:z.enum(traceActions), event:z.enum(['clicked','response','request_failed','rendered','script_error','qr_error']), phase:z.enum(['binding','registration','ui_sync','frontend']), flowId:z.string().uuid().optional(), appId:z.string().regex(/^cli_[A-Za-z0-9]{5,100}$/).optional(), status:z.enum(['started','waiting','completed','failed','bound','unbound','cancelled','expired']).optional() }).strict().parse(req.body);
+    const key=data.traceId, now=Date.now();
+    if(!telemetryBudget.has(key)&&telemetryBudget.size>=256)telemetryBudget.delete(telemetryBudget.keys().next().value);
+    let budget=telemetryBudget.get(key); if(!budget||now-budget.since>=60000){budget={since:now,count:0};telemetryBudget.set(key,budget);}
+    if(budget.count>=60)return res.sendStatus(204); budget.count++;
+    try { withTrace(traceFor(data.traceId,data.attempt,data.action),()=>service.store.runtimeLog('feishu.ui.'+data.event,{phase:data.phase,flowId:data.flowId,appId:data.appId,status:data.status},['request_failed','script_error','qr_error'].includes(data.event)?'warn':'info')); } catch {}
+    res.setHeader('Cache-Control','no-store'); res.sendStatus(204);
+  } catch(e) { next(e); } });
   app.get('/api/runtime-logs', (req, res, next) => { try { const query = z.object({limit:z.coerce.number().int().min(1).max(200).optional(),before:z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()}).parse(req.query); res.setHeader('Cache-Control','no-store'); res.json({items:service.store.runtimeLogs(query)}); } catch(e) { next(e); } });
   app.get('/api/industry/preferences', (_req, res) => res.json(preferences(service.store)));
   app.put('/api/industry/preferences', (req, res, next) => { try { res.json(service.store.saveSetting('industry-preferences', preferencesSchema.parse(req.body))); } catch (e) { next(e); } });
@@ -29,7 +41,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.post('/api/industry/tasks', async (req, res, next) => { try { const key = req.headers['idempotency-key']; if (key) z.string().min(1).max(100).parse(key); res.status(202).json(await service.createAuthorized(companyTaskInput(req.body), key)); } catch (e) { next(e); } });
   app.get('/api/briefings', (req,res) => res.json({items:service.store.list().filter(t => t.briefing && (!req.query.kind || t.briefing.kind === req.query.kind)).map(t => ({id:t.id,direction:t.direction,status:t.status,createdAt:t.createdAt,briefing:t.briefing,stage:t.stage,publication:t.publication,notification:t.notification}))}));
   app.post('/api/briefings', async(req,res,next)=>{try {res.status(202).json(await service.createAuthorized(briefingTask(req.body),req.headers['idempotency-key']));}catch(e){next(e);}});
-  app.post('/api/briefings/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);if(!t.briefing||t.status!=='ready')throw new ServiceError(409,'报告尚未完成');await service.notifications.send(t.id);res.json(service.require(t.id));}catch(e){next(e);}});
+  app.post('/api/briefings/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);if(!t.briefing||t.status!=='ready')throw new ServiceError(409,'报告尚未完成');await service.notifications.send(t.id,{currentUser:true});res.json(service.require(t.id));}catch(e){next(e);}});
   app.get('/api/internal-materials', (_req, res) => res.json({
     items: service.store.list().filter(task => task.internal).map(task => ({
       id: task.id,
@@ -60,7 +72,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     try {
       const task = service.require(req.params.id);
       if (!task.internal || task.status !== 'ready') throw new ServiceError(409, '内部资料解析尚未完成');
-      await service.internalNotifications.send(task.id);
+      await service.internalNotifications.send(task.id,{currentUser:true});
       res.json(service.require(task.id));
     } catch (error) {
       next(error);
@@ -73,16 +85,23 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.post('/api/analysis/tasks', async (req, res, next) => { try { const key = req.headers['idempotency-key']; if (key) z.string().min(1).max(100).parse(key); res.status(202).json(await service.createAuthorized(analysisTaskInput(req.body), key)); } catch (e) { next(e); } });
   app.get('/api/ai-settings', (_req, res) => { if (!service.aiSettings) return res.status(503).json({ error: 'AI 配置尚未启用' }); res.setHeader('Cache-Control', 'no-store'); res.json(service.aiSettings.get()); });
   app.put('/api/ai-settings', (req, res) => { if (!service.aiSettings) return res.status(503).json({ error: 'AI 配置尚未启用' }); try { const input = z.object({ agent: z.enum(['codex', 'dsh']) }).strict().parse(req.body); res.json(service.aiSettings.save(input)); } catch (error) { res.status(400).json({ error: error instanceof z.ZodError ? 'AI 配置字段无效' : error.message }); } });
+  app.get('/api/feishu-monitor/logs', (req, res, next) => { try {
+    const query = z.object({ limit: z.coerce.number().int().min(1).max(200).optional(), before: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(), level: z.enum(['info','warn','error']).optional(), traceId:z.string().uuid().optional() }).strict().parse(req.query);
+    res.setHeader('Cache-Control', 'no-store'); res.json({ items: service.store.runtimeLogs({ ...query, feishu: true }) });
+  } catch (e) { next(e); } });
+  app.post('/api/feishu-monitor/check', async (_req, res, next) => { try {
+    if (!service.binding?.connectionMonitor) throw new ServiceError(503, '当前连接服务不支持检测，请重新加载插件服务');
+    res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.connectionMonitor.check());
+  } catch (e) { next(e); } });
   app.get('/api/feishu-application', async (_req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.applicationInfo()); } catch(e) { next(e); } });
   app.put('/api/feishu-application', async (req, res, next) => { try { if (service.active.size || service.queue.length || service.store.list().some(t => ['queued', 'running'].includes(t.status) || t.publication.status === 'publishing')) throw new ServiceError(409, '有调研或上传正在执行，请完成后再切换飞书应用'); res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.configureApplication(req.body)); } catch(e) { next(e); } });
   function requireIdleBinding() { if (service.active.size || service.queue.length || service.store.list().some(t => ['queued', 'running'].includes(t.status) || t.publication.status === 'publishing')) throw new ServiceError(409, '有调研或上传正在执行，请完成后再重新绑定'); }
   app.get('/api/feishu-registration', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json(service.binding.registration.snapshot()); });
-  app.post('/api/feishu-registration/retry', (req, res, next) => { try { const { flowId } = z.object({ flowId: z.string().uuid() }).strict().parse(req.body); requireIdleBinding(); res.setHeader('Cache-Control', 'no-store'); res.json(service.binding.registration.retrySave(flowId)); } catch (e) { next(e); } });
-  app.post('/api/feishu-registration', (req, res, next) => { try { const input = z.object({ refresh: z.boolean().optional(), replaceApp: z.boolean().optional(), accountRebind: z.boolean().optional() }).strict().parse(req.body ?? {}); requireIdleBinding(); res.setHeader('Cache-Control', 'no-store'); res.json(service.binding.registration.start(input)); } catch(e) { next(e); } });
+  app.post('/api/feishu-registration', (req, res, next) => { try { const input = z.object({ refresh: z.boolean().optional(), repairBot: z.boolean().optional() }).strict().parse(req.body ?? {}); requireIdleBinding(); res.setHeader('Cache-Control', 'no-store'); res.json(service.binding.registration.start(input)); } catch(e) { next(e); } });
   app.delete('/api/feishu-registration', (_req, res, next) => { try { service.binding.registration.cancel(); res.json({ status: 'idle' }); } catch(e) { next(e); } });
   app.get('/api/feishu-registration/qr/:id', (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.type('png').send(service.binding.registration.qr(req.params.id)); } catch(e) { next(e); } });
   app.get('/api/feishu-binding', async (_req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.status()); } catch(e) { next(e); } });
-  app.post('/api/feishu-binding', async (req, res, next) => { try { const input = z.object({ rebind: z.boolean().optional(), auto: z.boolean().optional(), compatibility: z.boolean().optional() }).strict().parse(req.body ?? {}); if (input.rebind) requireIdleBinding(); res.setHeader('Cache-Control', 'no-store'); const flow = await service.binding.start({ rebind: input.rebind, compatibility: input.compatibility }); if (input.auto && !flow.bound) void service.binding.autoComplete?.(flow.flowId); res.json(flow); } catch(e) { next(e); } });
+  app.post('/api/feishu-binding', async (req, res, next) => { try { const input = z.object({ rebind: z.boolean().optional() }).strict().parse(req.body ?? {}); if (input.rebind) requireIdleBinding(); res.setHeader('Cache-Control', 'no-store'); const flow = await service.binding.start({ rebind: input.rebind }); res.json(flow); } catch(e) { next(e); } });
   app.post('/api/feishu-binding/complete', async (req, res, next) => { try { const { flowId } = z.object({ flowId: z.string().uuid() }).strict().parse(req.body); res.json(await service.binding.complete(flowId)); } catch(e) { next(e); } });
   app.get('/api/feishu-binding/qr/:id', (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.type('png').send(service.binding.qr(req.params.id)); } catch(e) { next(e); } });
   app.get('/api/feishu-settings', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json(service.feishuSettings()); });

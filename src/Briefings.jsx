@@ -14,7 +14,7 @@ export function Briefings({kind,config,onGenerate,onSchedule,onOpen,onRetry,onFi
   <p className="card-meta">{t.briefing.window.display}</p>
   {(t.publication.partial||t.publication.noUpdates)&&<div className="company-dimensions briefing-signals">{t.publication.partial&&<span>部分资料获取成功，缺口见文档</span>}{t.publication.noUpdates&&<span>本{kind==='daily'?'日':'周'}无更新</span>}</div>}
   {t.publication.status==='published'&&<a className="briefing-action" href={t.publication.url} target="_blank" rel="noreferrer">打开飞书{name}<ArrowUpRight size={16}/></a>}
-  {t.notification?.status==='sent'&&<p className="card-caption">飞书机器人已通知</p>}
+  {t.notification?.status==='sent'&&<><p className="card-caption">飞书机器人已通知</p>{t.notification.notice&&<p className="card-caption notification-redirect-notice" role="status">{t.notification.notice}</p>}</>}
   {t.notification?.status==='failed'&&<div className="card-alert" role="alert"><AlertCircle size={15}/><span>{t.notification.error}</span><div className="card-alert-actions"><NotificationRetry task={t} base="briefings" onRepair={onFixNotification} onUpdated={value=>setItems(old=>old.map(item=>item.id===value.id?value:item))}/></div></div>}
   <footer><button onClick={()=>onOpen(t)}>AI 会话详情 ↗</button>{['failed','interrupted'].includes(t.status)&&<button onClick={()=>onRetry(t)}>重试</button>}</footer>
 </article>)}</div>{!items.length&&<div className="industry-empty"><h2>暂无{name}记录</h2><p>生成报告后，每份报告和对应 AI 会话都会保存在这里。</p></div>}</section>;

@@ -392,3 +392,5 @@
 
 .runtime-log-row{background:#fff;border:1px solid #dfe5da;border-radius:12px;padding:16px 20px;margin-bottom:12px}.runtime-log-row>div{display:flex;flex-wrap:wrap;gap:12px;align-items:center}.runtime-log-row time,.runtime-log-row span{font-size:13px;color:#68766c}.runtime-log-row pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;margin:10px 0 0;color:#526454}
 .industry-success{margin:15px 25px;padding:13px;background:#edf6ec;color:#3f6947;border:1px solid #cfe2cd;display:flex;align-items:center;gap:9px;font-size:12px;line-height:1.7}.industry-success button{border:0;background:none;color:inherit;margin-left:auto}
+
+.industry-company p.notification-redirect-notice{padding:12px 14px;border:1px solid #dce7d7;border-radius:8px;background:#f0f6ec;color:#426044;line-height:1.7;white-space:normal}

@@ -13,7 +13,7 @@ export function NotificationRetry({ task, base, onUpdated, onRepair }) {
       onUpdated(value);
       if (value.notification?.status === 'failed') {
         if (value.notification.diagnostic?.action === 'repair_bot') onRepair?.(value);
-        else setError(value.notification.error || '通知仍未发送，请稍后重试');
+        else if (!value.notification.error) setError('通知仍未发送，请稍后重试');
       }
     } catch (cause) { setError(cause.message); }
     finally { lock.current = false; setBusy(false); }

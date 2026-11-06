@@ -101,7 +101,7 @@ export function InternalMaterials({ config, onCreate, onOpen, onRetry, onFixNoti
         {task.publication?.minutesUrl && <a className="material-action" href={task.publication.minutesUrl} target="_blank" rel="noreferrer">会议纪要<ArrowUpRight size={15}/></a>}
         {task.publication?.sourceMaterialUrl && <a className="material-action" href={task.publication.sourceMaterialUrl} target="_blank" rel="noreferrer">原始资料<ArrowUpRight size={15}/></a>}
       </div>}
-      {task.notification?.status === 'sent' && <p className="card-caption">飞书机器人已通知</p>}
+      {task.notification?.status === 'sent' && <><p className="card-caption">飞书机器人已通知</p>{task.notification.notice && <p className="card-caption notification-redirect-notice" role="status">{task.notification.notice}</p>}</>}
       {task.notification?.status === 'failed' && <div className="card-alert" role="alert"><AlertCircle size={15}/><span>{task.notification.error}</span><div className="card-alert-actions"><NotificationRetry task={task} base="internal-materials" onRepair={onFixNotification} onUpdated={value=>setItems(old=>old.map(item=>item.id===value.id?value:item))}/></div></div>}
       <footer>
         <button onClick={() => onOpen(task)}>AI 会话详情 ↗</button>

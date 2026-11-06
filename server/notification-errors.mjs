@@ -28,6 +28,20 @@ export function notificationFailure(error) {
     ...(subtype ? { subtype } : {}),
     ...(missingScopes.length ? { missingScopes } : {}),
   };
+  if(error?.code==='BOT_UNAVAILABLE')diagnostic.code='BOT_UNAVAILABLE';
+  if(error?.code==='USER_AUTH_UNAVAILABLE')return{
+    message:'当前任务应用的个人授权未通过验证。请恢复原应用并完成个人授权后重试通知。',
+    diagnostic:{...diagnostic,code:'USER_AUTH_UNAVAILABLE',action:'reauthorize_user'},
+  };
+
+  if (['MISSING_RECIPIENT','RECIPIENT_UNVERIFIED'].includes(error?.code)) return {
+    message:'本任务没有可验证的通知接收账号。请恢复任务原应用和原账号后重试；若任务未保存账号快照，请重新生成报告。',
+    diagnostic:{...diagnostic,code:error.code,action:'check_recipient'},
+  };
+  if (error?.code === 'BINDING_CHANGED') return {
+    message:'当前绑定的飞书账号或应用已发生变化，历史任务不会向旧账号发送通知。请恢复原绑定后重试，或使用当前绑定重新生成报告。',
+    diagnostic:{...diagnostic,code:'BINDING_CHANGED',action:'binding_changed'},
+  };
 
   if (missingScopes.includes('im:message:send_as_bot') || /send_as_bot/i.test(upstream)) {
     return {
