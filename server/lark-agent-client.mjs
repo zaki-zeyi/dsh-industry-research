@@ -4,7 +4,13 @@ import { larkLaunch } from './lark-launch.mjs';
 
 // This file and the launcher are copied together. Resolve configuration relative
 // to the script, while CLI input/output paths remain relative to the caller cwd.
-const { command, args = [] } = JSON.parse(readFileSync(new URL('./lark-agent-config.json', import.meta.url), 'utf8'));
+const { command, args = [], managedFolders } = JSON.parse(readFileSync(new URL('./lark-agent-config.json', import.meta.url), 'utf8'));
+const request = process.argv.slice(2);
+const drive = request.indexOf('drive');
+if (managedFolders && drive >= 0 && (request[drive+1] === '+create-folder' || request[drive+1] === 'files' && ['create_folder','create-folder'].includes(request[drive+2]))) {
+  console.error(JSON.stringify({ok:false,error:{code:'PLATFORM_MANAGED_FOLDERS',message:'存储目录由平台在保存锁内统一解析，请使用保存锁返回的目录 ID，不得自行创建文件夹'}}));
+  process.exit(1);
+}
 try {
   const launch = larkLaunch(command, [...args, ...process.argv.slice(2)]);
   const child = spawn(launch.command, launch.args, { stdio: 'inherit', windowsHide: true,

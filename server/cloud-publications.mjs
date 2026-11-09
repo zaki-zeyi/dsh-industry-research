@@ -1,10 +1,16 @@
 import { createHash } from 'node:crypto';
 import { libraryKey, listDriveFolder } from './industry.mjs';
 import { LibraryRefreshError } from './library-errors.mjs';
+import { matchingFolders, driveToken } from './folder-identity.mjs';
 
 const labels = { daily: '日报', weekly: '周报' };
 const isDocument = file => ['docx', 'doc'].includes(file.type) && /^https:\/\//.test(file.url ?? '');
 const idFor = url => 'cloud-' + createHash('sha256').update(url).digest('hex').slice(0, 24);
+async function readFolders(tokens, read) {
+  const results = [];
+  for (let i = 0; i < tokens.length; i += 4) results.push(...await Promise.all(tokens.slice(i, i + 4).map(read)));
+  return results.flat();
+}
 const timestamp = file => {
   const n = Number(file.modified_time ?? file.created_time);
   return Number.isFinite(n) && n > 0 ? new Date(n > 1e12 ? n : n * 1000).toISOString() : null;
@@ -26,19 +32,15 @@ export async function cloudPublications(service, kind, { refresh = false, run } 
     if (result.truncated) throw new LibraryRefreshError('LIBRARY_TOO_LARGE', '飞书目录过大，本地记录已保留；请缩小目录后刷新');
     return result.files;
   };
-  const child = async (parent, name) => {
-    const matches = (await list(parent)).filter(f => f.type === 'folder' && f.name === name);
-    if (matches.length > 1) throw new LibraryRefreshError('LIBRARY_DUPLICATES', `飞书存在多个同名【${name}】目录，请核对后刷新；本地记录已保留`);
-    return matches[0]?.token;
-  };
-  let folderToken;
+  const children = async (parents, name) => [...new Set(await readFolders(parents, async parent => matchingFolders(await list(parent), name).map(driveToken)))];
+  let folderTokens;
   if (kind === 'internal') {
-    const material = await child(root.folderToken, directoryName);
-    if (material) folderToken = await child(material, '逐字稿');
+    const materials = await children([root.folderToken], directoryName);
+    folderTokens = await children(materials, '逐字稿');
   } else {
-    folderToken = await child(root.folderToken, labels[kind]);
+    folderTokens = await children([root.folderToken], labels[kind]);
   }
-  const files = folderToken ? await list(folderToken) : [];
+  const files = [...new Map((await readFolders(folderTokens, list)).map(file => [file.url ?? file.token, file])).values()];
   const items = files.filter(isDocument).map(file => {
     const title = String(file.name ?? '').trim() || (labels[kind] ?? '内部资料');
     const common = { id: idFor(file.url), remoteOnly: true, direction: title, status: 'ready', createdAt: timestamp(file), publication: { status: 'published', url: file.url } };

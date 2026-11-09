@@ -7,6 +7,7 @@ import { briefingKey, labelFor } from './briefings.mjs';
 import { internalFolderKey } from './internal-materials.mjs';
 import { recordTrace } from './connection-trace.mjs';
 import { classifyFeishuError } from './feishu-monitor.mjs';
+import { preferredFolder } from './folder-identity.mjs';
 
 const failure = (code, message) => Object.assign(new Error(message), { code, status: 409 });
 const tokenOf = file => file.shortcut_info?.target_token ?? file.token;
@@ -18,11 +19,7 @@ const keyFor = (parent, name, app) => 'feishu-directory:' + createHash('sha256')
 ])).digest('hex');
 
 export function uniqueFolder(files, name, knownToken) {
-  const matches = files.filter(f => typeOf(f) === 'folder' && f.name === name);
-  const known = knownToken && matches.find(f => tokenOf(f) === knownToken);
-  if (known) return known;
-  if (matches.length > 1) throw failure('FOLDER_AMBIGUOUS', `飞书目录【${name}】存在多个同名文件夹，请先整理或指定唯一目录后重试；未新建或删除任何同名文件夹`);
-  return matches[0];
+  return preferredFolder(files, name, knownToken);
 }
 
 // One resolver per runtime. Its queue also serializes different profiles that
