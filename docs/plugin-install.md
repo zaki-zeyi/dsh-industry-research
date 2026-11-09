@@ -22,10 +22,11 @@
 | 商标 Branding `dsh-brand` | 0.2.0-rc.6 | 设置 → 品牌 Branding |
 | 插件市场 `dshmarket` | 1.73.11 | 设置 → 插件市场（DSH 0.2.0）或插件页 → 插件市场（DSH 0.2.1+） |
 | IM 机器人 `@xmanrui/dsh-im` | 5.10.0 | 侧边栏「IM机器人」或设置 → IM机器人 |
+| 悬浮球 `dsh-orb` | 0.2.0 | 随 DSH 启动的悬浮球插件 |
 
 如果电脑上已经有同名插件，安装器会保留用户已有依赖和配置；只有本安装包实际新增的插件会记录在 `%LOCALAPPDATA%\DSH Industry Research\installed-plugins.json`，卸载时也只移除这些插件。
 
-悬浮球项目 `deepseek-harness-orb` 是独立的 DeepSeek Orb 桌面应用，不是 DSH 插件，不能加入 DSH profile 的 bundle 列表，也不会被本安装包的插件预装流程安装。
+预装的悬浮球来自 `mini-yifan/dsh-orb-cordis`，包名为 `dsh-orb`，是可安装的 DSH bundle 插件。它与早期独立桌面应用 `deepseek-harness-orb` 不同。安装包固定使用 0.2.0 版本及清单中的 SHA256；行研插件本身不依赖悬浮球。
 
 默认数据目录 `~/.dsh/industry-research`，可通过插件 dataDir 覆盖。它与原 `dsh-research-workbench` 数据隔离，升级不会删除原插件的任务或凭据。会话使用标准模式和宿主完整访问预设。二维码与授权由用户本人完成。
 

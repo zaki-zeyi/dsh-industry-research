@@ -31,6 +31,7 @@ DSH 行研工作台 Windows 一键安装包
 * 商标 Branding（dsh-brand）
 * 插件市场（dshmarket）
 * IM 机器人（@xmanrui/dsh-im，支持飞书、微信、企业微信、钉钉、QQ、Slack、Telegram、Discord 等）
+* 悬浮球（dsh-orb 0.2.0，来自 mini-yifan/dsh-orb-cordis）
 
 如果电脑上已经安装过同名插件，安装器会保留用户已有的插件来源和配置，不覆盖它们。
 
@@ -40,7 +41,7 @@ DSH 行研工作台 Windows 一键安装包
 * 插件市场：DSH 设置 → 插件 → 插件市场
 * IM 机器人：DSH 设置 → IM机器人
 
-“悬浮球”项目不是 DSH 插件，而是独立的 DeepSeek Orb 桌面应用，无法作为插件挂载到官方 DSH 中。
+预装的 dsh-orb 是可挂载到官方 DSH 的独立 bundle 插件，与早期独立桌面应用 DeepSeek Orb 不同。行研工作台本身不依赖它；已有同名插件时保留用户当前来源和配置。
 
 如果 Windows 提示“Windows 已保护你的电脑”，请点击“更多信息”，再点击“仍要运行”。这是因为本安装包尚未使用 Windows 代码签名证书；内部发放时属于正常提示。
 
