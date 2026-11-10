@@ -49,10 +49,10 @@ test('已绑定后显示账号信息，更换应用与重新绑定使用独立�
   await expect(entryActions.getByRole('button', { name: '重新绑定', exact: true })).toBeVisible();
   await entryActions.getByRole('button', { name: '重新绑定', exact: true }).click();
   await expect.poll(() => registrationPosts.length).toBe(1);
-  expect(registrationPosts[0]).toEqual({ refresh: false, replaceApp: true, accountRebind: true });
-  await expect(page.getByRole('heading', { name: '重新绑定飞书账号并应用', exact: true })).toBeVisible();
-  await expect(page.getByRole('link', { name: '打开飞书重新绑定页面' })).toBeVisible();
-  const rebindQr = await page.getByRole('img', { name: '飞书重新绑定与应用绑定二维码' }).getAttribute('src');
+  expect(registrationPosts[0]).toEqual({ refresh: false });
+  await expect(page.getByRole('heading', { name: '扫码登录并绑定应用', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: '打开飞书应用绑定页' })).toBeVisible();
+  const rebindQr = await page.getByRole('img', { name: '飞书账号登录与应用绑定二维码' }).getAttribute('src');
   await page.screenshot({ path: 'artifacts/feishu-account-rebind.png', fullPage: true });
 
   await page.getByRole('button', { name: '取消', exact: true }).click();
@@ -60,9 +60,9 @@ test('已绑定后显示账号信息，更换应用与重新绑定使用独立�
   await expect(page.getByRole('dialog').getByRole('button', { name: '绑定飞书', exact: true })).toHaveCount(0);
   await page.getByRole('dialog').getByRole('button', { name: '更换应用', exact: true }).click();
   await expect.poll(() => registrationPosts.length).toBe(2);
-  expect(registrationPosts[1]).toEqual({ refresh: false, replaceApp: true, accountRebind: false });
-  await expect(page.getByRole('heading', { name: '更换飞书应用', exact: true })).toBeVisible();
-  const replaceQr = await page.getByRole('img', { name: '飞书更换应用二维码' }).getAttribute('src');
+  expect(registrationPosts[1]).toEqual({ refresh: false });
+  await expect(page.getByRole('heading', { name: '扫码登录并绑定应用', exact: true })).toBeVisible();
+  const replaceQr = await page.getByRole('img', { name: '飞书账号登录与应用绑定二维码' }).getAttribute('src');
   expect(replaceQr).not.toBe(rebindQr);
   await page.screenshot({ path: 'artifacts/feishu-app-replace.png', fullPage: true });
 });
@@ -183,14 +183,15 @@ test('应用登记完成后立即发起个人授权，不退回到旧状态错�
 
   await page.goto('/');
   await page.getByRole('button', { name: '重新绑定', exact: true }).click();
-  await expect(page.getByRole('img', { name: '飞书重新绑定与应用绑定二维码' })).toBeVisible();
+  await expect(page.getByRole('img', { name: '飞书账号登录与应用绑定二维码' })).toBeVisible();
 
   registrationCompleted = true;
   await expect.poll(() => bindingPosts.length).toBe(1);
-  expect(bindingPosts[0]).toEqual({ rebind: false, auto: true });
+  expect(bindingPosts[0]).toEqual({ rebind: true });
   await expect(page.getByRole('img', { name: '绑定飞书授权二维码' })).toBeVisible();
-  await expect(page.getByRole('dialog')).toContainText('扫码后会自动完成授权，并展示绑定的账号和应用信息');
+  await expect(page.getByRole('dialog')).toContainText('点击“我已授权”');
   bindingMode = 'bound';
+  await page.getByRole('button',{name:'我已授权',exact:true}).click();
   await expect(page.getByRole('dialog')).toContainText('已绑定飞书：原飞书账号');
   await expect(page.getByRole('dialog').getByRole('button', { name: '更换应用', exact: true })).toBeVisible();
   await expect(page.getByRole('dialog').getByRole('button', { name: '重新绑定', exact: true })).toBeVisible();
@@ -198,102 +199,33 @@ test('应用登记完成后立即发起个人授权，不退回到旧状态错�
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
-test('已有有效授权二维码时重新打开只恢复流程，不重复发起绑定', async ({ page }) => {
-  const posts = [];
-  const activeState = {
-    bound: false,
-    available: true,
-    appId: 'cli_fixture123',
-    appName: '测试行研应用',
-    flowId: '44444444-4444-4444-8444-444444444444',
-    authorizationUrl: 'https://accounts.feishu.cn/device?code=active',
-    expiresAt: future(),
-    autoCompleting: true,
-    recovery: {
-      code: 'LARK_DPOP_KEY_UNAVAILABLE',
-      action: 'authorize',
-      automatic: true,
-      message: '本机飞书登录密钥不可用，将自动重新发起扫码授权；完成扫码后会自动恢复。',
-    },
-  };
-  await page.route('**/api/feishu-binding**', async route => {
-    const url = new URL(route.request().url());
-    if (url.pathname.includes('/qr/')) return route.fulfill({ status: 200, contentType: 'image/png', body: png });
-    if (route.request().method() === 'POST') posts.push(route.request().postDataJSON());
-    return route.fulfill({ json: activeState });
-  });
-
-  await page.goto('/');
-  await page.getByRole('button', { name: '更新全量信息库', exact: true }).first().click();
-  await expect(page.getByRole('img', { name: '绑定飞书授权二维码' })).toBeVisible();
-  await page.waitForTimeout(1500);
-  expect(posts).toEqual([]);
-  await expect(page.getByRole('dialog')).toContainText('扫码后会自动完成授权，并展示绑定的账号和应用信息');
+test('已有个人授权二维码可手动确认，打开弹窗不重复交换device code',async({page})=>{
+ let posts=0;const active={bound:false,available:true,appId:'cli_active123',flowId:'44444444-4444-4444-8444-444444444444',authorizationUrl:'https://accounts.feishu.cn/device?code=active',expiresAt:future()};
+ await page.route('**/api/feishu-binding**',route=>{if(route.request().url().includes('/qr/'))return route.fulfill({contentType:'image/png',body:png});if(route.request().method()==='POST')posts++;return route.fulfill({json:active});});
+ await page.route('**/api/feishu-registration**',route=>route.fulfill({json:{status:'idle'}}));
+ await page.goto('/');await page.getByRole('button',{name:'绑定飞书',exact:true}).click();await page.getByRole('button',{name:'取消',exact:true}).click();
+ await expect(page.getByRole('img',{name:'绑定飞书授权二维码',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'我已授权',exact:true})).toBeVisible();expect(posts).toBe(0);
 });
 
-test('插件内提供仅供当前profile使用的Bearer兼容登录', async ({ page }) => {
-  const posts = [];
-  const unavailable = {
-    bound: false,
-    available: true,
-    appId: 'cli_fixture123',
-    appName: '测试行研应用',
-    recovery: {
-      code: 'LARK_DPOP_KEY_UNAVAILABLE',
-      action: 'authorize',
-      automatic: true,
-      message: '本机飞书登录密钥不可用，将自动重新发起扫码授权；完成扫码后会自动恢复。',
-    },
-  };
-  const compatibilityFlow = {
-    ...unavailable,
-    flowId: '55555555-5555-4555-8555-555555555555',
-    authorizationUrl: 'https://accounts.feishu.cn/device?code=compatibility',
-    expiresAt: future(),
-    autoCompleting: true,
-    compatibilityMode: true,
-  };
-  await page.route('**/api/feishu-binding**', async route => {
-    const url = new URL(route.request().url());
-    if (url.pathname.includes('/qr/')) return route.fulfill({ status: 200, contentType: 'image/png', body: png });
-    if (route.request().method() === 'POST') {
-      const body = route.request().postDataJSON();
-      posts.push(body);
-      return route.fulfill({ json: body.compatibility ? compatibilityFlow : unavailable });
-    }
-    return route.fulfill({ json: unavailable });
-  });
-
-  await page.goto('/');
-  await page.getByRole('button', { name: '更新全量信息库', exact: true }).first().click();
-  await expect(page.getByRole('button', { name: '使用兼容登录修复', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: '使用兼容登录修复', exact: true }).click();
-  await expect.poll(() => posts.some(body => body.compatibility === true)).toBe(true);
-  await expect(page.getByRole('img', { name: '绑定飞书授权二维码' })).toBeVisible();
+test('授权异常通过手动重新获取二维码恢复，不自动更改登录方式',async({page})=>{
+ const posts=[];const active={bound:false,available:true,appId:'cli_manual123',flowId:'55555555-5555-4555-8555-555555555555',authorizationUrl:'https://accounts.feishu.cn/device?code=manual',expiresAt:future()};
+ await page.route('**/api/feishu-binding**',route=>{if(route.request().url().includes('/qr/'))return route.fulfill({contentType:'image/png',body:png});if(route.request().method()==='POST'){posts.push(route.request().postDataJSON());return route.fulfill({json:active});}return route.fulfill({json:{bound:false,available:true,appId:'cli_manual123',error:'请重新授权'}});});
+ await page.route('**/api/feishu-registration**',route=>route.fulfill({json:{status:'idle'}}));
+ await page.goto('/');await page.getByRole('button',{name:'绑定飞书',exact:true}).click();await page.getByRole('button',{name:'取消',exact:true}).click();expect(posts).toEqual([]);
+ await page.getByRole('button',{name:'重新获取个人授权二维码',exact:true}).click();await expect(page.getByRole('img',{name:'绑定飞书授权二维码',exact:true})).toBeVisible();expect(posts).toEqual([{rebind:true}]);await expect(page.getByRole('button',{name:'我已授权',exact:true})).toBeVisible();
 });
 
-
-test('凭据保存失败可在原流程重试，无需再获取扫码二维码',async({page})=>{
- let saves=0,registrations=0;
- const flow={flowId:'99999999-9999-4999-8999-999999999999',status:'failed',canRetrySave:true,phase:'credential_storage',error:'本机保存失败',expiresAt:new Date(Date.now()+600000).toISOString()};
- await page.route('**/api/feishu-registration',route=>{if(route.request().method()==='POST')registrations++;return route.fulfill({json:saves?{...flow,status:'completed'}:flow});});
- await page.route('**/api/feishu-registration/retry',route=>{saves++;expect(route.request().postDataJSON()).toEqual({flowId:flow.flowId});return route.fulfill({json:{...flow,status:'saving'}});});
- const bound={bound:true,available:true,appId:'cli_fixture123',appName:'测试行研应用',userName:'原飞书账号',notificationReady:true};
- await page.route('**/api/feishu-binding',route=>route.fulfill({json:bound}));
- await page.goto('/');await page.getByRole('button',{name:'更换应用',exact:true}).click();
- await page.getByRole('button',{name:'重试保存，无需扫码',exact:true}).click();
- await expect.poll(()=>saves).toBe(1);await expect(page.getByRole('dialog')).toContainText('已绑定飞书：原飞书账号');expect(registrations).toBe(1);
+test('保存失败保留错误，用户重新获取应用二维码后产生新流程',async({page})=>{
+ const posts=[];const failure={status:'failed',flowId:'99999999-9999-4999-8999-999999999999',error:'本机保存失败'};
+ const next={status:'awaiting_scan',flowId:'88888888-8888-4888-8888-888888888888',authorizationUrl:'https://open.feishu.cn/page/cli?user_code=retry',expiresAt:future()};
+ await page.route('**/api/feishu-registration**',route=>{if(route.request().url().includes('/qr/'))return route.fulfill({contentType:'image/png',body:png});if(route.request().method()==='POST')posts.push(route.request().postDataJSON());return route.fulfill({json:posts.length>1?next:failure});});
+ await page.route('**/api/feishu-binding',route=>route.fulfill({json:{bound:true,available:true,appId:'cli_fixture123',userName:'原账号'}}));
+ await page.goto('/');await page.getByRole('button',{name:'更换应用',exact:true}).click();await expect(page.getByRole('alert')).toContainText('本机保存失败');await page.getByRole('button',{name:'重新获取应用绑定二维码',exact:true}).click();await expect(page.getByRole('img',{name:'飞书账号登录与应用绑定二维码',exact:true})).toBeVisible();await expect(page.getByRole('alert')).toHaveCount(0);expect(posts).toEqual([{refresh:false},{refresh:true}]);
 });
 
-
-test('更换应用前先补充原账号身份授权，通过后才生成应用选择二维码',async({page})=>{
- let reads=0,identityReady=false,registrationPosts=0;
- const bound={bound:true,available:true,appId:'cli_old123',appName:'旧应用',userName:'原账号'};
- const auth={bound:false,available:true,appId:'cli_old123',flowId:'66666666-6666-4666-8666-666666666666',authorizationUrl:'https://accounts.feishu.cn/device?code=fixture',expiresAt:new Date(Date.now()+600000).toISOString(),autoCompleting:true};
- await page.route('**/api/feishu-binding',route=>{if(route.request().method()==='POST')return route.fulfill({json:auth});reads++;return route.fulfill({json:reads===1||identityReady?bound:{...auth,recovery:{code:'LARK_SCOPE_MISSING',action:'authorize',automatic:true,message:'请补充账号身份权限'}}});});
- await page.route('**/api/feishu-binding/qr/*',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGQAAAABJRU5ErkJggg==','base64')}));
- await page.route('**/api/feishu-registration',route=>{if(route.request().method()==='POST')registrationPosts++;return route.fulfill({json:{status:'failed',flowId:'55555555-5555-4555-8555-555555555555',error:'应用选择测试',expiresAt:new Date(Date.now()+600000).toISOString()}});});
- await page.goto('/');await page.getByRole('button',{name:'更换应用',exact:true}).click();
- await expect(page.getByRole('img',{name:'绑定飞书授权二维码'})).toBeVisible();expect(registrationPosts).toBe(0);
- identityReady=true;await expect.poll(()=>registrationPosts).toBe(1);await expect(page.getByRole('heading',{name:'更换飞书应用',exact:true})).toBeVisible();
+test('更换应用直接进入应用登记，登记前不自动发起个人授权',async({page})=>{
+ let personalPosts=0,registrations=0;
+ await page.route('**/api/feishu-binding',route=>{if(route.request().method()==='POST')personalPosts++;return route.fulfill({json:{bound:true,available:true,appId:'cli_old123',userName:'原账号'}});});
+ await page.route('**/api/feishu-registration**',route=>{if(route.request().url().includes('/qr/'))return route.fulfill({contentType:'image/png',body:png});if(route.request().method()==='POST')registrations++;return route.fulfill({json:{status:'awaiting_scan',flowId:'77777777-7777-4777-8777-777777777777',authorizationUrl:'https://open.feishu.cn/page/cli?user_code=replace',expiresAt:future()}});});
+ await page.goto('/');await page.getByRole('button',{name:'更换应用',exact:true}).click();await expect(page.getByRole('heading',{name:'扫码登录并绑定应用',exact:true})).toBeVisible();await expect(page.getByRole('img',{name:'飞书账号登录与应用绑定二维码',exact:true})).toBeVisible();expect(registrations).toBe(1);expect(personalPosts).toBe(0);
 });

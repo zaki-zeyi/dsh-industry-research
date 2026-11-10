@@ -14,7 +14,7 @@
 
 - 默认 17 家公司、5 个维度、16 个信源，支持全网查询与自定义；新增维度和信源持久保存。
 - 编辑任务 Prompt，绑定飞书后启动 DSH 标准模式原生会话；所有任务共享插件工作区。
-- “重新绑定”要求登录另一个飞书账号，并选择或创建该账号可管理的应用；“更换应用”保持当前账号不变。目录缓存按应用和个人账号隔离。
+- “更换应用”和“重新绑定”均重新进入应用登记，随后扫码完成个人授权并点击“我已授权”。个人授权账号须与本次登记账号一致；换账号时先重新登记对应应用。目录缓存按应用和个人账号隔离。
 - 工作台保留“绑定飞书”“更换应用”“重新绑定”三个独立入口，分别用于当前绑定、同账号换应用和换账号重绑，并各自生成二维码。
 - 飞书根目录下建立「全量信息库」，一家公司一份文档。向 Agent 提供已有文档链接并要求完整读取，按维度将事实识别为重复、补充、状态更新、冲突或新增后原地合并；重复不新增段落，补充保留全部来源，不同时点并存，冲突并列标注。逐条引用来源和日期。
 - 单次调研超过 30 分钟仍未完成则失败，保留已完成文档和会话记录。
@@ -33,7 +33,7 @@
 
 PRD1814 要求 DSH 在定时发送时间关闭时，服务重启后补发最近一次错过的日报或周报，并补发对应的飞书机器人消息。补发按周期幂等，已有任务不重复创建；服务正常运行但用户修改配置时，已经过去的发送时间不会意外补跑。
 
-日报/周报页签分别提供「手动生成」和「定时生成」入口。定时弹窗与手动任务共用公司、维度、信源、自定义配置及可编辑 Prompt；分别保存，互不覆盖。默认日报每天 09:00、周报每周五 09:00，可修改并启用。自定义 Prompt 中的 {{时间范围}} 在执行时替换。通过官方 DSH Schedule 服务持久化定时任务；到点由宿主唤醒调度会话，为每期创建独立报告会话。同一天同类定时触发幂等。宿主需运行并配置可用模型与飞书授权。插件不依赖第三方自动化插件。
+日报/周报页签分别提供「手动生成」和「定时生成」入口。定时弹窗与手动任务共用公司、维度、信源、自定义配置及可编辑 Prompt；分别保存，互不覆盖。默认日报每天 09:00、周报每周五 09:00，可修改并启用。自定义 Prompt 中的 {{时间范围}} 在执行时替换。通过官方 DSH Schedule 服务持久化定时任务；到点由宿主唤醒调度会话，为每期创建独立报告会话。同一天同类定时触发幂等。宿主需运行并配置可用模型与飞书授权，并启用官方 Schedule 服务（默认 Web composition 不包含，可安装官方 dsh-experimental-schedule-bundle）。插件仅借用该服务，不占有共享组件。
 
 ## 多会话并行（PRD815）
 
@@ -66,51 +66,7 @@ npm run plugin:pack
 
 `acceptance` 包含构建、业务/API 回归与浏览器验收。`test:native-host` 启动隔离的真实 DSH 宿主，模型和飞书交付使用本机测试夹具，不调用外部模型或修改真实飞书文档。
 
-## 0.8.4 飞书绑定恢复
-
-云盘目录列表权限 `space:document:retrieve` 改为仅用于首次发现公司索引，不再阻塞扫码绑定和调研。已经保存过公司索引的用户，「保存设置并导入」会直接读取索引，不需要目录列表权限。修复了设置飞书根目录链接后本地公司库索引变化、已有公司显示为 0 的问题；扫码等待期间客户端提前返回 `authorization_pending` 时会自动续查，不会让二维码失效。如果扫码已完成但界面仍停留在“正在校验账号并提交绑定”，下次状态检查会依据个人 token 的授权时间自动补提交，无需再次扫码。二维码仍使用临时工作目录内的相对路径 `./qrcode.png` 并在展示前校验 PNG。
-
 ## 安装
-
-Windows 10/11 x64 用户优先使用一键安装包：
-
-- `artifacts/DSH-Industry-Research-Windows-Setup-v0.8.4-x64.exe`
-
-安装器会在开始前检查系统：仅允许 Windows 10/11 x64。32 位 Windows 10 和 Windows 11 ARM64 会被明确阻止；官方 DeepSeek Harness 桌面端目前没有 32 位构建，不能只靠修改安装脚本增加 x86 支持。
-
-从 `v0.8.2` 起，安装器采用标准 Windows 安装规范：重复双击只会保留一个安装窗口，安装与卸载不能并发；安装完成后会出现在“设置 > 应用 > 已安装的应用”，并生成标准 `Uninstall.exe`。支持 `/S` 静默安装和静默卸载，失败时返回非零退出码。
-
-安装器会先安装官方 DeepSeek Harness（未安装时），再预装并启用行研工作台和 3 个精选插件，无需 Node.js、npm 或手动添加插件：
-
-- 商标 Branding `dsh-brand@0.2.0-rc.6`
-- 插件市场 `dshmarket@1.73.11`
-- IM 机器人 `@xmanrui/dsh-im@5.10.0`（飞书、微信、企业微信、钉钉、QQ、Slack、Telegram、Discord 等）
-
-安装包内附未修改的官方 DeepSeek Harness `0.2.0-rc.2` 安装器；已有 DSH 设置、账号和调研数据会保留。如果已有同名插件，安装器会保留用户当前的插件来源，不覆盖其配置。悬浮球项目是独立的 DeepSeek Orb 桌面应用，不是 DSH 插件，因此不在一键安装包的插件列表中。
-
-运行 `npm run plugin:pack` 后生成：
-
-- `artifacts/dsh-industry-research-0.8.4-desktop.zip`
-- `artifacts/dsh-industry-research-0.8.4.tgz`
-- `artifacts/dsh-industry-research-0.8.4/` 可直接安装目录
-
-维护者可依次运行 `npm run plugin:pack`、`npm run bundle:plugins`、`npm run bundle:windows` 重新生成 Windows 一键安装包。`bundle:plugins` 会下载 `installer/windows/bundled-plugins.json` 中固定版本的插件包并校验 SHA256。需要本机已有官方 DSH 安装器、NSIS，并可通过 `DSH_DESKTOP_INSTALLER` 和 `MAKENSIS` 覆盖默认路径。
-
-在 DSH 桌面版「添加插件」中填写上述解压目录的绝对路径，按宿主提示启用或重新加载。Windows 和 macOS 使用同一个 ZIP；网页版可以使用 DSH CLI 安装 tgz。详见 [安装说明](docs/plugin-install.md)。
-
-公开仓库：[zaki-zeyi/dsh-industry-research](https://github.com/zaki-zeyi/dsh-industry-research)。
-
-在 DSH「添加插件」中填写仓库地址即可安装。默认 `release` 分支包含预构建页面和完整生产依赖，无需执行安装脚本；开发源码位于 `main` 分支。
-
-```text
-https://github.com/zaki-zeyi/dsh-industry-research
-```
-
-## 验证边界
-
-自动测试验证配置持久化、宿主会话、交付回执、公司/友商报告索引、错误恢复与界面交互。真实扫码授权、企业审批、付费信源可访问性和实际调研内容质量需要真实环境验收。Agent 声称完成时须交付公司或友商报告的真实飞书链接；平台校验回执结构、来源范围及链接稳定性，不逐条审计远端事实。条目级合并、图表和文档内高亮由 Agent 执行。
-
-[用户使用指南](docs/user-guide.md) · [PRD 1917 快照](docs/prd-update-1917.md) · [友商分析 PRD 449](docs/prd-lightweight-449.md) · [架构](docs/architecture.md) · [飞书授权自动恢复](docs/feishu-auth-recovery.md) · [验收记录](docs/acceptance-report.md)## 安装
 
 当前源码版本为 **0.8.13**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
@@ -140,4 +96,4 @@ dsh plugin --profile <profile> add <tgz绝对路径>
 
 自动测试验证配置持久化、宿主会话、交付回执、公司/友商报告索引、错误恢复与界面交互。真实扫码授权、企业审批、付费信源可访问性和实际调研内容质量需要真实环境验收。Agent 声称完成时须交付公司或友商报告的真实飞书链接；平台校验回执结构、来源范围及链接稳定性，不逐条审计远端事实。条目级合并、图表和文档内高亮由 Agent 执行。
 
-[用户使用指南](docs/user-guide.md) · [PRD 1917 快照](docs/prd-update-1917.md) · [友商分析 PRD 449](docs/prd-lightweight-449.md) · [架构](docs/architecture.md) · [飞书授权自动恢复](docs/feishu-auth-recovery.md) · [验收记录](docs/acceptance-report.md)
+[用户使用指南](docs/user-guide.md) · [PRD 1917 快照](docs/prd-update-1917.md) · [友商分析 PRD 449](docs/prd-lightweight-449.md) · [架构](docs/architecture.md) · [飞书连接与恢复](docs/feishu-auth-recovery.md) · [验收记录](docs/acceptance-report.md)

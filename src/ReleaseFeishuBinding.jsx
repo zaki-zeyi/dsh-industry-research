@@ -57,7 +57,7 @@ function Registration({ onClose, onSaved, trace, repairBot = false, onLocateTask
   const api=(path,body,method='POST')=>tracedConnectionRequest(path,body,method,trace);
   async function receive(value) {
     if (!live.current) return;
-    setState(value);
+    setState(value); setError('');
     if(lastStatus.current!==value.status){lastStatus.current=value.status;connectionEvent(trace,'response','registration',{...value,status:value.status==='awaiting_scan'?'waiting':value.status});}
     if (value.status === 'completed' && !done.current) { done.current = true; await onSaved(); }
   }

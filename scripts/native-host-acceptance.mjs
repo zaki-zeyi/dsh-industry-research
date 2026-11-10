@@ -56,6 +56,7 @@ const model = createServer(async (req, res) => {
 }); await new Promise(r => model.listen(0, '127.0.0.1', r));
 const probe = createServer(); await new Promise(r => probe.listen(0, '127.0.0.1', r)); const port = probe.address().port; await new Promise(r => probe.close(r));
 writeFileSync(resolve(dir, 'test-patch.json'), JSON.stringify([
+  { insert: [{ id: 'schedule', name: '@deepseek-ai/dsh-schedule' }] },
   { id: 'dsh-industry-research', config: { dataDir: resolve(dir, 'workbench') } },
   { id: 'agent-preset-registry', config: { default: 'cordis' } },
   { id: 'agent-default-model', config: { provider: 'deepseek-official', model: 'deepseek-flash' } },
@@ -95,7 +96,7 @@ try {
     const launchURL = /dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s]+)/.exec(log)?.[1] ?? hostURL;
     let blockStartup = true; await page.route('**/industry-research/status', route => blockStartup ? new Promise(() => {}) : route.continue());
     await page.goto(launchURL);
-    const preview = page.getByRole('button', { name: 'Continue', exact: true }); try { await preview.waitFor({ state: 'visible', timeout: 5000 }); await preview.click(); } catch {}
+    const preview = page.getByRole('button', { name: /^(Continue|继续)$/, exact: true }); try { await preview.waitFor({ state: 'visible', timeout: 5000 }); await preview.click(); } catch {}
     await page.getByRole('button', { name: '行研工作台', exact: true }).click({ timeout: 25000 });
     await page.getByRole('alert').filter({ hasText: '连接宿主超时' }).waitFor({ timeout: 12000 }); blockStartup = false; await page.getByRole('button', { name: '重新连接工作台', exact: true }).click();
     const workbench = page.frameLocator('iframe[title="行研工作台"]');

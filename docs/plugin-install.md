@@ -54,3 +54,7 @@ node scripts/git-install-acceptance.mjs --pnpm-cli <宿主pnpm入口> --expected
 ```
 
 macOS CI 运行包安装及浏览器验收，不等同于真实 macOS 桌面应用点击验收。真实飞书授权、模型调研、音视频转写和机器人消息需要实际环境单独验收。
+
+## 官方定时服务前置条件
+
+定时日报/周报借用宿主的官方 Schedule 服务。DSH 0.2.0-rc.2 默认 Web composition 未加载此服务；需由宿主安装并启用官方 `@deepseek-ai/dsh-experimental-schedule-bundle`（或等价官方Schedule配置）。例如：`dsh plugin --profile <profile> add @deepseek-ai/dsh-experimental-schedule-bundle`。行研插件不注册或占有共享schedule组件。缺少服务时明确返回503；手动调研、报告与飞书连接仍可使用。隔离真实宿主验收显式加载官方Schedule，与生产插件包所有权分离。

@@ -101,7 +101,7 @@ test('PRD1951 已绑定也可并发幂等重新绑定，新二维码替换旧流
     assert.ok(!JSON.stringify(fresh).includes('private-'));assert.equal((await binding.complete(fresh.flowId)).userName,'新账号');assert.equal((await binding.status()).userName,'新账号');assert.ok(!calls.some(a=>a.includes('logout')));
   }finally{binding.close();}
 });
-test('PRD1951 重新绑定生成失败不会注销原账号，确认中重复请求恢复同一流程',async()=>{
+test('PRD1951 重新绑定生成失败不会注销原账号，确认中重复请求返回409并保留当前流程',async()=>{
  let fail=true,finish;const binding=new FeishuBinding({run:async (args, options = {})=>{
   if(args[1]==='status')return status(true);
   if(args[1]==='qrcode'){if(fail)throw new Error('private-error');writeFileSync(resolve(options.cwd ?? '.',args.at(-1)),png);return '';}
@@ -110,7 +110,7 @@ test('PRD1951 重新绑定生成失败不会注销原账号，确认中重复请
  }});
  try{
   await assert.rejects(binding.start({rebind:true}),e=>e.status===503&&!e.message.includes('private'));assert.equal((await binding.status()).bound,true);
-  fail=false;const flow=await binding.start({rebind:true});const completed=binding.complete(flow.flowId);const duplicate=await binding.start({rebind:true});assert.equal(duplicate.flowId,flow.flowId);assert.equal(duplicate.autoCompleting,false);assert.equal(binding.flow.id,flow.flowId);finish();assert.equal((await completed).bound,true);
+  fail=false;const flow=await binding.start({rebind:true});const completed=binding.complete(flow.flowId);await assert.rejects(binding.start({rebind:true}),e=>e.status===409);assert.equal(binding.flow.id,flow.flowId);finish();assert.equal((await completed).bound,true);
  }finally{binding.close();}
 });
 
@@ -138,72 +138,20 @@ test('PRD1990 默认应用在授权途中变更时不误报绑定成功',async()
  try{const flow=await binding.start();await assert.rejects(binding.complete(flow.flowId),e=>e.status===409&&/应用已发生变化/.test(e.message));}finally{binding.close();}
 });
 
-test('本机DPoP或用户授权失效时返回可自动执行的恢复动作',async()=>{
- let result={
-  appId:'cli_default123',
-  dpopKeyStatus:'missing',
-  identities:{
-   bot:{status:'ready',available:true},
-   user:{status:'missing',available:false,tokenStatus:'needs_refresh',message:'DPoP key unavailable or inconsistent',scope:requiredScopes.join(' ')},
-  },
- };
- const binding=new FeishuBinding({run:async()=>result});
- try{
-  let state=await binding.status();
-  assert.equal(state.bound,false);
-  assert.deepEqual(state.recovery,{
-   code:'LARK_DPOP_KEY_UNAVAILABLE',
-   action:'authorize',
-   automatic:true,
-   message:'本机飞书登录密钥不可用，将自动重新发起扫码授权；完成扫码后会自动恢复。',
-  });
-  result={...result,dpopKeyStatus:'available',identities:{...result.identities,user:{...result.identities.user,available:true,verified:true,tokenStatus:'valid'}}};
-  state=await binding.status();assert.equal(state.bound,true);
- }finally{binding.close();}
+test('授权失效时报告未绑定，由用户手动发起扫码，状态检查不修改凭据',async()=>{
+  const calls=[];let valid=false;const binding=new FeishuBinding({run:async args=>{calls.push(args);return {appId:'cli_default123',dpopKeyStatus:valid?'available':'missing',identities:{user:{available:valid,verified:valid,scope:requiredScopes.join(' ')}}};}});
+  try{assert.equal((await binding.status()).bound,false);await assert.rejects(binding.requireBound(),e=>e.status===428);assert.ok(calls.every(a=>a[1]==='status'));valid=true;assert.equal((await binding.status()).bound,true);}finally{binding.close();}
 });
 
-test('PRD1872 插件专用profile可切换Bearer兼容登录，不传全局dpop参数',async()=>{
- const calls=[];const selected={mode:'custom',appId:'cli_compat123',profile:'research-compat'};
- const binding=new FeishuBinding({store:{setting:key=>key==='feishu-application'?selected:null},run:async (args, options = {})=>{
-  calls.push(args);const cmd=args.slice(2);
-  if(cmd[0]==='config')return {ok:true};
-  if(cmd[0]==='auth'&&cmd[1]==='logout')return {ok:true,loggedOut:true};
-  if(cmd[0]==='auth'&&cmd[1]==='status')return {appId:'cli_compat123',dpopKeyStatus:'missing',identities:{bot:{status:'ready',available:true,verified:true},user:{available:false,verified:false,tokenStatus:'needs_refresh'}}};
-  if(cmd[0]==='auth'&&cmd[1]==='qrcode'){writeFileSync(resolve(options.cwd ?? '.',cmd.at(-1)),png);return '';}
-  return {device_code:'private-compatible',verification_url:'https://accounts.feishu.cn/device?code=compatible',expires_in:600};
- }});
- try{
-  const flow=await binding.start({rebind:true,compatibility:true});
-  assert.equal(flow.compatibilityMode,true);
-  const config=calls.find(args=>args.slice(2,5).join(' ')==='config set dpop');
-  assert.deepEqual(config.slice(0,2),['--profile','research-compat']);
-  assert.equal(config[5],'disabled');
-  assert.ok(calls.some(args=>args.slice(2,5).join(' ')==='auth logout --json'));
- }finally{binding.close();}
+test('手动重新授权固定使用所选profile，不注销账号或修改DPoP设置',async()=>{
+ const calls=[],selected={mode:'custom',appId:'cli_manual123',profile:'research-manual'};
+ const binding=new FeishuBinding({store:{setting:()=>selected},run:async(args,options={})=>{calls.push(args);const cmd=args.slice(2);if(cmd[1]==='status')return {appId:selected.appId,identities:{user:{available:false}}};if(cmd[1]==='qrcode'){writeFileSync(resolve(options.cwd,cmd.at(-1)),png);return '';}return {device_code:'private-manual',verification_url:'https://accounts.feishu.cn/device?code=manual',expires_in:600};}});
+ try{const flow=await binding.start({rebind:true});assert.ok(flow.flowId);assert.ok(calls.every(a=>a[0]==='--profile'&&a[1]===selected.profile));assert.ok(calls.every(a=>!a.includes('logout')&&!a.includes('config')));}finally{binding.close();}
 });
 
-test('扫码仍在等待时不阻塞页面，后台完成授权并自动切回已绑定状态',async()=>{
- let bound=false,finish;const binding=new FeishuBinding({run:async (args, options = {})=>{
-  if(args[1]==='status')return {appId:'cli_default123',dpopKeyStatus:bound?'available':'missing',identities:{bot:{status:'ready'},user:{...status(bound).identities.user,tokenStatus:bound?'valid':'needs_refresh'}}};
-  if(args[1]==='qrcode'){writeFileSync(resolve(options.cwd ?? '.',args.at(-1)),png);return '';}
-  if(args.includes('--device-code'))return new Promise(resolve=>{finish=()=>{bound=true;resolve({ok:true});};});
-  return {device_code:'private-auto',verification_url:'https://accounts.feishu.cn/device?code=auto',expires_in:600};
- }});
- try{
-  const flow=await binding.start();
-  const completed=binding.autoComplete(flow.flowId);
-  while(!finish)await new Promise(resolve=>setTimeout(resolve,5));
-  assert.equal(binding.flow.autoCompleting,true);
-  const duplicate=await binding.start({rebind:true});
-  assert.equal(duplicate.flowId,flow.flowId);
-  assert.equal(duplicate.autoCompleting,true);
-  const polling=await binding.status();
-  assert.equal(polling.flowId,flow.flowId);
-  assert.equal(polling.autoCompleting,true);
-  finish();
-  assert.equal((await completed).bound,true);
-  assert.equal((await binding.status()).bound,true);
- }finally{binding.close();}
+test('手动授权在用户确认前不交换device code，确认完成后返回绑定状态',async()=>{
+ let bound=false,exchanges=0;const binding=new FeishuBinding({run:async(args,options={})=>{if(args[1]==='status')return {appId:'cli_default123',...status(bound)};if(args[1]==='qrcode'){writeFileSync(resolve(options.cwd,args.at(-1)),png);return '';}if(args.includes('--device-code')){exchanges++;bound=true;return {ok:true};}return {device_code:'private-manual',verification_url:'https://accounts.feishu.cn/device?code=manual',expires_in:600};}});
+ try{const flow=await binding.start();assert.equal(exchanges,0);assert.equal((await binding.status()).bound,false);assert.equal((await binding.start()).flowId,flow.flowId);assert.equal((await binding.complete(flow.flowId)).bound,true);assert.equal(exchanges,1);}finally{binding.close();}
 });
 
 test('已绑定用户不会被遗留的应用扫码窗口阻断启动', async () => {

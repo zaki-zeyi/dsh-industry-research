@@ -43,3 +43,5 @@
 macOS 15 首轮CI已实际运行，暴露2项额外旧断言：临时目录 `/var/...` 与子进程返回的 `/private/var/...` 是同一目录的别名。cwd测试改用 realpathSync 比较真实目录，仍严格验证输入和退出码，不修改CLI实现。首轮附件已下载核验，包含62份runtime日志、7份失败trace及截图。
 
 Windows首轮附件另发现preparePty并发初始化竞争：多个单测worker同时复制同一conpty.dll，触发EBUSY，导致analysis.test.mjs整文件未加载。CI封装在并发单测前串行执行原有prepare-pty脚本；生产多实例初始化的同类竞争保留为待评估实现问题，不通过忽略复制异常掩盖。
+
+后续用户确认“飞书连接以当前实现为主”，已将历史状态机/自动恢复/原流程重试契约替换为当前手动分阶段连接验收，保留账号不匹配、应用不匹配、配置隔离及凭据不泄露等约束。最新验证见current-feishu-contract.md。
