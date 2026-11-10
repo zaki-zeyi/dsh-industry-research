@@ -6,7 +6,7 @@ import { fixture } from './helpers.mjs';
 import { createApp } from '../server/app.mjs';
 import { FeishuBinding, requiredScopes } from '../server/feishu-binding.mjs';
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGQAAAABJRU5ErkJggg==','base64');
-test('PRD1951 重新绑定API严格校验、旧二维码失效、来源限制与账号更新',async()=>{
+test('个人授权API严格校验与旧二维码失效，不能绕过应用登记切换账号',async()=>{
  const f=fixture();let name='账号A',openId='ou_account_a',serial=0;
  f.store.saveSetting('feishu-application',{mode:'custom',appId:'cli_rebind123',profile:'research-rebind',ownerOpenId:openId});
  const binding=new FeishuBinding({store:f.store,run:async (args,options)=>{

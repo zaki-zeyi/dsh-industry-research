@@ -18,7 +18,9 @@ const fakeLark = resolve(dir, 'fake-lark.cjs');
 writeFileSync(fakeLark, `#!/usr/bin/env node
 const fs=require('fs'),file=${JSON.stringify(resolve(dir,'fake-lark-profiles.json'))};let profiles={};try{profiles=JSON.parse(fs.readFileSync(file,'utf8'));}catch{}
 const args=process.argv.slice(2);
-if(args.includes('files')&&args.includes('list')){
+if(args.includes('+fetch')){
+ console.log(JSON.stringify({ok:true,data:{document:{content:JSON.stringify({companies:[{name:'后摩智能',url:'https://example.feishu.cn/docx/embeddedNativeReport',dimensions:['技术路线'],updatedAt:'2026-11-10T00:00:00Z',added:1,conflicts:0}]})}}}));
+}else if(args.includes('files')&&args.includes('list')){
  const parent=args[args.indexOf('--folder-token')+1]??'';
  const files=parent==='autoFolder123'?[{name:'全量信息库',type:'folder',token:'industryNativeFolder'},{name:'日报',type:'folder',token:'nativeDailyFolder'}]:parent==='industryNativeFolder'||parent==='nativeDailyFolder'?[]:[{name:'行研工作台',type:'folder',token:'autoFolder123'}];
  console.log(JSON.stringify({ok:true,data:{files,has_more:false}}));
@@ -34,7 +36,7 @@ const model = createServer(async (req, res) => {
   if (!req.url.includes('/messages')) { res.writeHead(404).end(); return; }
   modelCalls++; const body = JSON.parse(text);
   const input = JSON.stringify(body.messages ?? []).replaceAll('\\\\','\\'); if (body.tools?.length && input.includes('针对这份报告补充解释')) followUpObserved = true; const match = [...input.matchAll(/请读取 (.+?prompt-[a-f0-9-]+\.txt)，按照/g)].at(-1);
-  if (match && body.tools?.length) {
+  if (match && body.tools?.length && !input.includes('针对这份报告补充解释')) {
     const prompt = readFileSync(match[1], 'utf8');
     if(parallelGate){parallelSeen.add(match[1]);if(parallelSeen.size===3)releaseParallel();await parallelGate;}
     if(prompt.includes('并行调研与保存锁'))await promisify(execFile)(process.execPath,[resolve(match[1],'..','cloud-write-client.mjs'),resolve(match[1],'..','cloud-write-config.json')]);
@@ -100,8 +102,8 @@ try {
     await page.getByRole('button', { name: '行研工作台', exact: true }).click({ timeout: 25000 });
     await page.getByRole('alert').filter({ hasText: '连接宿主超时' }).waitFor({ timeout: 12000 }); blockStartup = false; await page.getByRole('button', { name: '重新连接工作台', exact: true }).click();
     const workbench = page.frameLocator('iframe[title="行研工作台"]');
-    await workbench.getByRole('button', { name: '历史 AI 任务' }).click();
-    const card = workbench.locator('.industry-history article').filter({ hasText: task.direction });
+    await workbench.getByRole('tab', { name: '历史 AI 任务' }).click();
+    const card = workbench.locator('#task-card-' + task.id);
     await card.getByRole('button', { name: /继续会话/ }).click();
     await page.getByRole('region', { name: '行研工作台原生对话' }).waitFor();
     await page.locator('[contenteditable="true"]').last().waitFor();
@@ -111,7 +113,7 @@ try {
     await page.locator('[contenteditable="true"]').last().press('Enter'); await until(() => followUpObserved);
     mkdirSync(resolve(root, 'artifacts'), { recursive: true }); await page.screenshot({ path: resolve(root, 'artifacts/embedded-native-chat.png'), fullPage: true });
     await page.getByRole('region', { name: '行研工作台原生对话' }).getByRole('button', { name: '返回', exact: true }).click();
-    await workbench.getByRole('button', { name: '历史 AI 任务' }).click(); await card.waitFor(); await workbench.getByRole('button', { name: /^全量信息库/ }).click(); await workbench.getByRole('link', { name: '后摩智能' }).waitFor();
+    await workbench.getByRole('tab', { name: '历史 AI 任务' }).click(); await card.waitFor(); await workbench.getByRole('button', { name: /^全量信息库/ }).click(); await workbench.getByRole('link', { name: '后摩智能' }).waitFor();
     const after = (await (await fetch(`${status.url}/api/tasks/${task.id}`)).json()).task;
     assert.equal(after.nativeSessionId, task.nativeSessionId); assert.equal(after.runs.length, 1); assert.equal(after.report, null);
     assert.ok(readdirSync(bindingMeta.cwd).every(name => !name.startsWith('report-')));

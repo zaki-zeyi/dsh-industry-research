@@ -133,7 +133,7 @@ test('应用登记轮询短暂失败后，新状态到达会清除旧错误提�
   await expect(page.getByRole('img', { name: '飞书账号登录与应用绑定二维码' })).toBeVisible();
 });
 
-test('应用登记完成后立即发起个人授权，不退回到旧状态错误', async ({ page }) => {
+test('应用登记完成后生成个人授权二维码，手动确认后完成绑定', async ({ page }) => {
   let registrationCompleted = false;
   let bindingMode = 'bound';
   const bindingPosts = [];
