@@ -12,6 +12,7 @@ import { ServiceError } from './service.mjs';
 import { executionPrompt } from './report.mjs';
 import { agentDeliverySchema } from './agent-delivery.mjs';
 import { uploadPrompt } from './upload-prompt.mjs';
+import { prepareLarkAgent } from './lark-agent-files.mjs';
 
 // PRD default for workbench-owned processes; no global Codex config is modified.
 export const TERMINAL_PERMISSIONS = Object.freeze({ sandbox: 'danger-full-access', approval: 'on-request' });
@@ -52,6 +53,7 @@ export class TerminalManager {
     writeFileSync(resolve(meta.cwd, markdownName), markdown);
     Object.assign(meta, { workflow: 'manual-upload', deliveryRequestId: requestId, deliveryPath: resolve(meta.cwd, `delivery-${requestId}.json`), qrPath: resolve(meta.cwd, `feishu-auth-${requestId}.png`), delivery: null, deliveryKey: null, finishedDeliveryKey: null, reportAcceptedAt: null });
     meta.pendingPromptPath = resolve(meta.cwd, `upload-prompt-${requestId}.txt`);
+    prepareLarkAgent(meta, this.config.larkCommand);
     writeFileSync(meta.pendingPromptPath, uploadPrompt(task, meta, requestId, markdownName));
     this.store.saveTerminal(meta); return meta;
   }

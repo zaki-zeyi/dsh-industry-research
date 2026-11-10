@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { logMetadata } from './connection-trace.mjs';
 
 export class Store {
   constructor(path) {
@@ -14,6 +15,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS events_task ON events(task_id, seq);
       CREATE TABLE IF NOT EXISTS requests(key TEXT PRIMARY KEY, input TEXT NOT NULL, task_id TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS demo_documents(id TEXT PRIMARY KEY, body TEXT NOT NULL);`);
+    this.db.exec('CREATE TABLE IF NOT EXISTS runtime_logs(seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, level TEXT NOT NULL, event TEXT NOT NULL, details TEXT NOT NULL)');
     this.db.exec(`CREATE TABLE IF NOT EXISTS terminals(id TEXT PRIMARY KEY, task_id TEXT NOT NULL, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS terminal_frames(seq INTEGER PRIMARY KEY AUTOINCREMENT, terminal_id TEXT NOT NULL, body TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS terminal_frames_session ON terminal_frames(terminal_id,seq);`);
@@ -29,7 +31,24 @@ export class Store {
   putDocument(id, body) { this.db.prepare('INSERT INTO demo_documents VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(id, JSON.stringify(body)); }
   document(id) { const r = this.db.prepare('SELECT body FROM demo_documents WHERE id=?').get(id); return r ? JSON.parse(r.body) : null; }
   setting(key) { const r = this.db.prepare('SELECT body FROM settings WHERE key=?').get(key); return r ? JSON.parse(r.body) : null; }
+  runtimeLog(event, details = {}, level = 'info') {
+    if (!/^[a-z][a-z0-9_.-]{0,79}$/.test(event) || !['info','warn','error'].includes(level)) return;
+    const safe = {};
+    details = { ...logMetadata(), ...details };
+    const allowed = ['appId','targetAppId','previousAppId','code','status','phase','profile','operation','scope','attempt','taskId','killed','credentialStatus','operationId','durationMs','traceId','flowId','step','pluginVersion','instanceId','platform','arch','nativeCode','requestId','httpStatus'];
+    for (const key of allowed) {
+      const value = details[key];
+      if (typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value)) safe[key] = value;
+      else if (typeof value === 'string' && /^[A-Za-z0-9_.:\-]{1,120}$/.test(value)) safe[key] = value;
+    }
+    try { this.db.prepare('INSERT INTO runtime_logs(at,level,event,details) VALUES(?,?,?,?)').run(new Date().toISOString(), level, event, JSON.stringify(safe));
+    this.db.exec('DELETE FROM runtime_logs WHERE seq <= (SELECT MAX(seq)-1000 FROM runtime_logs)'); } catch { /* Diagnostics must not replace the original operation failure. */ }
+  }
+  runtimeLogs({ limit = 100, before = Number.MAX_SAFE_INTEGER, feishu = false, level, traceId } = {}) {
+    return this.db.prepare("SELECT * FROM runtime_logs WHERE seq < ? AND (? = 0 OR event LIKE 'feishu.%') AND (? IS NULL OR level = ?) AND (? IS NULL OR json_extract(details, '$.traceId') = ?) ORDER BY seq DESC LIMIT ?").all(before, feishu ? 1 : 0, level ?? null, level ?? null, traceId ?? null, traceId ?? null, Math.min(200, Math.max(1, limit))).map(row => ({ ...row, details: JSON.parse(row.details) }));
+  }
   saveSetting(key, value) { this.db.prepare('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body').run(key, JSON.stringify(value)); return value; }
+  deleteSetting(key) { this.db.prepare('DELETE FROM settings WHERE key=?').run(key); }
   close() { this.db.close(); }
   saveTerminal(meta) { this.db.prepare('INSERT INTO terminals VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(meta.id, meta.taskId, JSON.stringify(meta)); }
   terminal(id) { const row = this.db.prepare('SELECT body FROM terminals WHERE id=?').get(id); return row ? JSON.parse(row.body) : null; }

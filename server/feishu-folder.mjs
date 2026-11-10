@@ -17,4 +17,4 @@ export function folderSettings(input) {
   const { rootName = '行研工作台', folderUrl } = folderSettingsSchema.parse(input);
   return folderUrl ? { rootName, folderUrl, folderToken: folderTokenFromUrl(folderUrl) } : { rootName };
 }
-export const folderCacheKey = root => `feishu-folder:${createHash('sha256').update(root.applicationProfile ? root.applicationProfile + ':' + root.rootName : root.rootName).digest('hex')}`;
+export const folderCacheKey = root => `feishu-folder:${createHash('sha256').update([root.applicationProfile ?? '', root.applicationOwnerOpenId ?? '', root.rootName].join(':')).digest('hex')}`;

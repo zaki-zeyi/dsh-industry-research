@@ -42,9 +42,34 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (status.state !== 'ready') return;
         let disposed = false;
+        const filePickers = new Map();
         const receive = async event => {
           if (event.origin !== status.url || event.source !== frame.current?.contentWindow) return;
           const message = event.data;
+          if (['industry-research:pick-file','industry-research:cancel-file-picker'].includes(message?.type)) {
+            if (typeof message.requestId !== 'string' || !/^[a-f0-9-]{36}$/.test(message.requestId)) return;
+            if (message.type === 'industry-research:cancel-file-picker') { filePickers.get(message.requestId)?.({cancelled:true}); return; }
+            const replyFile = value => { if (!disposed) event.source.postMessage({type:'industry-research:file-result',requestId:message.requestId,...value},status.url); };
+            if (filePickers.size) { replyFile({error:'文件选择器已打开，请先完成选择。'}); return; }
+            const bridge = window.__DSH_HOST_PATHS__;
+            if (typeof bridge?.pathFor !== 'function') { replyFile({error:'当前网页版无法获取原始本地路径，请使用 DSH 桌面版或网络链接。'}); return; }
+            const input = window.document.createElement('input'); input.type = 'file'; input.style.display = 'none';
+            const finish = value => { if (!filePickers.has(message.requestId)) return; filePickers.delete(message.requestId); input.remove(); replyFile(value); };
+            filePickers.set(message.requestId,finish);
+            input.addEventListener('cancel',() => finish({cancelled:true}),{once:true});
+            input.addEventListener('change',() => {
+              const file = input.files?.[0]; if (!file) { finish({cancelled:true}); return; }
+              try {
+                const path = bridge.pathFor(file);
+                if (typeof path !== 'string' || !/^(?:[A-Za-z]:[\\/]|\\\\[^\\]|\/)/.test(path) || /^[A-Za-z]:[\\/]fakepath[\\/]/i.test(path) || /[\x00-\x1f]/.test(path) || path.length > 4000) throw new Error('invalid path');
+                finish({path,size:file.size});
+              } catch { finish({error:'无法获取所选文件的原始完整路径，请重新选择文件。'}); }
+            },{once:true});
+            window.document.body.append(input);
+            try { input.click(); } catch { finish({error:'无法打开宿主文件选择器，请重试。'}); }
+            return;
+          }
+
           if (message?.type === 'industry-research:hide-session') {
             if (reference.current?.taskId === message.taskId && reference.current?.requestId === message.requestId || pending.current?.taskId === message.taskId && pending.current?.requestId === message.requestId) { revision.current++; discardPending(); release(); setConversation(null); }
             return;
@@ -64,7 +89,7 @@ window.__ModuleLoader__.load({
           } catch (error) { disposeLease(lease); if (!disposed && turn === revision.current) { pending.current = null; reply({ ok: false, error: error.message }); } }
         };
         window.addEventListener('message', receive);
-        return () => { disposed = true; revision.current++; discardPending(); release(); window.removeEventListener('message', receive); };
+        return () => { disposed = true; for (const finish of [...filePickers.values()]) finish({cancelled:true}); revision.current++; discardPending(); release(); window.removeEventListener('message', receive); };
       }, [status.state, status.url]);
       React.useEffect(() => {
         if (!conversation) return;

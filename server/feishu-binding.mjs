@@ -1,5 +1,9 @@
+import { observeFlow, recordTrace } from './connection-trace.mjs';
 import { FeishuRegistration } from './feishu-registration.mjs';
-import { execFile } from 'node:child_process';
+import { installFeishuMonitor, classifyFeishuError } from './feishu-monitor.mjs';
+import { saveFeishuProfile } from './feishu-profile.mjs';
+import { runLark } from './lark-cli.mjs';
+import { inspectLarkCli } from './lark-setup.mjs';
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { resolve } from 'node:path';
@@ -7,16 +11,17 @@ import { randomUUID } from 'node:crypto';
 import { agentDeliverySchema } from './agent-delivery.mjs';
 import { ServiceError } from './service.mjs';
 import { applicationSchema, cliFor } from './feishu-application.mjs';
-export const requiredScopes = ['docx:document:create', 'docx:document:write_only', 'docx:document:readonly', 'docs:document:import', 'drive:drive.metadata:readonly', 'space:folder:create', 'offline_access'];
+export const requiredScopes = ['auth:user.id:read', 'contact:user.basic_profile:readonly', 'docx:document:create', 'docx:document:write_only', 'docx:document:readonly', 'docs:document:import', 'docs:document.media:upload', 'docs:document.media:download', 'drive:drive.metadata:readonly', 'space:document:retrieve', 'drive:file:upload', 'drive:file:download', 'space:folder:create', 'offline_access'];
+export const optionalScopes = ['space:document:retrieve'];
+export const requiredTenantScopes = ['im:message:send_as_bot'];
 export class FeishuBinding {
   constructor({ command, run, store, registerApp } = {}) {
-    this.store = store; this.scopes = requiredScopes; this.registration = new FeishuRegistration(this, registerApp);
+    this.store = store; this.scopes = requiredScopes; this.optionalScopes = optionalScopes; this.tenantScopes = requiredTenantScopes; this.registration = new FeishuRegistration(this, registerApp);
     const local = resolve(homedir(), '.local/bin/lark-cli');
     this.command = command ?? (existsSync(local) ? local : 'lark-cli');
-    this.run = run ?? ((args, options = {}) => new Promise((resolveRun, reject) => {
-      const child = execFile(this.command, args, { timeout: 15000, maxBuffer: 128 * 1024, cwd: options.cwd, env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } }, (error, stdout) => error ? reject(error) : resolveRun(stdout));
-      child.stdin?.on('error', () => {}); child.stdin?.end(options.input ?? '');
-    }));
+    if (!run) this.inspectCLI = () => inspectLarkCli(this.command);
+    this.run = run ?? (async (args, options = {}) => (await runLark(this.command, args, { timeout: 15000, maxBuffer: 128 * 1024, ...options })).stdout);
+    installFeishuMonitor(this);
   }
   applicationSnapshot() { return this.store?.setting('feishu-application') ?? { mode: 'default' }; }
   async applicationInfo() {
@@ -34,8 +39,8 @@ export class FeishuBinding {
       const prior = this.applicationSnapshot();
       if (!data.appSecret && prior.mode === 'custom' && prior.appId === data.appId) return this.applicationInfo();
       if (!data.appSecret) throw new ServiceError(400, '首次配置或更换 App ID 时，请填写 App Secret');
-      const profile = `research-${randomUUID()}`;
-      try { await this.run(['profile', 'add', '--name', profile, '--app-id', data.appId, '--app-secret-stdin', '--brand', 'feishu'], { input: data.appSecret + '\n' }); }
+      let profile;
+      try { profile = await saveFeishuProfile(this, data.appId, data.appSecret); }
       catch { throw new ServiceError(503, '飞书应用配置失败，请检查应用凭据、Lark CLI 和本机安全存储'); }
       this.store.saveSetting('feishu-application', { mode: 'custom', appId: data.appId, profile }); this.clear(); return this.applicationInfo();
     } finally { this.configuring = false; }
@@ -50,14 +55,24 @@ export class FeishuBinding {
       const metadata = { ...(result.appId ? { appId: result.appId } : {}), ...(result.identities?.bot?.appName ? { appName: String(result.identities.bot.appName).slice(0, 100) } : {}) };
       const user = result.identities?.user, scopes = new Set((user?.scope ?? '').split(/[ ,]+/));
       const authenticated = user?.available === true && user?.verified === true;
-      const missingScopes = requiredScopes.filter(s => !scopes.has(s));
+      const missingScopes = requiredScopes.filter(s => !optionalScopes.includes(s) && !scopes.has(s));
       const accountMismatch = authenticated && application.ownerOpenId && user.openId !== application.ownerOpenId;
       if (accountMismatch) return { ...metadata, bound: false, available: true, error: '个人授权账号与扫码绑定应用的账号不一致，请使用同一账号授权，或重新扫码登录并绑定新账号的应用' };
       const bound = authenticated && missingScopes.length === 0;
-      return { ...metadata, bound, authenticated, available: true, ...(bound ? { userName: String(user.userName ?? '飞书用户').slice(0, 100) } : { missingScopes, error: authenticated ? '飞书已登录，但文档与云盘权限不完整，请补充授权后开始调研' : '请绑定飞书并授权文档与云盘访问权限后开始调研' }) };
-    } catch { return { bound: false, available: false, error: '无法检查飞书授权，请确认已安装并配置 lark-cli，或稍后重试' }; }
+      return { ...metadata, bound, authenticated, importReady:scopes.has('space:document:retrieve'), available: true, ...(bound ? { ...(/^ou_[A-Za-z0-9]+$/.test(user.openId ?? '') ? {openId:user.openId} : {}), userName: String(user.userName ?? '飞书用户').slice(0, 100) } : { missingScopes, error: authenticated ? '飞书已登录，但文档与云盘权限不完整，请补充授权后开始调研' : '请绑定飞书并授权文档与云盘访问权限后开始调研' }) };
+    } catch (error) {
+      const code = error.code === 'ENOENT' ? 'LARK_CLI_NOT_FOUND' : classifyFeishuError(error);
+      return { bound: false, available: false, code, error: code === 'LARK_CLI_NOT_FOUND' ? '未找到飞书 CLI，请先检查飞书环境并安装或修复 CLI' : '无法检查飞书授权，请查看连接日志后重试；不要将此错误直接当作未安装 CLI' };
+    }
   }
-  async requireBound(application = this.applicationSnapshot()) { if (this.registration.busy) throw new ServiceError(428, '请先完成扫码登录和应用绑定，再启动调研'); const state = await this.status(application); if (!state.bound) throw new ServiceError(428, state.error); return state; }
+  async requireBound(application = this.applicationSnapshot()) {
+    const state = await this.status(application);
+    // An abandoned application-registration QR must not block work that already
+    // has a valid user token. Only report it when the binding is really absent.
+    if (state.bound) return state;
+    if (this.registration.busy) throw new ServiceError(428, '飞书应用绑定二维码仍在等待扫码，请完成扫码或取消该窗口后再启动调研');
+    throw new ServiceError(428, state.error ?? '请先完成扫码登录和应用绑定，再启动调研');
+  }
   async start({ rebind = false } = {}) {
     if (this.registration.busy || this.configuring) throw new ServiceError(409, '飞书应用配置正在处理中，请稍后再试');
     if (this.completing) throw new ServiceError(409, '授权确认正在处理中，请稍后再重新绑定');
@@ -81,7 +96,8 @@ export class FeishuBinding {
       const expiresIn = Number(data.expires_in ?? 600); if (!Number.isFinite(expiresIn) || expiresIn <= 0) throw new Error('invalid expiry');
       const directory = mkdtempSync(resolve(tmpdir(), 'research-feishu-binding-')), qrPath = resolve(directory, 'qrcode.png');
       this.flow = { id: randomUUID(), deviceCode: data.device_code, url, rebind, application, appId: state.appId ?? application.appId, appName: state.appName, expires: Date.now() + Math.min(expiresIn, 1800) * 1000, directory, qrPath };
-      await this.run(this.selectedArgs(['auth', 'qrcode', url, '--output', qrPath], application), { cwd: directory }); return this.publicFlow();
+      observeFlow(this.store,this.flow);
+      await this.run(this.selectedArgs(['auth', 'qrcode', url, '--output', './qrcode.png'], application), { cwd: directory }); return this.publicFlow();
     } catch { this.clear(); throw new ServiceError(503, '无法发起飞书绑定，请检查 lark-cli 应用配置与网络后重试'); }
   }
   publicFlow() { return { bound: false, rebind: this.flow.rebind, appId: this.flow.appId, appName: this.flow.appName, flowId: this.flow.id, authorizationUrl: this.flow.url, expiresAt: new Date(this.flow.expires).toISOString() }; }
@@ -97,7 +113,7 @@ export class FeishuBinding {
     this.completing = (async () => {
       try { await this.json(['auth', 'login', '--device-code', flow.deviceCode, '--json'], flow.application); } catch { throw new ServiceError(409, '尚未完成授权或确认超时，请确认扫码账号有当前应用的使用权限；其他企业的账号请先更换对应应用再扫码'); }
       const state = await this.requireBound(flow.application);
-      if (flow.appId && state.appId !== flow.appId) throw new ServiceError(409, '授权应用已发生变化，请重新扫码，未完成绑定'); this.clear(); return state;
+      if (flow.appId && state.appId !== flow.appId) throw new ServiceError(409, '授权应用已发生变化，请重新扫码，未完成绑定'); recordTrace(this.store,'feishu.authorization.confirmed',{phase:'personal_authorization',status:'completed',appId:state.appId,flowId:flow.id}); this.clear(); return state;
     })().finally(() => { this.completing = null; }); return this.completing;
   }
   clear() { if (this.flow) rmSync(this.flow.directory, { recursive: true, force: true }); this.flow = null; }

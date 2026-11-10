@@ -1,7 +1,7 @@
 {
   "name": "dsh-industry-research",
-  "version": "0.1.1",
-  "description": "行研工作台：适用于 DeepSeek Harness 桌面版和网页版的 公司全量信息库与宿主原生会话调研插件",
+  "version": "0.8.13",
+  "description": "行研工作台：适用于 DeepSeek Harness 桌面版和网页版的 公司全量信息库、友商分析与宿主原生会话调研插件",
   "type": "module",
   "main": "./plugin/index.mjs",
   "engines": {

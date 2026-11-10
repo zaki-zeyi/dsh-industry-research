@@ -1,0 +1,95 @@
+function parsePayload(error) {
+  for (const candidate of [error?.stderr, error?.stdout, error?.message]) {
+    if (typeof candidate !== 'string') continue;
+    const text = candidate.trim();
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start < 0 || end <= start) continue;
+    try {
+      const value = JSON.parse(text.slice(start, end + 1));
+      if (value?.error && typeof value.error === 'object') return value.error;
+    } catch {}
+  }
+  return null;
+}
+
+export function notificationFailure(error) {
+  const payload = parsePayload(error);
+  const code = typeof payload?.code === 'number' || typeof payload?.code === 'string' ? String(payload.code) : '';
+  const subtype = typeof payload?.subtype === 'string' ? payload.subtype.slice(0, 80) : '';
+  const type = typeof payload?.type === 'string' ? payload.type.slice(0, 80) : '';
+  const missingScopes = Array.isArray(payload?.missing_scopes)
+    ? payload.missing_scopes.filter(value => typeof value === 'string').map(value => value.slice(0, 120)).slice(0, 20)
+    : [];
+  const upstream = typeof payload?.message === 'string' ? payload.message.replace(/\s+/g, ' ').trim().slice(0, 220) : '';
+  const diagnostic = {
+    ...(code ? { code } : {}),
+    ...(type ? { type } : {}),
+    ...(subtype ? { subtype } : {}),
+    ...(missingScopes.length ? { missingScopes } : {}),
+  };
+  if(error?.code==='BOT_UNAVAILABLE')diagnostic.code='BOT_UNAVAILABLE';
+  if(error?.code==='USER_AUTH_UNAVAILABLE')return{
+    message:'当前任务应用的个人授权未通过验证。请恢复原应用并完成个人授权后重试通知。',
+    diagnostic:{...diagnostic,code:'USER_AUTH_UNAVAILABLE',action:'reauthorize_user'},
+  };
+
+  if (['MISSING_RECIPIENT','RECIPIENT_UNVERIFIED'].includes(error?.code)) return {
+    message:'本任务没有可验证的通知接收账号。请恢复任务原应用和原账号后重试；若任务未保存账号快照，请重新生成报告。',
+    diagnostic:{...diagnostic,code:error.code,action:'check_recipient'},
+  };
+  if (error?.code === 'BINDING_CHANGED') return {
+    message:'当前绑定的飞书账号或应用已发生变化，历史任务不会向旧账号发送通知。请恢复原绑定后重试，或使用当前绑定重新生成报告。',
+    diagnostic:{...diagnostic,code:'BINDING_CHANGED',action:'binding_changed'},
+  };
+
+  if (missingScopes.includes('im:message:send_as_bot') || /send_as_bot/i.test(upstream)) {
+    return {
+      message: '当前飞书应用尚未获得机器人发消息权限（im:message:send_as_bot）。请点击“重试通知”，在飞书确认权限差异并发布，完成后自动重试通知。',
+      diagnostic: { ...diagnostic, action: 'repair_bot' },
+    };
+  }
+  if (subtype === 'app_scope_not_applied' || /has not applied for the required scope/i.test(upstream)) {
+    return {
+      message: `当前飞书应用所需权限尚未生效${code ? `（错误码 ${code}）` : ''}。请点击“重试通知”，确认权限差异并发布后重试。`,
+      diagnostic: { ...diagnostic, action: 'repair_bot' },
+    };
+  }
+  if (/bot unavailable|机器人身份不可用/i.test(upstream) || /bot unavailable|机器人身份不可用/i.test(String(error?.message ?? ''))) {
+    return {
+      message: '飞书机器人身份不可用，无法发送消息。请点击“重试通知”，确认已开通 im:message:send_as_bot 并发布后再重试。',
+      diagnostic: { ...diagnostic, action: 'repair_bot' },
+    };
+  }
+  if (/availability|available range|not available|可用范围/i.test(upstream)) {
+    return {
+      message: '当前飞书账号不在机器人可用范围内。请把该账号加入应用可用范围并发布应用后重试。',
+      diagnostic: { ...diagnostic, action: 'check_availability' },
+    };
+  }
+  if (/current.*(binding|application).*(changed|mismatch)|identity changed|绑定.*(已切换|不一致|已改变)/i.test(`${upstream} ${error?.message ?? ''}`)) {
+    return {
+      message: '当前绑定的飞书账号或应用已发生变化，历史任务不会向旧账号发送通知。请确认当前绑定后重新生成报告，或恢复原绑定再重试。',
+      diagnostic: { ...diagnostic, action: 'binding_changed' },
+    };
+  }
+  if (type === 'authorization' || type === 'forbidden' || /access denied|permission denied/i.test(upstream)) {
+    return {
+      message: `飞书机器人无权发送消息${code ? `（错误码 ${code}）` : ''}。请检查应用发布状态、机器人消息权限和账号可用范围后重试。`,
+      diagnostic: { ...diagnostic, action: 'repair_bot' },
+    };
+  }
+  return {
+    message: `飞书机器人未发送成功${code ? `（错误码 ${code}）` : ''}${upstream ? `：${upstream}` : ''}。报告和会话已保留，可修复配置后重试。`,
+    diagnostic: { ...diagnostic, action: 'retry' },
+  };
+}
+
+export function notificationApplicationMatches(expected, current) {
+  if (!expected || !current) return false;
+  const expectedMode = expected.mode ?? 'default';
+  const currentMode = current.mode ?? 'default';
+  if (expectedMode !== currentMode) return false;
+  if (currentMode === 'default' && (!expected.appId || !current.appId)) return true;
+  return (expected.appId ?? '') === (current.appId ?? '');
+}

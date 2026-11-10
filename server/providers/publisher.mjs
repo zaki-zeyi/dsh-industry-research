@@ -63,7 +63,7 @@ export class FeishuPublisher {
     if (!this.configured) throw new Error('请配置 FEISHU_USER_ACCESS_TOKEN（飞书用户授权），报告已保留，可在配置后重试上传');
     let p = { ...task.publication, target: 'feishu' };
     if (p.documentId && /^(local|demo)-/.test(p.documentId)) throw new Error('本地报告不能作为飞书文档续写，请通过上传接口发布');
-    const title = `${task.report.title} · ${task.id} · v${task.report.version}`;
+    const title = task.report.title;
     if (!p.documentId) {
       if (p.createIntent) {
         const id = await this.findCreated(title, signal);

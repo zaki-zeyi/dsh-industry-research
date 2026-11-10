@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { startRuntime, dataIdentity } from '../server/runtime.mjs';
 export const name = 'dsh-industry-research';
 // Retain the existing storage namespace and health protocol for upgrades.
-export const inject = ['webServer', 'sessionController', 'permissionPresets'];
+export const inject = ['webServer', 'sessionController', 'permissionPresets', 'workspaceRegistry'];
 export async function connectRuntime(config = {}, host) {
   const dataDir = resolve(config.dataDir ?? resolve(process.env.DSH_HOME ?? resolve(homedir(), '.dsh'), 'industry-research'));
   const port = config.port ?? 0;
