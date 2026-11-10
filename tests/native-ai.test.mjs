@@ -34,7 +34,7 @@ test('PRD1101 新配置仅选择Agent，无需密钥；旧配置迁移不影响�
 test('PRD1101 工作台覆盖只包含桥接与权限，不覆盖原生模型、Provider或账号登录', async () => {
   const f = fixture();
   try {
-    const launch = dshLaunch({ id: 'test', cwd: f.dir, sessionPath: 'session', completionPath: 'complete' }, { agent: 'dsh', configuration: 'native', apiKey: 'must-ignore', baseUrl: 'https://must-ignore.example' });
+    const launch = dshLaunch({ id: 'test', cwd: f.dir, sessionPath: 'session', completionPath: 'complete' }, { agent: 'dsh', configuration: 'native', apiKey: 'must-ignore', baseUrl: 'https://must-ignore.example' }, { platform: 'linux', command: 'dsh' });
     const patch = JSON.parse(readFileSync(launch.args[launch.args.indexOf('--patch') + 1], 'utf8'));
     assert.deepEqual(patch.filter(x => x.id).map(x => x.id), ['permission']); assert.equal(patch.at(-1).insert[0].id, 'research-terminal-bridge');
     assert.equal(patch[0].config.presets['danger-full-access'].approval, 'never');

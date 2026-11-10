@@ -4,7 +4,7 @@ import { traceContext, nativeDiagnostic } from './connection-trace.mjs';
 export function classifyFeishuError(error) {
   const text = [error?.code, error?.message, error?.stdout, error?.stderr, error?.cause?.message].filter(Boolean).join('\n');
   if (/unique app-id|already used by profile|already exists/i.test(text)) return 'PROFILE_CONFLICT';
-  if (/DPoP|0x80090016|keychain|keystore|key unavailable/i.test(text)) return 'LOCAL_KEY_UNAVAILABLE';
+  if (/0x80090016|(?:DPoP|keychain|keystore).{0,100}(?:unavailable|missing|inconsistent|invalid|failed|error)|key unavailable/i.test(text)) return 'LOCAL_KEY_UNAVAILABLE';
   if (/ENOENT|找不到.*CLI|not recognized|not found/i.test(text)) return 'CLI_NOT_FOUND';
   if (/EACCES|EPERM|access.*denied.*file|安全存储/i.test(text)) return 'LOCAL_STORAGE_DENIED';
   if (/scope|99991672|99991679|permission|forbidden/i.test(text)) return 'PERMISSION_DENIED';
@@ -43,7 +43,8 @@ export function installFeishuMonitor(binding) {
       if (!rejected && phase === 'identity_check') {
         const user = value?.identities?.user;
         if (!value?.appId) code = 'APP_MISMATCH_OR_MISSING';
-        else if (classifyFeishuError({ message: JSON.stringify(value) }) === 'LOCAL_KEY_UNAVAILABLE') code = 'LOCAL_KEY_UNAVAILABLE';
+        else if (['missing', 'unavailable', 'invalid', 'inconsistent', 'error'].includes(String(value?.dpopKeyStatus ?? '').toLowerCase()) ||
+          classifyFeishuError({ message: user?.message }) === 'LOCAL_KEY_UNAVAILABLE') code = 'LOCAL_KEY_UNAVAILABLE';
         else if (user?.available !== true || user?.verified !== true) code = 'USER_AUTH_REQUIRED';
         else if (binding.scopes.filter(scope=>!binding.optionalScopes?.includes(scope)).some(scope => !new Set(String(user.scope ?? '').split(/[ ,]+/)).has(scope))) code = 'SCOPE_MISSING';
       }

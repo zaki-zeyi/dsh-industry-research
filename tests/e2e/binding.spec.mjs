@@ -99,7 +99,7 @@ test('未绑定时入口只提供绑定飞书，并生成初始绑定二维码',
   await expect(entryActions.getByRole('button', { name: '重新绑定', exact: true })).toHaveCount(0);
   await entryActions.getByRole('button', { name: '绑定飞书', exact: true }).click();
   await expect.poll(() => registrationPosts.length).toBe(1);
-  expect(registrationPosts[0]).toEqual({ refresh: false, replaceApp: true, accountRebind: false });
+  expect(registrationPosts[0]).toEqual({ refresh: false });
   await expect(page.getByRole('img', { name: '飞书账号登录与应用绑定二维码' })).toBeVisible();
 });
 

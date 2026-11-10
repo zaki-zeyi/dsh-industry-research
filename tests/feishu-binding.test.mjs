@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { dirname, resolve, isAbsolute } from 'node:path';
-import { FeishuBinding, requiredScopes } from '../server/feishu-binding.mjs';
+import { FeishuBinding, requiredScopes, optionalScopes } from '../server/feishu-binding.mjs';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGQAAAABJRU5ErkJggg==','base64');
 const status = (bound, scope = requiredScopes.join(' ')) => ({ identities: { bot: { status: 'ready', available: true, verified: true, appName: '行研工作台助手' }, user: { available: bound, verified: bound, userName: '验收用户', scope } } });
 
@@ -41,9 +41,9 @@ test('PRD1907 过期授权需重新发起，不接受非官方URL与假二维码
   const bad=new FeishuBinding({run:async (args, options = {})=>args[1]==='status'?status(false):{device_code:'secret',verification_url:'https://evil.example/authorize'}}); await assert.rejects(bad.start(),/无法发起/);
 });
 
-test('PRD1872 申请平台所需全部生态权限，但不申请目录读取/搜索权限', async () => {
+test('绑定权限：目录读取按可选能力申请，缺失时仍允许调研，不申请搜索权限', async () => {
   const writeScopes = 'auth:user.id:read contact:user.basic_profile:readonly docx:document:create docx:document:write_only docx:document:readonly docs:document:import docs:document.media:upload docs:document.media:download drive:drive.metadata:readonly drive:file:upload drive:file:download space:folder:create offline_access';
-  assert.ok(!requiredScopes.includes('space:document:retrieve')); assert.ok(!requiredScopes.includes('search:docs:read'));
+  assert.ok(optionalScopes.includes('space:document:retrieve')); assert.ok(!requiredScopes.includes('search:docs:read'));
   for (const scope of ['docs:document.media:upload','docs:document.media:download','drive:file:upload','drive:file:download']) assert.ok(requiredScopes.includes(scope));
   const loggedIn = new FeishuBinding({ run: async () => status(true, writeScopes) });
   assert.equal((await loggedIn.requireBound()).bound, true); assert.equal((await loggedIn.start()).bound, true);
@@ -53,7 +53,7 @@ test('PRD1872 申请平台所需全部生态权限，但不申请目录读取/�
     if (args[1] === 'qrcode') { writeFileSync(resolve(options.cwd ?? '.',args.at(-1)), png); return ''; }
     grant = args[args.indexOf('--scope') + 1]; return { device_code: 'private', verification_url: 'https://accounts.feishu.cn/device?code=write-only', expires_in: 600 };
   } });
-  try { await binding.start(); assert.ok(!grant.includes('space:document:retrieve')); assert.ok(!grant.includes('search:docs:read')); }
+  try { await binding.start(); assert.ok(grant.includes('space:document:retrieve')); assert.ok(!grant.includes('search:docs:read')); }
   finally { binding.close(); }
 });
 
@@ -68,7 +68,9 @@ test('FR02 机器人身份不可用时保留文档绑定但明确标记通知未
   try {
     const state = await binding.status();
     assert.equal(state.bound, true);
-    assert.equal(state.notificationReady, false);
+    const monitor = await binding.connectionMonitor.check();
+    assert.ok(monitor.checks.some(check => check.phase === 'bot_identity' && check.code === 'BOT_NOT_READY'));
+    assert.equal(monitor.status, 'error');
   } finally { binding.close(); }
 });
 

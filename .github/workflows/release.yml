@@ -27,10 +27,26 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npx playwright install chromium
-      - run: npm run acceptance
+      - id: build
+        run: node scripts/ci-check.mjs build
+      - id: unit
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/ci-check.mjs test
+      - id: browser
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/ci-check.mjs test:e2e
       - run: npm run plugin:pack
       - run: npm run plugin:check-pack
       - run: node scripts/release-acceptance.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnostics-${{ matrix.os }}
+          path: |
+            artifacts/diagnostics
+            playwright-report
+            test-results
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.os }}
