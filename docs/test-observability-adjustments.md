@@ -39,3 +39,5 @@
 ## CI runner 修复
 
 实际读取 macOS check annotation，取消原因是 `macos-14-arm64-us-default is not supported`。GitHub 官方公告确认 macOS 14 于2026-11-02退役；两个工作流均改用 macos-15。来源：https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/ 。
+
+macOS 15 首轮CI已实际运行，暴露2项额外旧断言：临时目录 `/var/...` 与子进程返回的 `/private/var/...` 是同一目录的别名。cwd测试改用 realpathSync 比较真实目录，仍严格验证输入和退出码，不修改CLI实现。首轮附件已下载核验，包含62份runtime日志、7份失败trace及截图。
