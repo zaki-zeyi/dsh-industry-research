@@ -35,3 +35,7 @@
 浏览器仍保留7项失败：重新绑定与更换应用的差异、轮询错误不清除、登记后授权流、有效二维码恢复、兼容登录、原流程重试保存、换应用前稳定身份补全。其中部分测试首先停在旧UI名称，需在对应流程实现修复时一同对齐，而非直接跳过。
 
 独立宿主的Schedule服务503不属于本轮用例调整，需要后续检查服务加载和注入。macOS通过状态必须以CI实际结果为准。
+
+## CI runner 修复
+
+实际读取 macOS check annotation，取消原因是 `macos-14-arm64-us-default is not supported`。GitHub 官方公告确认 macOS 14 于2026-11-02退役；两个工作流均改用 macos-15。来源：https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/ 。
