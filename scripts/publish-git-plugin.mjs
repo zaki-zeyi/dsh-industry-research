@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -8,6 +10,12 @@ const output = arg('--output');
 if (!output || existsSync(output)) throw new Error('请用 --output 指定新的临时发布目录');
 const directory = resolve(output), release = JSON.parse(readFileSync(resolve(root, 'artifacts/plugin-release.json')));
 const branch = 'release';
+const source = JSON.parse(readFileSync(resolve(root, 'package.json')));
+assert.equal(release.version, source.version, 'Rebuild artifacts after changing the source version');
+for (const [file, hash] of [[release.filename, release.sha256], [release.zipFilename, release.zipSha256]]) {
+ assert.equal(createHash('sha256').update(readFileSync(resolve(root, 'artifacts', file))).digest('hex'), hash, 'Release artifact checksum mismatch');
+}
+assert.equal(JSON.parse(readFileSync(resolve(root, 'artifacts', release.directory, 'package.json'))).version, source.version);
 function git(args, cwd = directory, allowFailure = false) {
  const r = spawnSync('git', args, { cwd, timeout: 120000, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
  if (!allowFailure && (r.error || r.status !== 0)) throw r.error ?? new Error(`git ${args[0]} 失败：${r.stderr}`);

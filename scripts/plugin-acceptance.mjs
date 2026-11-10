@@ -30,7 +30,9 @@ try {
   assert.equal(typeof requireInstalled('@larksuiteoapi/node-sdk').registerApp, 'function', '发布包缺少官方应用注册 SDK');
   await new Promise((done, reject) => {
     let output = '';
-    const proc = pty.spawn(process.execPath, ['-e', 'process.stdout.write("PLUGIN_PTY_OK"); setTimeout(() => process.exit(0), 50)'], { cols: 80, rows: 24, cwd: dataDir, env: process.env });
+    const executable = process.platform === 'win32' ? (process.env.ComSpec ?? 'C:/Windows/System32/cmd.exe') : process.execPath;
+    const commandArgs = process.platform === 'win32' ? ['/d', '/c', 'echo PLUGIN_PTY_OK'] : [...(process.versions.electron ? ['--expose-internals'] : []), '-e', 'process.stdout.write("PLUGIN_PTY_OK"); setTimeout(() => process.exit(0), 500)'];
+    const proc = pty.spawn(executable, commandArgs, { cols: 80, rows: 24, cwd: dataDir, env: process.env });
     const timer = setTimeout(() => { proc.kill(); reject(new Error('安装包 PTY 验收超时')); }, 5000);
     proc.onData(data => { output += data; });
     proc.onExit(() => { clearTimeout(timer); try { assert.match(output, /PLUGIN_PTY_OK/); done(); } catch (e) { reject(e); } });
@@ -42,3 +44,5 @@ try {
 // Explicitly finish this command-line acceptance process; thrown failures above
 // still exit non-zero and cannot reach this line.
 process.exit(0);
+
+

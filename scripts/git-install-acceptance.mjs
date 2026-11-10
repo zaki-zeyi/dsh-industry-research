@@ -21,6 +21,7 @@ try {
   const installed = resolve(directory, 'node_modules/dsh-industry-research');
   const manifest = JSON.parse(readFileSync(resolve(installed, 'package.json')));
   assert.equal(manifest.name, 'dsh-industry-research');
+  assert.equal(manifest.version, option('--expected-version') ?? JSON.parse(readFileSync(resolve(root, 'package.json'))).version, 'GitHub install must match the release version');
   assert.equal(readFileSync(resolve(installed, 'dist/index.html'), 'utf8').includes('/assets/index-'), true);
   run(process.execPath, [resolve(root, 'scripts/plugin-acceptance.mjs'), '--package-root', installed]);
   const desktop = option('--desktop-runtime');
