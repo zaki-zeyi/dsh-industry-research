@@ -1,6 +1,11 @@
 name: Publish verified plugin
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+      - .github/workflows/release.yml
 permissions:
   contents: write
 concurrency:

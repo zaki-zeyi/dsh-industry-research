@@ -119,4 +119,3 @@ try {
   console.log('PASS: 真实 DSH 宿主插件 → Session Controller → 本机模拟模型 → 飞书链接回执 → 原生会话绑定；未启动 TUI/PTY，未调用外部模型');
 } catch (error) { if (page) { console.error((await page.locator('body').innerText()).slice(0,2500)); mkdirSync(resolve(root, 'artifacts'), { recursive: true }); await page.screenshot({path:resolve(root,'artifacts/native-host-error.png')}); } console.error(log.slice(-3500).replace(/([?&]token=)[^\s&]+/g, '$1[REDACTED]')); throw error; }
 finally { await browser?.close(); child.kill('SIGTERM'); await Promise.race([new Promise(r => child.once('exit', r)), new Promise(r => setTimeout(r, 3000))]); if (child.exitCode === null) child.kill('SIGKILL'); model.closeAllConnections(); await new Promise(r => model.close(r)); rmSync(dir, { recursive: true, force: true }); }
-

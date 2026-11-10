@@ -16,6 +16,7 @@
 - Chrome 浏览器 40 项，32 通过、8 失败，集中于绑定恢复、更换应用及凭据重试。
 - 实际隔离 DSH 0.2.0-rc.2 宿主加载实际安装包，原生会话与日报回执路径执行后，在官方 Schedule 创建步骤返回 503「当前宿主未启用官方 Schedule 服务」。不能认定定时任务或后续浏览器原生对话完整链路通过。
 - macOS 尚未运行；工作流提供 macOS runner，但不将配置存在计作验收通过。Linux 服务端也未实测，不能笼统声明所有网页服务器平台兼容。
+- 使用桌面宿主自带 pnpm、空白安装目录和独立冷缓存实测裸 GitHub 链接，实际安装得到 0.1.1，新版本断言按预期拒绝该旧版本。
 - 默认 release 分支仍为 0.1.1；0.8.13 正式发布需先解决以上阻塞，不能将当前包升级为已验收版本。
 
 本地日志为 acceptance-verified.log、browser-verified.log、package-verified.log、host-package-final.log，均被 git 忽略，未上传真实凭据。

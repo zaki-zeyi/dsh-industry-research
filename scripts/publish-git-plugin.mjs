@@ -32,6 +32,9 @@ if (process.argv.includes('--push')) {
 for (const name of readdirSync(directory)) if (name !== '.git') rmSync(resolve(directory, name), { recursive: true, force: true });
 cpSync(resolve(root, 'artifacts', release.directory), directory, { recursive: true });
 cpSync(resolve(root, 'README.md'), resolve(directory, 'README.md'));
+// GitHub only exposes workflow_dispatch workflows present on the default branch.
+mkdirSync(resolve(directory, '.github/workflows'), { recursive: true });
+cpSync(resolve(root, '.github/workflows/release.yml'), resolve(directory, '.github/workflows/release.yml'));
 const manifest = JSON.parse(readFileSync(resolve(directory, 'package.json')));
 if (manifest.name !== 'dsh-industry-research' || manifest.scripts) throw new Error('安装分支必须使用无生命周期脚本的正式发布包');
 git(['add', '--force', '--all']);

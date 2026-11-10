@@ -44,5 +44,3 @@ try {
 // Explicitly finish this command-line acceptance process; thrown failures above
 // still exit non-zero and cannot reach this line.
 process.exit(0);
-
-
