@@ -2,7 +2,7 @@ import { cloudPublications, mergePublicationCards } from './cloud-publications.m
 import { briefingTask } from './briefings.mjs';
 import { libraryReadError } from './library-errors.mjs';
 import { refreshLibrary, importLibrary, preferences, preferencesSchema, library, companyTaskInput, libraryKey } from './industry.mjs';
-import { refreshAnalysisLibrary, analysisLibrary, analysisTaskInput } from './analysis.mjs';
+import { refreshAnalysisLibrary, analysisLibrary, analysisTaskInput, analysisTaskCards } from './analysis.mjs';
 import { createRequire } from 'node:module';
 const express = createRequire(import.meta.url)('express');
 import { resolve, dirname } from 'node:path';
@@ -104,7 +104,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.get('/api/briefings/schedule',(req,res,next)=>{try{const kind=req.query.kind?z.enum(['daily','weekly']).parse(req.query.kind):undefined;res.json(service.briefingSchedules?.get(kind)??{available:false});}catch(e){next(e);}});
   app.put('/api/briefings/schedule',async(req,res,next)=>{try{res.json(await service.briefingSchedules.save(req.body));}catch(e){next(e);}});
   app.post('/api/briefings/trigger/:kind',async(req,res,next)=>{try{const kind=z.enum(['daily','weekly']).parse(req.params.kind);res.status(202).json(await service.briefingSchedules.trigger(kind));}catch(e){next(e);}});
-  app.get('/api/analysis/reports', async (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); const root = service.feishuSettings(), app = service.binding?.applicationSnapshot?.(); res.json(req.query.refresh === 'true' ? await refreshAnalysisLibrary(service.store, root, app, analysisRun, { command: service.binding?.command }) : analysisLibrary(service.store, root, app)); } catch (e) { next(libraryReadError(e)); } });
+  app.get('/api/analysis/reports', async (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); const root = service.feishuSettings(), app = service.binding?.applicationSnapshot?.(); const library = req.query.refresh === 'true' ? await refreshAnalysisLibrary(service.store, root, app, analysisRun, { command: service.binding?.command }) : analysisLibrary(service.store, root, app); res.json(analysisTaskCards(service.store, library, root, app)); } catch (e) { next(libraryReadError(e)); } });
   app.post('/api/analysis/tasks', async (req, res, next) => { try { const key = req.headers['idempotency-key']; if (key) z.string().min(1).max(100).parse(key); res.status(202).json(await service.createAuthorized(analysisTaskInput(req.body), key)); } catch (e) { next(e); } });
   app.get('/api/ai-settings', (_req, res) => { if (!service.aiSettings) return res.status(503).json({ error: 'AI 配置尚未启用' }); res.setHeader('Cache-Control', 'no-store'); res.json(service.aiSettings.get()); });
   app.put('/api/ai-settings', (req, res) => { if (!service.aiSettings) return res.status(503).json({ error: 'AI 配置尚未启用' }); try { const input = z.object({ agent: z.enum(['codex', 'dsh']) }).strict().parse(req.body); res.json(service.aiSettings.save(input)); } catch (error) { res.status(400).json({ error: error instanceof z.ZodError ? 'AI 配置字段无效' : error.message }); } });

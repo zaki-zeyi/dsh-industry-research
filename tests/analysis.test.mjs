@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startRuntime } from '../server/runtime.mjs';
-import { analysisInputSchema, analysisKey, analysisLibrary, analysisTaskInput, mergeAnalysisDelivery, parseAnalysisManifest, refreshAnalysisLibrary } from '../server/analysis.mjs';
+import { analysisInputSchema, analysisKey, analysisLibrary, analysisTaskCards, analysisTaskInput, mergeAnalysisDelivery, parseAnalysisManifest, refreshAnalysisLibrary } from '../server/analysis.mjs';
 import { analysisDefaultPrompt, cleanAnalysisTitle } from '../server/analysis-defaults.mjs';
 import { analysisReportSchema } from '../server/agent-delivery.mjs';
 import { libraryKey } from '../server/industry.mjs';
@@ -88,6 +88,8 @@ test('AC-AN-02 只使用全量信息库来源，生成报告元信息并复用�
     assert.equal(list.reports.length, 1);
     assert.equal(list.reports[0].taskId, a.id);
     assert.equal(list.reports[0].companies.length, 2);
+    assert.equal(list.reports[0].status, 'ready', '已发布报告带任务状态');
+    assert.deepEqual(list.tasks, [], '已交付的任务不再补卡片');
 
     const b = await f.service.createAuthorized(analysisTaskInput(input));
     await until(() => f.service.require(b.id).status === 'ready');
@@ -167,4 +169,50 @@ test('AC-AN-06 报告标题不展示内部任务 UUID', () => {
   assert.equal(cleanAnalysisTitle(clean), clean);
   const parsed = analysisReportSchema.parse({ title: `${clean} · ${id}`, url: url('TitleReport'), companies: ['后摩智能', '光羽芯辰'], dimensions: ['技术路线'], updatedAt: '2026-11-03T18:00:00+08:00', insufficient: [] });
   assert.equal(parsed.title, clean);
+});
+
+test('AC-AN-07 友商分析卡片带任务状态，未发布任务补出卡片且不重复', () => {
+  const settings = new Map();
+  const root = { rootName: '行研工作台' }, otherRoot = { rootName: '另一个飞书目录' };
+  const make = (id, companies, status, createdAt, extra = {}) => ({ id, feishuRoot: root, ...analysisTaskInput({ companies, dimensions: ['技术路线'] }), status, stage: 'research', createdAt, updatedAt: createdAt, ...extra });
+  const ready = make('11111111-1111-4111-8111-111111111111', ['后摩智能', '光羽芯辰'], 'ready', '2026-11-03T10:00:00.000Z', { analysisReport: { url: url('ReportReady') } });
+  const failed = make('33333333-3333-4333-8333-333333333333', ['后摩智能', '微纳核芯'], 'failed', '2026-11-10T08:38:30.409Z', { error: '友商分析未交付报告元信息' });
+  const running = make('22222222-2222-4222-8222-222222222222', ['后摩智能', '九天睿芯'], 'running', '2026-11-10T12:00:00.000Z');
+  const tasks = [running, failed, ready];
+  const library = {
+    folderToken: 'analysisFolder',
+    manifestUrl: url('AnalysisManifest'),
+    syncedAt: null,
+    reports: [
+      { title: ready.direction, url: url('ReportReady'), companies: ['后摩智能', '光羽芯辰'], dimensions: ['技术路线'], updatedAt: '2026-11-03T18:00:00+08:00', insufficient: [], taskId: ready.id },
+      { title: failed.direction, url: url('ReportFailed'), companies: ['后摩智能', '微纳核芯'], dimensions: ['技术路线'], updatedAt: '2026-11-10T16:47:00+08:00', insufficient: ['微纳核芯'] },
+    ],
+  };
+  const store = { setting: key => settings.get(key), saveSetting: (key, value) => settings.set(key, value), list: () => tasks };
+  const cards = analysisTaskCards(store, library, root);
+
+  assert.equal(cards.reports.length, 2);
+  assert.equal(cards.reports[0].status, 'ready');
+  assert.equal(cards.reports[1].status, 'failed', '报告已发布但任务失败时，卡片必须暴露失败状态');
+  assert.equal(cards.reports[1].taskId, failed.id, '缺少 taskId 时按公司集合匹配任务');
+  assert.equal(cards.reports[1].url, url('ReportFailed'), '已发布报告仍可打开');
+
+  assert.equal(cards.tasks.length, 1, '只有在跑的任务需要补卡片');
+  assert.equal(cards.tasks[0].taskId, running.id);
+  assert.equal(cards.tasks[0].status, 'running');
+  assert.equal(cards.tasks[0].url, null, '未发布任务没有报告链接');
+  assert.deepEqual(cards.tasks[0].companies, ['后摩智能', '九天睿芯']);
+  assert.deepEqual(cards.tasks[0].dimensions, ['技术路线']);
+
+  assert.equal(library.reports[0].status, undefined, '不得改写存储中的报告索引');
+  assert.equal(settings.size, 0);
+
+  const retried = make('44444444-4444-4444-8444-444444444444', ['后摩智能', '光羽芯辰'], 'ready', '2026-11-04T10:00:00.000Z', { analysisReport: { url: url('ReportReady') } });
+  const again = analysisTaskCards({ ...store, list: () => [retried, ...tasks] }, library, root);
+  assert.equal(again.tasks.length, 1, '重跑已发布的对比不重复出卡');
+  assert.equal(again.reports.length, 2);
+
+  const foreign = make('55555555-5555-4555-8555-555555555555', ['后摩智能', '登临科技'], 'running', '2026-11-11T09:00:00.000Z', { feishuRoot: otherRoot });
+  const scoped = analysisTaskCards({ ...store, list: () => [foreign, ...tasks] }, library, root);
+  assert.equal(scoped.tasks.length, 1, '其他飞书根目录下的任务不进入当前列表');
 });
