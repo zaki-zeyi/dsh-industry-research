@@ -1,0 +1,97 @@
+name: Publish verified plugin
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+      - .github/workflows/release.yml
+permissions:
+  contents: write
+concurrency:
+  group: plugin-release
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install chromium
+      - id: build
+        run: node scripts/ci-check.mjs build
+      - id: unit
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/ci-check.mjs test
+      - id: browser
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/ci-check.mjs test:e2e
+      - run: npm run plugin:pack
+      - run: npm run plugin:check-pack
+      - run: node scripts/release-acceptance.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnostics-${{ matrix.os }}
+          path: |
+            artifacts/diagnostics
+            playwright-report
+            test-results
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}
+          path: |
+            artifacts/*.tgz
+            artifacts/*desktop.zip
+            artifacts/*.sha256
+            artifacts/plugin-release.json
+          retention-days: 14
+  publish:
+    needs: verify
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-windows-latest
+          path: artifacts
+      - name: Publish exact verified directory and release assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = Get-Content artifacts/plugin-release.json | ConvertFrom-Json
+          if ($release.sourceCommit -ne '${{ github.sha }}') { throw 'Artifact source differs from workflow commit' }
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if ($release.version -ne $version) { throw 'Artifact version mismatch' }
+          $notes = "docs/release-$version.md"
+          if (!(Test-Path -LiteralPath $notes)) { throw 'Release notes missing' }
+          $defaultBranch = gh api 'repos/${{ github.repository }}' --jq .default_branch
+          if ($LASTEXITCODE -ne 0 -or $defaultBranch -ne 'release') { throw 'Default installation branch must be release' }
+          gh release view "v$version" --repo '${{ github.repository }}' *> $null
+          if ($LASTEXITCODE -eq 0) { throw 'Version already published; bump the version first' }
+          Expand-Archive -LiteralPath "artifacts/$($release.zipFilename)" -DestinationPath artifacts
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          node scripts/publish-git-plugin.mjs --output "$env:RUNNER_TEMP/plugin-release" --push
+          if ($LASTEXITCODE -ne 0) { throw 'Default installation branch publication failed' }
+          npm install --prefix "$env:RUNNER_TEMP/pnpm" pnpm@10.11.0 --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { throw 'pnpm installation failed' }
+          node scripts/git-install-acceptance.mjs --pnpm-cli "$env:RUNNER_TEMP/pnpm/node_modules/pnpm/bin/pnpm.cjs" --expected-version $version
+          if ($LASTEXITCODE -ne 0) { throw 'Public GitHub installation failed' }
+          gh release create "v$version" artifacts/*.tgz artifacts/*desktop.zip artifacts/*.sha256 artifacts/plugin-release.json --target '${{ github.sha }}' --title "v$version" --notes-file $notes
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed' }

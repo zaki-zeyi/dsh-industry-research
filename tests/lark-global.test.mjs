@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { resolve, win32 } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runLark } from '../server/lark-cli.mjs';
@@ -80,7 +80,7 @@ test('统一执行器保留stdin、cwd与原始退出信息，不使用shell', a
   const f = fixture();
   try {
     const result = JSON.parse((await runLark(f.command, ['echo-stdin', '&', 'spaces here'], { input: 'test-input\n', cwd: f.dir })).stdout);
-    assert.equal(result.data.input, 'test-input\n'); assert.equal(result.data.cwd, f.dir); assert.deepEqual(result.data.args, ['echo-stdin', '&', 'spaces here']);
+    assert.equal(result.data.input, 'test-input\n'); assert.equal(realpathSync(result.data.cwd), realpathSync(f.dir)); assert.deepEqual(result.data.args, ['echo-stdin', '&', 'spaces here']);
     await assert.rejects(runLark(f.command, ['unsupported']), e => e.code !== 0 && /Wrong profile/.test(e.stderr));
   } finally { f.close(); }
 });
@@ -91,7 +91,7 @@ test('会话启动器与后端使用同一命令，cwd变化仍能找到配置�
     const meta = { cwd: f.dir }; prepareLarkAgent(meta, f.command);
     const result = await runLark(meta.larkClientPath, ['echo-stdin', '@./relative.md'], { input: 'report-input', cwd: tmpdir() });
     const data = JSON.parse(result.stdout).data;
-    assert.equal(data.input, 'report-input'); assert.equal(data.cwd, tmpdir()); assert.equal(data.args[1], '@./relative.md');
+    assert.equal(data.input, 'report-input'); assert.equal(realpathSync(data.cwd), realpathSync(tmpdir())); assert.equal(data.args[1], '@./relative.md');
     const config = JSON.parse(readFileSync(resolve(f.dir, 'lark-agent-config.json'), 'utf8'));
     assert.equal(config.command, process.execPath); assert.deepEqual(config.args, [f.command]);
     const noPath = await exec(process.execPath, [meta.larkClientPath, '--version'], { env: { ...process.env, PATH: '', Path: '' } });

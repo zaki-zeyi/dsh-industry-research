@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('..', import.meta.url)), dir = mkdtempSync(resolve(tmpdir(), 'native-host-')), profile = resolve(dir, 'profiles/native-test');
-mkdirSync(resolve(profile, 'node_modules'), { recursive: true }); symlinkSync(root, resolve(profile, 'node_modules/dsh-industry-research'), 'junction');
+mkdirSync(resolve(profile, 'node_modules'), { recursive: true }); symlinkSync(process.argv.includes('--package-root') ? resolve(process.argv[process.argv.indexOf('--package-root') + 1]) : root, resolve(profile, 'node_modules/dsh-industry-research'), 'junction');
 writeFileSync(resolve(profile, 'package.json'), JSON.stringify({ name: 'native-host-test', private: true, dependencies: { 'dsh-industry-research': `link:${root}` }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-industry-research'] } } }));
 const report = { title: '真实宿主原生会话验收报告', summary: '本报告由隔离的真实 DSH 宿主与本机模拟模型接口协作生成。', markdown: '本验收通过真实宿主的 Session Controller 创建会话、设定完整权限、提交任务并接收原生轮次事件。报告文件由本机模型测试夹具交付，验证工作台正确读取结构化结果并保留会话绑定。[S1]', sources: [{ id: 'S1', title: '本机模拟证据', url: 'https://example.com/native-host', excerpt: '本来源为验收夹具，用于验证本机真实宿主的会话与报告协议。' }] };
 let modelCalls = 0, browser, page, followUpObserved = false, parallelGate=null,releaseParallel;const parallelSeen=new Set();
@@ -18,11 +18,17 @@ const fakeLark = resolve(dir, 'fake-lark.cjs');
 writeFileSync(fakeLark, `#!/usr/bin/env node
 const fs=require('fs'),file=${JSON.stringify(resolve(dir,'fake-lark-profiles.json'))};let profiles={};try{profiles=JSON.parse(fs.readFileSync(file,'utf8'));}catch{}
 const args=process.argv.slice(2);
-if(args[0]==='profile'){
+if(args.includes('+fetch')){
+ console.log(JSON.stringify({ok:true,data:{document:{content:JSON.stringify({companies:[{name:'后摩智能',url:'https://example.feishu.cn/docx/embeddedNativeReport',dimensions:['技术路线'],updatedAt:'2026-11-10T00:00:00Z',added:1,conflicts:0}]})}}}));
+}else if(args.includes('files')&&args.includes('list')){
+ const parent=args[args.indexOf('--folder-token')+1]??'';
+ const files=parent==='autoFolder123'?[{name:'全量信息库',type:'folder',token:'industryNativeFolder'},{name:'日报',type:'folder',token:'nativeDailyFolder'}]:parent==='industryNativeFolder'||parent==='nativeDailyFolder'?[]:[{name:'行研工作台',type:'folder',token:'autoFolder123'}];
+ console.log(JSON.stringify({ok:true,data:{files,has_more:false}}));
+}else if(args[0]==='profile'){
  process.stdin.resume();process.stdin.on('end',()=>{profiles[args[args.indexOf('--name')+1]]=args[args.indexOf('--app-id')+1];fs.writeFileSync(file,JSON.stringify(profiles));console.log('saved');});
 }else if(args.includes('+messages-send')){if(args[args.indexOf('--as')+1]!=='bot'||args[args.indexOf('--user-id')+1]!=='ou_nativefixture')process.exit(1);console.log(JSON.stringify({ok:true,data:{message_id:'om_fixture'}}));}else{
  const profile=args[0]==='--profile'?args[1]:null;
-  console.log(JSON.stringify({appId:profile?profiles[profile]:'cli_default123',identities:{bot:{status:'ready',available:true,verified:true},user:{available:true,verified:true,openId:'ou_nativefixture',userName:'验收用户',scope:'docx:document:create docx:document:write_only docx:document:readonly docs:document:import drive:drive.metadata:readonly space:folder:create offline_access'}}}));
+  console.log(JSON.stringify({appId:profile?profiles[profile]:'cli_default123',identities:{bot:{status:'ready',available:true,verified:true},user:{available:true,verified:true,openId:'ou_nativefixture',userName:'验收用户',scope:'auth:user.id:read contact:user.basic_profile:readonly docx:document:create docx:document:write_only docx:document:readonly docs:document:import docs:document.media:upload docs:document.media:download drive:drive.metadata:readonly drive:file:upload drive:file:download space:folder:create offline_access'}}}));
 }
 `); chmodSync(fakeLark, 0o700);
 const model = createServer(async (req, res) => {
@@ -30,7 +36,7 @@ const model = createServer(async (req, res) => {
   if (!req.url.includes('/messages')) { res.writeHead(404).end(); return; }
   modelCalls++; const body = JSON.parse(text);
   const input = JSON.stringify(body.messages ?? []).replaceAll('\\\\','\\'); if (body.tools?.length && input.includes('针对这份报告补充解释')) followUpObserved = true; const match = [...input.matchAll(/请读取 (.+?prompt-[a-f0-9-]+\.txt)，按照/g)].at(-1);
-  if (match && body.tools?.length) {
+  if (match && body.tools?.length && !input.includes('针对这份报告补充解释')) {
     const prompt = readFileSync(match[1], 'utf8');
     if(parallelGate){parallelSeen.add(match[1]);if(parallelSeen.size===3)releaseParallel();await parallelGate;}
     if(prompt.includes('并行调研与保存锁'))await promisify(execFile)(process.execPath,[resolve(match[1],'..','cloud-write-client.mjs'),resolve(match[1],'..','cloud-write-config.json')]);
@@ -52,6 +58,7 @@ const model = createServer(async (req, res) => {
 }); await new Promise(r => model.listen(0, '127.0.0.1', r));
 const probe = createServer(); await new Promise(r => probe.listen(0, '127.0.0.1', r)); const port = probe.address().port; await new Promise(r => probe.close(r));
 writeFileSync(resolve(dir, 'test-patch.json'), JSON.stringify([
+  { insert: [{ id: 'schedule', name: '@deepseek-ai/dsh-schedule' }] },
   { id: 'dsh-industry-research', config: { dataDir: resolve(dir, 'workbench') } },
   { id: 'agent-preset-registry', config: { default: 'cordis' } },
   { id: 'agent-default-model', config: { provider: 'deepseek-official', model: 'deepseek-flash' } },
@@ -70,7 +77,7 @@ try {
   const response = await fetch(`${status.url}/api/industry/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companies: ['后摩智能'], dimensions: ['技术路线'], sources: ['芯东西'], requirements: '真实宿主原生会话验收' }) }); assert.equal(response.status, 202); const created = await response.json();
   const task = await until(async () => { const t = (await (await fetch(`${status.url}/api/tasks/${created.id}`)).json()).task; if (t.status === 'failed') throw new Error(t.error); return t.status === 'ready' && t.publication.status === 'published' && t; });
   const db = new DatabaseSync(resolve(dir, 'workbench/research.sqlite'), { readOnly: true }); const bindingMeta = JSON.parse(db.prepare('SELECT body FROM terminals WHERE id=?').get(task.terminalId).body); db.close(); assert.equal(bindingMeta.agentPreset, 'standard', '宿主默认其他模式时，新调研仍明确采用标准模式');
-  assert.equal(task.feishuApp.appId, 'cli_nativeCustom123'); assert.match(task.feishuApp.profile, /^research-/); assert.ok(readFileSync(bindingMeta.promptPath, 'utf8').includes('lark-cli --profile ' + task.feishuApp.profile)); assert.ok(!JSON.stringify(task).includes('fake-acceptance-secret'));
+  assert.equal(task.feishuApp.appId, 'cli_nativeCustom123'); assert.match(task.feishuApp.profile, /^research-/); assert.ok(readFileSync(bindingMeta.promptPath, 'utf8').includes('--profile ' + task.feishuApp.profile)); assert.ok(!JSON.stringify(task).includes('fake-acceptance-secret'));
   assert.equal(task.nativeSession, true); assert.equal(task.terminalMode, false); assert.equal(task.report, null); assert.equal(task.draft, ''); assert.equal(task.cloudOnly, true); assert.ok(task.nativeSessionId);
   const binding = await (await fetch(`${hostURL}/industry-research/session?taskId=${task.id}`)).json(); assert.equal(binding.sessionId, task.nativeSessionId); assert.equal(task.publication.status, 'published'); assert.ok(modelCalls > 0);
   const research={companies:['后摩智能'],dimensions:['技术路线'],sources:['芯东西'],requirements:''};
@@ -91,12 +98,12 @@ try {
     const launchURL = /dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s]+)/.exec(log)?.[1] ?? hostURL;
     let blockStartup = true; await page.route('**/industry-research/status', route => blockStartup ? new Promise(() => {}) : route.continue());
     await page.goto(launchURL);
-    const preview = page.getByRole('button', { name: 'Continue', exact: true }); try { await preview.waitFor({ state: 'visible', timeout: 5000 }); await preview.click(); } catch {}
+    const preview = page.getByRole('button', { name: /^(Continue|继续)$/, exact: true }); try { await preview.waitFor({ state: 'visible', timeout: 5000 }); await preview.click(); } catch {}
     await page.getByRole('button', { name: '行研工作台', exact: true }).click({ timeout: 25000 });
     await page.getByRole('alert').filter({ hasText: '连接宿主超时' }).waitFor({ timeout: 12000 }); blockStartup = false; await page.getByRole('button', { name: '重新连接工作台', exact: true }).click();
     const workbench = page.frameLocator('iframe[title="行研工作台"]');
-    await workbench.getByRole('button', { name: '历史 AI 任务' }).click();
-    const card = workbench.locator('.industry-history article').filter({ hasText: task.direction });
+    await workbench.getByRole('tab', { name: '历史 AI 任务' }).click();
+    const card = workbench.locator('#task-card-' + task.id);
     await card.getByRole('button', { name: /继续会话/ }).click();
     await page.getByRole('region', { name: '行研工作台原生对话' }).waitFor();
     await page.locator('[contenteditable="true"]').last().waitFor();
@@ -106,7 +113,7 @@ try {
     await page.locator('[contenteditable="true"]').last().press('Enter'); await until(() => followUpObserved);
     mkdirSync(resolve(root, 'artifacts'), { recursive: true }); await page.screenshot({ path: resolve(root, 'artifacts/embedded-native-chat.png'), fullPage: true });
     await page.getByRole('region', { name: '行研工作台原生对话' }).getByRole('button', { name: '返回', exact: true }).click();
-    await workbench.getByRole('button', { name: '历史 AI 任务' }).click(); await card.waitFor(); await workbench.getByRole('button', { name: /^全量信息库/ }).click(); await workbench.getByRole('link', { name: '后摩智能' }).waitFor();
+    await workbench.getByRole('tab', { name: '历史 AI 任务' }).click(); await card.waitFor(); await workbench.getByRole('button', { name: /^全量信息库/ }).click(); await workbench.getByRole('link', { name: '后摩智能' }).waitFor();
     const after = (await (await fetch(`${status.url}/api/tasks/${task.id}`)).json()).task;
     assert.equal(after.nativeSessionId, task.nativeSessionId); assert.equal(after.runs.length, 1); assert.equal(after.report, null);
     assert.ok(readdirSync(bindingMeta.cwd).every(name => !name.startsWith('report-')));

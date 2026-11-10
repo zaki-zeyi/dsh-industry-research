@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../server/store.mjs';
@@ -11,5 +12,20 @@ export function fixture(options = {}) {
   const researcher = options.researcher ?? new DemoResearcher({ delayMs: 5, failResearch: options.failResearch });
   const publisher = options.publisher ?? new DemoPublisher(store, { failPublish: options.failPublish });
   const service = new ResearchService(store, researcher, publisher);
-  return { dir, path, store, service, researcher, publisher, async close() { await service.close(); store.close(); rmSync(dir, { recursive: true, force: true }); } };
+  return { dir, path, store, service, researcher, publisher, async close() {
+    try { await service.close(); }
+    finally {
+      // Keep only Store's allowlisted diagnostics, never business tables or CLI output.
+      if (process.env.CI_ARTIFACT_DIR) {
+        try {
+          const rows = store.runtimeLogs({ limit: 1000 });
+          if (rows.length) {
+            mkdirSync(process.env.CI_ARTIFACT_DIR, { recursive: true });
+            writeFileSync(join(process.env.CI_ARTIFACT_DIR, `runtime-${randomUUID()}.json`), JSON.stringify(rows, null, 2));
+          }
+        } catch { console.warn('Unable to export test runtime diagnostics'); }
+      }
+      store.close(); rmSync(dir, { recursive: true, force: true });
+    }
+  } };
 }

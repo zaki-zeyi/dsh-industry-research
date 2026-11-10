@@ -5,6 +5,47 @@ import { FeishuBinding, requiredScopes, optionalScopes } from '../server/feishu-
 import { createApp } from '../server/app.mjs';
 import { applicationRunner, registrationRunner } from './fixtures/fake-feishu-application.mjs';
 
+for (const keyState of ['available', 'ready', 'present', undefined]) {
+  test(`身份埋点：有效授权及密钥状态 ${keyState} 不产生密钥故障误报`, async () => {
+    const f = fixture();
+    const b = new FeishuBinding({ store: f.store, run: async () => ({
+      appId: 'cli_monitor123', ...(keyState ? { dpopKeyStatus: keyState } : {}),
+      identities: { user: { available: true, verified: true, scope: requiredScopes.join(' '), message: 'DPoP enabled' } },
+    }) });
+    try {
+      assert.equal((await b.status()).bound, true);
+      const identity = f.store.runtimeLogs().find(row => row.details.phase === 'identity_check');
+      assert.equal(identity.details.code, 'OK');
+      assert.equal(identity.details.status, 'completed');
+    } finally { b.close(); await f.close(); }
+  });
+}
+
+for (const keyState of ['missing', 'unavailable', 'invalid', 'error']) {
+  test(`身份埋点：真实密钥故障 ${keyState} 仍然记录告警`, async () => {
+    const f = fixture();
+    const b = new FeishuBinding({ store: f.store, run: async () => ({
+      appId: 'cli_monitor123', dpopKeyStatus: keyState,
+      identities: { user: { available: false, verified: false } },
+    }) });
+    try {
+      assert.equal((await b.status()).bound, false);
+      assert.equal(f.store.runtimeLogs().find(row => row.details.phase === 'identity_check').details.code, 'LOCAL_KEY_UNAVAILABLE');
+    } finally { b.close(); await f.close(); }
+  });
+}
+
+test('身份埋点：没有密钥状态字段时仍识别明确的 DPoP 错误信息', async () => {
+  const f = fixture();
+  const b = new FeishuBinding({ store: f.store, run: async () => ({
+    appId: 'cli_monitor123', identities: { user: { available: false, message: 'DPoP key unavailable or inconsistent' } },
+  }) });
+  try {
+    assert.equal((await b.status()).bound, false);
+    assert.equal(f.store.runtimeLogs().find(row => row.details.phase === 'identity_check').details.code, 'LOCAL_KEY_UNAVAILABLE');
+  } finally { b.close(); await f.close(); }
+});
+
 test('飞书监测：重复应用错误保留原异常，记录存储阶段和耗时，过滤全部凭据及原始输出', async () => {
   const f = fixture(), error = Object.assign(new Error('each profile must have a unique app-id; SECRET'), { stderr: 'access_token=TOKEN' });
   const b = new FeishuBinding({ store: f.store, run: async () => { throw error; } });

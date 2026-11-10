@@ -121,10 +121,14 @@ test('读取全部分页后才判定不存在；同名普通文档不算文件�
   } finally { f.close(); }
 });
 
-test('截图中的两个同名目录明确报冲突，不任选一个、不新建、不删除', async () => {
+test('历史两个同名日报目录稳定复用同一个，不新建、不删除', async () => {
   const f = fixture({ Root: [folder('全量信息库', 'Library'), folder('日报', 'A'), folder('日报', 'B')] });
   try {
-    await assert.rejects(f.directories.prepare(task({ briefing: { kind: 'daily' } })), e => e.code === 'FOLDER_AMBIGUOUS' && /多个同名/.test(e.message));
+    const t = task({ briefing: { kind: 'daily' } });
+    await f.directories.prepare(t);
+    assert.equal(t.briefingLibrary.folderToken, 'A');
+    f.pages.get('Root').reverse();
+    await f.directories.prepare(task({ briefing: { kind: 'daily' } }));
     assert.equal(f.creates().length, 0); assert.ok(f.calls.every(a => a.includes('list')));
   } finally { f.close(); }
 });

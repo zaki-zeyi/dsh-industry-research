@@ -213,7 +213,7 @@ export class ResearchService {
     const key=briefingKey(t), prior=this.store.setting(key) ?? {};
     if (prior.folderToken && delivery.reportFolderToken && prior.folderToken !== delivery.reportFolderToken) throw new Error('日报/周报子目录不一致');
     if (delivery.status === 'published' && !delivery.reportFolderToken) throw new Error('日报/周报交付缺少子目录');
-    if (delivery.reportFolderToken) this.store.saveSetting(key,{folderToken:delivery.reportFolderToken});
+    if (delivery.reportFolderToken) this.store.saveSetting(key,{...prior,rootFolderToken:t.feishuRoot.folderToken,folderToken:delivery.reportFolderToken});
   }
   rememberInternalMaterial(t, delivery) {
     if (!t.internal) return;
