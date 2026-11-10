@@ -37,3 +37,32 @@ test('页签报错可直接打开统一环境检查，不需要离开当前页�
   await expect(dialog.getByLabel('官方安装命令', { exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: '关闭飞书环境检查' }).click(); await expect(dialog).toHaveCount(0);
 });
+
+for (const recovered of [true, false]) test(`CLI 可用不清横幅，实际重试${recovered ? '成功才清除' : '失败保留原因'}`, async ({ page }) => {
+  let attempts = 0;
+  const message = '飞书本地签名密钥不可用，请重新授权';
+  await page.route('**/api/feishu-cli', route => route.fulfill({ json: { install, platform: 'win32', status: 'ready', version: '1.0.98' } }));
+  await page.route('**/api/industry/library*', route => {
+    if (new URL(route.request().url()).searchParams.get('refresh') === 'true') {
+      attempts++;
+      if (!recovered || attempts === 1) return route.fulfill({ status: 502, json: { error: message } });
+    }
+    return route.fulfill({ json: { companies: [], syncedAt: null } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '检查飞书环境', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '飞书环境检查' });
+  await expect(dialog.getByText('CLI 可用 · 1.0.98', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '重新检测 CLI', exact: true })).toBeEnabled();
+  await expect(page.locator('.industry-error')).toContainText(message);
+  expect(attempts).toBe(1);
+  await dialog.getByRole('button', { name: '重试失败的读取', exact: true }).click();
+  if (recovered) {
+    await expect(dialog.getByText('索引读取已恢复，对应错误横幅已清除。', { exact: true })).toBeVisible();
+    await expect(page.locator('.industry-error')).toHaveCount(0);
+  } else {
+    await expect(dialog.getByText(`读取仍未恢复：${message}`, { exact: true })).toBeVisible();
+    await expect(page.locator('.industry-error')).toContainText(message);
+  }
+  expect(attempts).toBe(2);
+});
