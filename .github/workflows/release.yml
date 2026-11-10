@@ -1,6 +1,5 @@
 name: Publish verified plugin
 on:
-  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -87,6 +86,8 @@ jobs:
           Expand-Archive -LiteralPath "artifacts/$($release.zipFilename)" -DestinationPath artifacts
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          gh auth setup-git --hostname github.com
+          if ($LASTEXITCODE -ne 0) { throw 'Git credential setup failed' }
           node scripts/publish-git-plugin.mjs --output "$env:RUNNER_TEMP/plugin-release" --push
           if ($LASTEXITCODE -ne 0) { throw 'Default installation branch publication failed' }
           npm install --prefix "$env:RUNNER_TEMP/pnpm" pnpm@10.11.0 --ignore-scripts
