@@ -56,17 +56,29 @@ export function IndustryApp({ BindingModal, RootModal, Conversation }) {
   const [filter, setFilter] = useState('all');
   const [refreshing, setRefreshing] = useState(false), [syncError, setSyncError] = useState(''), [syncNotice, setSyncNotice] = useState(''), [reportSyncError, setReportSyncError] = useState(''), [syncedAt, setSyncedAt] = useState(null);
   const syncLock = useRef(false), libraryRevision = useRef(0), hasLibraryResult = useRef(false);
-  const reportSyncLock = useRef(false), reportRevision = useRef(0), hasReportResult = useRef(false);
-  async function load() {
-    const revision = libraryRevision.current;
-    const reportVersion = reportRevision.current;
+  const reportSyncLock = useRef(false), reportRevision = useRef(0), hasReportResult = useRef(false), taskLock = useRef(false);
+  // Everything below reads the local cache only. Remote refreshes are explicit
+  // (mount, manual button) or on a 60s TTL, never on a 4s timer.
+  async function loadConfig() { try { setConfig(await api('/config')); } catch (e) { setError(e.message); } }
+  async function loadTasks() {
+    if (taskLock.current) return null;
+    taskLock.current = true;
     try {
-      const [c, l, r, t] = await Promise.all([api('/config'), api('/industry/library'), api('/analysis/reports'), api('/tasks?limit=100')]);
-      if(revision === libraryRevision.current)setConfig(c);
-      if ((!syncLock.current && revision === libraryRevision.current) || !hasLibraryResult.current) { hasLibraryResult.current = true; setCompanies(l.companies); setSyncedAt(l.syncedAt ?? null); }
-      if ((!reportSyncLock.current && reportVersion === reportRevision.current) || !hasReportResult.current) { hasReportResult.current = true; setReports(r.reports.map(item => ({ ...item, title: cleanAnalysisTitle(item.title) }))); setReportsSyncedAt(r.syncedAt ?? null); }
+      const t = await api('/tasks?limit=100');
       setTasks(old => [...t.items, ...old.filter(v => !t.items.some(n => n.id === v.id))]); setCursor(old => old ?? t.nextCursor);
-    } catch (e) { setError(e.message); } finally { setLoading(false); }
+      return t.items;
+    } catch (e) { setError(e.message); return null; } finally { taskLock.current = false; }
+  }
+  async function loadIndex() {
+    const revision = libraryRevision.current, reportVersion = reportRevision.current;
+    const [library, analysis] = await Promise.allSettled([api('/industry/library'), api('/analysis/reports')]);
+    if (library.status === 'fulfilled' && ((!syncLock.current && revision === libraryRevision.current) || !hasLibraryResult.current)) { hasLibraryResult.current = true; setCompanies(library.value.companies); setSyncedAt(library.value.syncedAt ?? null); }
+    if (analysis.status === 'fulfilled' && ((!reportSyncLock.current && reportVersion === reportRevision.current) || !hasReportResult.current)) { hasReportResult.current = true; setReports(analysis.value.reports.map(item => ({ ...item, title: cleanAnalysisTitle(item.title) }))); setReportsSyncedAt(analysis.value.syncedAt ?? null); }
+    if (library.status === 'rejected') setError(library.reason.message);
+    if (analysis.status === 'rejected') setError(analysis.reason.message);
+  }
+  async function load() {
+    try { await Promise.all([loadConfig(), loadIndex(), loadTasks()]); } finally { setLoading(false); }
   }
   async function refreshCompanies() {
     if (syncLock.current) return '索引正在读取，请稍后重试';
@@ -90,9 +102,32 @@ export function IndustryApp({ BindingModal, RootModal, Conversation }) {
     const failures = (await Promise.all(reads)).filter(Boolean);
     return failures.length ? `读取仍未恢复：${failures.join('；')}` : '索引读取已恢复，对应错误横幅已清除。';
   }
+  const freshWithin = value => Boolean(value) && Number.isFinite(Date.parse(value)) && Date.now() - Date.parse(value) < 60000;
+  // Entering a tab reuses its cache within 60s; only an explicit refresh forces a remote read.
+  function enterLibrary() { if (!freshWithin(syncedAt)) refreshCompanies(); }
+  function enterAnalysis() { if (!freshWithin(reportsSyncedAt)) refreshReports(); }
   async function refreshBinding() { try { const b = await api('/feishu-binding'); setBinding(b); return b; } catch (e) { setError(e.message); return null; } }
-  useEffect(() => { load(); refreshCompanies(); refreshReports(); refreshBinding(); const timer = setInterval(load, 4000); return () => clearInterval(timer); }, []);
-  useEffect(() => { let live = true; const sync = () => { const id = location.hash.slice(1).split('/')[0]; if (/^[a-f0-9-]{36}$/.test(id)) api('/tasks/' + id).then(v => { if (live && location.hash.slice(1).split('/')[0] === id) setSelected(v.task); }).catch(e => setError(e.message)); else setSelected(null); }; sync(); window.addEventListener('hashchange', sync); const timer = setInterval(sync, 2000); return () => { live = false; clearInterval(timer); window.removeEventListener('hashchange', sync); }; }, []);
+  useEffect(() => { load(); refreshCompanies(); refreshReports(); refreshBinding(); }, []);
+  const tasksRef = useRef(tasks); tasksRef.current = tasks;
+  useEffect(() => {
+    let live = true, timer = null;
+    const terminal = ['ready', 'failed', 'interrupted'];
+    const tick = async () => {
+      if (!live) return;
+      const active = tasksRef.current.some(t => ['running', 'queued'].includes(t.status));
+      if (!document.hidden) {
+        const before = tasksRef.current, items = await loadTasks();
+        // A finished task may have written documents, so re-read the local index once.
+        if (items?.some(item => terminal.includes(item.status) && before.some(old => old.id === item.id && ['running', 'queued'].includes(old.status)))) loadIndex();
+      }
+      timer = setTimeout(tick, active ? 4000 : 30000);
+    };
+    timer = setTimeout(tick, 4000);
+    const resume = () => { if (!document.hidden && live) loadTasks(); };
+    document.addEventListener('visibilitychange', resume);
+    return () => { live = false; clearTimeout(timer); document.removeEventListener('visibilitychange', resume); };
+  }, []);
+  useEffect(() => { let live = true; const sync = () => { if (document.hidden) return; const id = location.hash.slice(1).split('/')[0]; if (/^[a-f0-9-]{36}$/.test(id)) api('/tasks/' + id).then(v => { if (live && location.hash.slice(1).split('/')[0] === id) setSelected(v.task); }).catch(e => setError(e.message)); else setSelected(null); }; sync(); window.addEventListener('hashchange', sync); const timer = setInterval(sync, 2000); return () => { live = false; clearInterval(timer); window.removeEventListener('hashchange', sync); }; }, []);
   useEffect(() => { const receive = e => { const origin = hostOrigin(document.referrer, new URLSearchParams(location.search).get('hostOrigin')); if (origin && e.origin === origin && e.source === window.parent && e.data?.type === 'industry-research:show-report' && (e.data.taskId === '' || /^[a-f0-9-]{36}$/.test(e.data.taskId ?? ''))) location.hash = e.data.taskId; }; window.addEventListener('message', receive); return () => window.removeEventListener('message', receive); }, []);
   const open = t => { setCardTarget(null); setSelected(t); location.hash = t.id; };
   const back = () => { setCardTarget(null); setSelected(null); location.hash = ''; load(); };
@@ -115,7 +150,7 @@ export function IndustryApp({ BindingModal, RootModal, Conversation }) {
   const primaryLabel = tab === 'analysis' ? '新建友商分析' : '更新全量信息库';
   const primaryDisabled = tab === 'analysis' && (!config?.analysisAvailable || sourceCompanies.length < 2);
   return <div className="industry-shell">
-    <aside className="industry-sidebar"><a className="industry-brand" href="#" onClick={back}><span>研</span>行研工作台</a><div className="side-caption">研究空间</div><button className={['library','history'].includes(tab) && !selected ? 'active' : ''} onClick={() => { back(); setTab('library'); setQuery(''); refreshCompanies(); }}><Library size={18}/>全量信息库<span>{companies.length}</span></button><button className={tab === 'analysis' && !selected ? 'active' : ''} onClick={() => { back(); setTab('analysis'); setQuery(''); load(); refreshReports(); }}><GitCompare size={18}/>友商分析<span>{reports.length}</span></button>{['daily','weekly'].map(k=><button key={k} className={tab===k&&!selected?'active':''} onClick={()=>{back();setTab(k);setQuery('');}}><History size={18}/>{k==='daily'?'日报':'周报'}</button>)}<button className={tab === 'internal' && !selected ? 'active' : ''} onClick={() => { back(); setTab('internal'); setQuery(''); }}><FileText size={18}/>内部资料</button><div className="industry-side-bottom"><span className="live-dot"/>一个公司，一份持续生长的研究<small>DSH · Industry Research</small></div></aside>
+    <aside className="industry-sidebar"><a className="industry-brand" href="#" onClick={back}><span>研</span>行研工作台</a><div className="side-caption">研究空间</div><button className={['library','history'].includes(tab) && !selected ? 'active' : ''} onClick={() => { back(); setTab('library'); setQuery(''); enterLibrary(); }}><Library size={18}/>全量信息库<span>{companies.length}</span></button><button className={tab === 'analysis' && !selected ? 'active' : ''} onClick={() => { back(); setTab('analysis'); setQuery(''); enterAnalysis(); }}><GitCompare size={18}/>友商分析<span>{reports.length}</span></button>{['daily','weekly'].map(k=><button key={k} className={tab===k&&!selected?'active':''} onClick={()=>{back();setTab(k);setQuery('');}}><History size={18}/>{k==='daily'?'日报':'周报'}</button>)}<button className={tab === 'internal' && !selected ? 'active' : ''} onClick={() => { back(); setTab('internal'); setQuery(''); }}><FileText size={18}/>内部资料</button><div className="industry-side-bottom"><span className="live-dot"/>一个公司，一份持续生长的研究<small>DSH · Industry Research</small></div></aside>
     <main className="industry-main"><header className="industry-top"><span>行研工作台 <i>/</i> {pageName}</span><div>{binding?.bound ? <><span className="industry-binding-summary" role="status" aria-label={`已绑定飞书：${binding.userName || '当前账号'}${binding.appName ? `，当前应用：${binding.appName}` : ''}`}><strong>已绑定：{binding.userName || '当前账号'}</strong>{binding.appName && <small>{binding.appName}</small>}</span><button onClick={() => setModal('binding-replace')}>更换应用</button><button onClick={() => setModal('binding-rebind')}>重新绑定</button></> : <button onClick={() => setModal('binding-bind')}>绑定飞书</button>}<button onClick={() => setModal('root')}><Folder size={14}/>设置飞书根目录</button><button aria-label="平台日志" onClick={() => { back(); setTab('logs'); }}><Activity size={16}/>平台日志</button></div></header>
     {binding?.operation?.status==='failed' && <div className="industry-error" role="alert">所选应用已保留，但个人授权尚未完成。{binding.operation.error}</div>}
     {(syncError || reportSyncError || error) && <div className="industry-error" role="alert"><AlertCircle size={17}/>{syncError || reportSyncError || error}<button onClick={() => setModal('cli-setup')}>检查飞书环境</button><button aria-label="关闭错误" onClick={() => { setError(''); setSyncError(''); setReportSyncError(''); }}><X size={16}/></button></div>}

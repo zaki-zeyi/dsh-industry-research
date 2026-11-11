@@ -1,8 +1,9 @@
-import { cloudPublications, mergePublicationCards } from './cloud-publications.mjs';
+import { cloudPublications, mergePublicationCards, publicationCacheKey } from './cloud-publications.mjs';
+import { createScopedSync } from './sync-once.mjs';
 import { briefingTask } from './briefings.mjs';
 import { libraryReadError } from './library-errors.mjs';
 import { refreshLibrary, importLibrary, preferences, preferencesSchema, library, companyTaskInput, libraryKey } from './industry.mjs';
-import { refreshAnalysisLibrary, analysisLibrary, analysisTaskInput } from './analysis.mjs';
+import { refreshAnalysisLibrary, analysisLibrary, analysisKey, analysisTaskInput } from './analysis.mjs';
 import { createRequire } from 'node:module';
 const express = createRequire(import.meta.url)('express');
 import { resolve, dirname } from 'node:path';
@@ -44,21 +45,30 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.get('/api/runtime-logs', (req, res, next) => { try { const query = z.object({limit:z.coerce.number().int().min(1).max(200).optional(),before:z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()}).parse(req.query); res.setHeader('Cache-Control','no-store'); res.json({items:service.store.runtimeLogs(query)}); } catch(e) { next(e); } });
   app.get('/api/industry/preferences', (_req, res) => res.json(preferences(service.store)));
   app.put('/api/industry/preferences', (req, res, next) => { try { res.json(service.store.saveSetting('industry-preferences', preferencesSchema.parse(req.body))); } catch (e) { next(e); } });
-  app.get('/api/industry/library', async (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); const root = service.feishuSettings(), app = service.binding?.applicationSnapshot?.(); res.json(req.query.refresh === 'true' ? await refreshLibrary(service.store, root, app, libraryRun, { command: service.binding?.command }) : library(service.store, root, app)); } catch (e) { const safe = libraryReadError(e); service.store.runtimeLog('feishu.index.failed', { code: safe.code, phase: 'cloud_read', operation: 'library' }, 'error'); next(safe); } });
+  app.get('/api/industry/library', async (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); const root = service.feishuSettings(), app = service.binding?.applicationSnapshot?.(); res.json(req.query.refresh === 'true' ? await indexSync.run(libraryKey(root,app),{},()=>library(service.store,root,app),()=>refreshLibrary(service.store, root, app, libraryRun, { command: service.binding?.command })) : library(service.store, root, app)); } catch (e) { const safe = libraryReadError(e); service.store.runtimeLog('feishu.index.failed', { code: safe.code, phase: 'cloud_read', operation: 'library' }, 'error'); next(safe); } });
   app.post('/api/industry/tasks', async (req, res, next) => { try { const key = req.headers['idempotency-key']; if (key) z.string().min(1).max(100).parse(key); res.status(202).json(await service.createAuthorized(companyTaskInput(req.body), key)); } catch (e) { next(e); } });
-  async function readPublications(kind, refresh) {
-    try { return await cloudPublications(service,kind,{refresh,run:publicationRun}); }
+  const publicationSync = createScopedSync();
+  const indexSync = createScopedSync({ ttlMs: 0 });
+  const internalDirectory = () => service.store.setting('internal-directory-name') ?? '内部资料';
+  // One remote read per scope: a running scan is shared, and a result cached
+  // less than 60s ago is reused unless the caller forces a refresh.
+  async function syncPublications(kind, { force = false } = {}) {
+    const key = publicationCacheKey(service.feishuSettings(), service.binding?.applicationSnapshot?.(), kind, internalDirectory());
+    return publicationSync.run(key, { force }, () => cloudPublications(service, kind), () => cloudPublications(service, kind, { refresh: true, run: publicationRun }));
+  }
+  async function readPublications(kind, { refresh = false, force = false } = {}) {
+    try { return refresh ? await syncPublications(kind, { force }) : await cloudPublications(service, kind); }
     catch(error) {
       const safe=libraryReadError(error);
       service.store.runtimeLog('feishu.publications.read',{phase:'cloud_read',code:safe.code,status:'failed'},'warn');
       const cached=await cloudPublications(service,kind); return {...cached,syncError:safe.message};
     }
   }
-  app.get('/api/briefings', async (req,res,next) => { try { const kind = z.enum(['daily','weekly']).optional().parse(req.query.kind); const kinds = kind ? [kind] : ['daily','weekly']; const results=await Promise.all(kinds.map(k => readPublications(k,req.query.refresh === 'true'))); const remote=results.flatMap(v=>v.items); const local=service.store.list().filter(t => t.briefing && (!kind || t.briefing.kind === kind)).map(t => ({id:t.id,direction:t.direction,status:t.status,createdAt:t.createdAt,briefing:t.briefing,stage:t.stage,publication:t.publication,notification:t.notification})); res.json({items:mergePublicationCards(local,remote),syncError:results.find(v=>v.syncError)?.syncError}); } catch(error) { next(libraryReadError(error)); } });
+  app.get('/api/briefings', async (req,res,next) => { try { const kind = z.enum(['daily','weekly']).optional().parse(req.query.kind); const kinds = kind ? [kind] : ['daily','weekly']; const results=await Promise.all(kinds.map(k => readPublications(k,{refresh:req.query.refresh === 'true',force:req.query.force === 'true'}))); const remote=results.flatMap(v=>v.items); const local=service.store.list().filter(t => t.briefing && (!kind || t.briefing.kind === kind)).map(t => ({id:t.id,direction:t.direction,status:t.status,createdAt:t.createdAt,briefing:t.briefing,stage:t.stage,publication:t.publication,notification:t.notification})); res.json({items:mergePublicationCards(local,remote),syncError:results.find(v=>v.syncError)?.syncError,syncedAt:results.map(v=>v.syncedAt).filter(Boolean).sort().at(-1) ?? null}); } catch(error) { next(libraryReadError(error)); } });
   app.post('/api/briefings', async(req,res,next)=>{try {res.status(202).json(await service.createAuthorized(briefingTask(req.body),req.headers['idempotency-key']));}catch(e){next(e);}});
   app.post('/api/briefings/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);if(!t.briefing||t.status!=='ready')throw new ServiceError(409,'报告尚未完成');await service.notifications.send(t.id,{currentUser:true});res.json(service.require(t.id));}catch(e){next(e);}});
   app.get('/api/internal-materials', async (req, res, next) => { try {
-    const remote=await readPublications('internal',req.query.refresh === 'true');
+    const remote=await readPublications('internal',{refresh:req.query.refresh === 'true',force:req.query.force === 'true'});
     res.json({items: mergePublicationCards(service.store.list().filter(task => task.internal).map(task => ({
       id: task.id,
       direction: task.direction,
@@ -70,7 +80,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
       publication: task.publication,
       notification: task.notification,
       error: task.error,
-    })), remote.items), syncError:remote.syncError});
+    })), remote.items), syncError:remote.syncError, syncedAt:remote.syncedAt ?? null});
   } catch(error) { next(libraryReadError(error)); } });
   app.put('/api/internal-materials/settings', (req, res, next) => {
     try {
@@ -104,7 +114,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.get('/api/briefings/schedule',(req,res,next)=>{try{const kind=req.query.kind?z.enum(['daily','weekly']).parse(req.query.kind):undefined;res.json(service.briefingSchedules?.get(kind)??{available:false});}catch(e){next(e);}});
   app.put('/api/briefings/schedule',async(req,res,next)=>{try{res.json(await service.briefingSchedules.save(req.body));}catch(e){next(e);}});
   app.post('/api/briefings/trigger/:kind',async(req,res,next)=>{try{const kind=z.enum(['daily','weekly']).parse(req.params.kind);res.status(202).json(await service.briefingSchedules.trigger(kind));}catch(e){next(e);}});
-  app.get('/api/analysis/reports', async (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); const root = service.feishuSettings(), app = service.binding?.applicationSnapshot?.(); res.json(req.query.refresh === 'true' ? await refreshAnalysisLibrary(service.store, root, app, analysisRun, { command: service.binding?.command }) : analysisLibrary(service.store, root, app)); } catch (e) { const safe = libraryReadError(e); service.store.runtimeLog('feishu.index.failed', { code: safe.code, phase: 'cloud_read', operation: 'analysis' }, 'error'); next(safe); } });
+  app.get('/api/analysis/reports', async (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); const root = service.feishuSettings(), app = service.binding?.applicationSnapshot?.(); res.json(req.query.refresh === 'true' ? await indexSync.run(analysisKey(root,app),{},()=>analysisLibrary(service.store,root,app),()=>refreshAnalysisLibrary(service.store, root, app, analysisRun, { command: service.binding?.command })) : analysisLibrary(service.store, root, app)); } catch (e) { const safe = libraryReadError(e); service.store.runtimeLog('feishu.index.failed', { code: safe.code, phase: 'cloud_read', operation: 'analysis' }, 'error'); next(safe); } });
   app.post('/api/analysis/tasks', async (req, res, next) => { try { const key = req.headers['idempotency-key']; if (key) z.string().min(1).max(100).parse(key); res.status(202).json(await service.createAuthorized(analysisTaskInput(req.body), key)); } catch (e) { next(e); } });
   app.get('/api/ai-settings', (_req, res) => { if (!service.aiSettings) return res.status(503).json({ error: 'AI 配置尚未启用' }); res.setHeader('Cache-Control', 'no-store'); res.json(service.aiSettings.get()); });
   app.put('/api/ai-settings', (req, res) => { if (!service.aiSettings) return res.status(503).json({ error: 'AI 配置尚未启用' }); try { const input = z.object({ agent: z.enum(['codex', 'dsh']) }).strict().parse(req.body); res.json(service.aiSettings.save(input)); } catch (error) { res.status(400).json({ error: error instanceof z.ZodError ? 'AI 配置字段无效' : error.message }); } });
