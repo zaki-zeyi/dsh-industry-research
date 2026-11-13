@@ -28,6 +28,62 @@ export function analysisLibrary(store, root, app) {
   return { ...current, reports: (current.reports ?? []).map(report => ({ ...report, title: cleanAnalysisTitle(report.title) })) };
 }
 
+const sameCompanies = (left, right) => {
+  const a = Array.isArray(left) ? left : [], b = Array.isArray(right) ? right : [];
+  return a.length > 0 && a.length === b.length && a.every(name => b.includes(name));
+};
+
+// The 友商分析 page must show work that is still running and work that stopped,
+// not only the reports already registered in the Feishu index. Reports keep the
+// published shape; each one borrows the status of the task that produced it, and
+// analysis tasks without a registered report are returned as cards of their own
+// (`url` stays null until the report exists). Tasks are scoped to the same Feishu
+// root/application namespace as the index, and nothing here is persisted, so the
+// stored index keeps exactly what the Agent wrote.
+export function analysisTaskCards(store, library, root, app) {
+  const key = analysisKey(root ?? {}, app);
+  const reports = (library.reports ?? []).map(report => ({ ...report }));
+  const newestFirst = (store.list?.() ?? [])
+    .filter(task => task?.analysis && Array.isArray(task.analysis.companies) && analysisKey(task.feishuRoot ?? {}, task.feishuApp) === key)
+    .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+  const claimed = new Set(), pending = [];
+  for (const task of newestFirst) {
+    const index = reports.findIndex((report, at) => !claimed.has(at) && (
+      (report.taskId && report.taskId === task.id)
+      || (task.analysisReport?.url && report.url === task.analysisReport.url)
+      || sameCompanies(report.companies, task.analysis.companies)
+    ));
+    if (index < 0) {
+      // A retry of an already published comparison must not add a second card.
+      if (!reports.some(report => sameCompanies(report.companies, task.analysis.companies))) pending.push(task);
+      continue;
+    }
+    claimed.add(index);
+    const report = reports[index];
+    report.taskId = report.taskId ?? task.id;
+    report.status = task.status;
+    report.stage = task.stage;
+  }
+  return {
+    ...library,
+    reports,
+    tasks: pending.map(task => ({
+      id: task.id,
+      taskId: task.id,
+      title: cleanAnalysisTitle(task.direction ?? `友商分析 · ${task.analysis.companies.join(' × ')}`),
+      url: null,
+      companies: task.analysis.companies,
+      dimensions: task.analysis.dimensions ?? [],
+      insufficient: [],
+      status: task.status,
+      stage: task.stage,
+      error: task.error ?? null,
+      createdAt: task.createdAt ?? null,
+      updatedAt: task.updatedAt ?? task.createdAt ?? null,
+    })),
+  };
+}
+
 export function analysisTaskInput(input) {
   const value = analysisInputSchema.parse(input);
   const names = value.companies.length <= 3
