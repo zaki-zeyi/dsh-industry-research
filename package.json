@@ -1,6 +1,6 @@
 {
   "name": "dsh-industry-research",
-  "version": "0.8.14",
+  "version": "0.8.15",
   "private": true,
   "type": "module",
   "engines": {
@@ -29,19 +29,26 @@
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "1.76.0",
+    "express": "4.22.3",
+    "node-pty": "1.1.0",
+    "ws": "8.22.0",
+    "zod": "4.6.7"
+  },
+  "bundledDependencies": [
+    "@larksuiteoapi/node-sdk",
+    "express",
+    "node-pty",
+    "ws",
+    "zod"
+  ],
+  "devDependencies": {
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
-    "express": "4.22.3",
     "lucide-react": "0.468.0",
-    "node-pty": "1.1.0",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "react-markdown": "9.0.3",
     "remark-gfm": "4.0.0",
-    "ws": "8.22.0",
-    "zod": "4.6.7"
-  },
-  "devDependencies": {
     "@playwright/test": "1.61.1",
     "fflate": "0.8.3",
     "vite": "6.4.5"
@@ -73,6 +80,7 @@
     "dist",
     "scripts/prepare-pty.mjs",
     "scripts/terminal-turn-notify.mjs",
+    "scripts/repair-legacy-schedule-reference.mjs",
     "README.md",
     "docs"
   ],

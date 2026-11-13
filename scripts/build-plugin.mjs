@@ -21,10 +21,18 @@ try {
   cpSync(resolve(root, 'docs'), resolve(stage, 'docs'), { recursive: true, filter: path => !path.includes('/screenshots') });
   cpSync(resolve(root, 'docs/plugin-install.md'), resolve(stage, 'README.md'));
   const source = JSON.parse(readFileSync(resolve(root, 'package.json')));
-  const dependencies = Object.fromEntries(['express', 'ws', 'zod', 'node-pty', '@larksuiteoapi/node-sdk'].map(name => [name, source.dependencies[name]]));
-  const scripts = ['prepare-pty.mjs', 'terminal-turn-notify.mjs', 'repair-legacy-schedule-reference.mjs'];
-  const manifest = { name: source.name, version: source.version, description: '行研工作台：适用于 DeepSeek Harness 桌面版和网页版的 公司全量信息库、友商分析与宿主原生会话调研插件', type: 'module', main: source.main, engines: source.engines, exports: source.exports, dsh: source.dsh, dependencies, bundledDependencies: Object.keys(dependencies), files: ['plugin', 'server', 'dist', ...scripts.map(name => `scripts/${name}`), 'docs', 'README.md'] };
-  writeFileSync(resolve(stage, 'package.json'), JSON.stringify(manifest, null, 2));
+  // 开发与安装共用同一个清单，避免 release 改写 package.json 后版本/依赖更新必然冲突。
+  // 非生命周期 scripts 仅作为开发入口保留；UI 依赖属于 devDependencies，已由 Vite 打入 dist。
+  const manifest = source;
+  const dependencies = source.dependencies;
+  assertManifest(source);
+  cpSync(resolve(root, 'package.json'), resolve(stage, 'package.json'));
+  function assertManifest(manifest) {
+    for (const hook of ['preinstall', 'install', 'postinstall', 'prepare', 'prepack', 'postpack', 'prepublish', 'prepublishOnly', 'publish']) {
+      if (manifest.scripts?.[hook]) throw new Error(`发布包不得带生命周期脚本：${hook}`);
+    }
+    if (JSON.stringify([...manifest.bundledDependencies].sort()) !== JSON.stringify(Object.keys(dependencies).sort())) throw new Error('运行期依赖必须全部内置');
+  }
   // Copy the complete production dependency tree, including nested versions.
   function copyDependency(name, parentRoot, parentTarget = stage) {
     const req = createRequire(resolve(parentRoot, 'package.json'));
