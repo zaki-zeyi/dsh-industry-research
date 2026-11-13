@@ -10,7 +10,7 @@ Windows/macOS 桌面版和网页版的「添加插件」均可填写：
 https://github.com/zaki-zeyi/dsh-industry-research.git#release
 ```
 
-仓库默认分支为 `main`，保存开发源码；安装地址通过 `#release` 显式选择保存预构建页面和完整生产依赖的 `release` 分支。网页端的下载、安装、执行均在 DSH 服务端发生。
+仓库默认分支为 `main`，保存开发源码；安装地址通过 `#release` 显式选择 `release` 分支。`release` 与 `main` 共享同一条 Git 历史：每个发布提交以源码提交为父提交，内容为源码目录叠加经 CI 验证的构建产物（预构建页面、完整生产依赖和安装清单），安装时仍按安装清单的 `files` 只打包 `plugin`、`server`、`dist`、`docs` 与三个运行期脚本。网页端的下载、安装、执行均在 DSH 服务端发生。
 
 本地目录安装：从 GitHub Releases 下载所需版本的 `desktop.zip`，解压后在弹窗填写包含 `package.json` 的目录绝对路径。网页版填写服务所在机器上的路径。保留目录，按宿主提示启用或重新加载。ZIP 包含 Windows/macOS x64、arm64 的原生终端依赖。
 
@@ -36,11 +36,13 @@ dsh plugin --profile <profile> add <tgz绝对路径>
 1. Windows 和 macOS 分别运行构建、业务测试、浏览器测试。
 2. 打包 ZIP/TGZ，校验独立安装、页面、生产依赖和原生 PTY。
 3. 从通过验证的 Windows ZIP 恢复原目录，校验版本、源码提交和 SHA256。
-4. 将安装目录同步到 release 分支，使用普通 push 保留历史，不强制覆盖。
+4. 把安装目录写成 release 分支的发布提交：父提交同时指向上一发布提交和产出该产物的源码提交，内容为源码目录叠加验证产物，使用普通 push 保留历史，不强制覆盖。
 5. 冷缓存安装显式带 #release 的公开 GitHub 链接，断言安装版本等于源码版本并运行安装包验收。
 6. 创建与源码提交绑定的版本标签和 GitHub Release，上传版本包、校验文件及来源清单。
 
 已有同名正式版本时停止，必须先增加版本号。CI 失败不能当作成功发布；release 分支已同步但 Release 创建失败时，检查日志，修复后补齐同一版本资产。仓库默认分支可以保持 main；安装与冷缓存验收均显式指定 #release，避免安装开发源码。
+
+`release` 与 `main` 共享历史，不再出现 unrelated histories。需要时可直接在 `release` 分支 `git merge main`：源码改动和新增文件自动合并，产物保持不变；只有源码 `package.json`（版本号或依赖）变更时该文件需要保留安装清单，执行 `git checkout --ours package.json` 后继续合并，再按正常流程发布新版本即可。反向把 `release` 合并进 `main` 没有意义，只会把构建产物和生产依赖带进开发分支。发布分支不再触发源码验收工作流（`acceptance.yml` 已忽略 `release`）。
 
 本地复现：
 
@@ -50,6 +52,7 @@ npm run acceptance
 npm run plugin:pack
 npm run plugin:check-pack
 node scripts/release-acceptance.mjs
+node scripts/publish-git-plugin.mjs --output <新的临时目录>   # 不加 --push 时只在本地生成安装提交
 node scripts/git-install-acceptance.mjs --pnpm-cli <宿主pnpm入口> --expected-version 0.8.14
 ```
 

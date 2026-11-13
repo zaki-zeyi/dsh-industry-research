@@ -22,7 +22,8 @@ try {
   cpSync(resolve(root, 'docs/plugin-install.md'), resolve(stage, 'README.md'));
   const source = JSON.parse(readFileSync(resolve(root, 'package.json')));
   const dependencies = Object.fromEntries(['express', 'ws', 'zod', 'node-pty', '@larksuiteoapi/node-sdk'].map(name => [name, source.dependencies[name]]));
-  const manifest = { name: source.name, version: source.version, description: '行研工作台：适用于 DeepSeek Harness 桌面版和网页版的 公司全量信息库、友商分析与宿主原生会话调研插件', type: 'module', main: source.main, engines: source.engines, exports: source.exports, dsh: source.dsh, dependencies, bundledDependencies: Object.keys(dependencies), files: ['plugin', 'server', 'dist', 'scripts', 'docs', 'README.md'] };
+  const scripts = ['prepare-pty.mjs', 'terminal-turn-notify.mjs', 'repair-legacy-schedule-reference.mjs'];
+  const manifest = { name: source.name, version: source.version, description: '行研工作台：适用于 DeepSeek Harness 桌面版和网页版的 公司全量信息库、友商分析与宿主原生会话调研插件', type: 'module', main: source.main, engines: source.engines, exports: source.exports, dsh: source.dsh, dependencies, bundledDependencies: Object.keys(dependencies), files: ['plugin', 'server', 'dist', ...scripts.map(name => `scripts/${name}`), 'docs', 'README.md'] };
   writeFileSync(resolve(stage, 'package.json'), JSON.stringify(manifest, null, 2));
   // Copy the complete production dependency tree, including nested versions.
   function copyDependency(name, parentRoot, parentTarget = stage) {

@@ -1,6 +1,8 @@
 name: Plugin platform acceptance
 on:
   push:
+    # 安装分支是源码 + 预构建产物的镜像，用它跑源码构建/测试没有意义（清单已被安装清单替换）。
+    branches-ignore: [release]
   pull_request:
   workflow_dispatch:
 jobs:

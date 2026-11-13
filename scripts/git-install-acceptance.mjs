@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +23,12 @@ try {
   assert.equal(manifest.name, 'dsh-industry-research');
   assert.equal(manifest.version, option('--expected-version') ?? JSON.parse(readFileSync(resolve(root, 'package.json'))).version, 'GitHub install must match the release version');
   assert.equal(readFileSync(resolve(installed, 'dist/index.html'), 'utf8').includes('/assets/index-'), true);
+  // 安装分支为了可合并而保留源码目录，安装包必须以 files 为准，不能把开发脚本装进用户环境。
+  assert.equal(existsSync(resolve(installed, 'scripts/publish-git-plugin.mjs')), false, 'Git 安装包不得包含发布脚本');
+  assert.equal(existsSync(resolve(installed, 'scripts/build-plugin.mjs')), false, 'Git 安装包不得包含构建脚本');
+  assert.equal(existsSync(resolve(installed, 'tests')), false, 'Git 安装包不得包含测试目录');
+  assert.equal(existsSync(resolve(installed, '.github')), false, 'Git 安装包不得包含工作流');
+  assert.equal(existsSync(resolve(installed, 'scripts/prepare-pty.mjs')), true, 'Git 安装包必须包含运行期脚本');
   run(process.execPath, [resolve(root, 'scripts/plugin-acceptance.mjs'), '--package-root', installed]);
   const desktop = option('--desktop-runtime');
   if (desktop) run(desktop, ['--expose-internals', resolve(root, 'scripts/plugin-acceptance.mjs'), '--package-root', installed], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
