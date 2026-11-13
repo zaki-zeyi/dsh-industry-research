@@ -19,7 +19,7 @@ test('FR02 日报周报入口、可编辑任务、报告卡片、续聊和独立
 
 test('FR02 通知失败可进入当前应用的机器人权限修复',async({page})=>{
  const posts=[];
- await page.route('**/api/briefings?kind=daily',route=>route.fulfill({json:{items:[{id:'11111111-1111-4111-8111-111111111111',direction:'日报 · 2026-11-03 00:00 至 2026-11-03 23:59（北京时间）',status:'ready',stage:'done',createdAt:'2026-11-04T01:00:00.000Z',briefing:{window:{display:'2026-11-03 00:00 至 2026-11-03 23:59（北京时间）'}},publication:{status:'published',url:'https://example.feishu.cn/docx/DailyFixture',partial:false,noUpdates:false},notification:{status:'failed',error:'当前飞书应用尚未获得机器人发消息权限（im:message:send_as_bot）。'}}]}}));
+ await page.route('**/api/briefings?kind=daily*',route=>route.fulfill({json:{items:[{id:'11111111-1111-4111-8111-111111111111',direction:'日报 · 2026-11-03 00:00 至 2026-11-03 23:59（北京时间）',status:'ready',stage:'done',createdAt:'2026-11-04T01:00:00.000Z',briefing:{window:{display:'2026-11-03 00:00 至 2026-11-03 23:59（北京时间）'}},publication:{status:'published',url:'https://example.feishu.cn/docx/DailyFixture',partial:false,noUpdates:false},notification:{status:'failed',error:'当前飞书应用尚未获得机器人发消息权限（im:message:send_as_bot）。'}}]}}));
  await page.route('**/api/feishu-registration',route=>{if(route.request().method()==='POST')posts.push(route.request().postDataJSON());return route.fulfill({json:{flowId:'22222222-2222-4222-8222-222222222222',status:'failed',error:'测试权限更新',expiresAt:new Date(Date.now()+600000).toISOString()}});});
  await page.goto('/');await page.getByRole('button',{name:'日报',exact:true}).click();
  await page.route('**/api/briefings/11111111-1111-4111-8111-111111111111/notify',route=>route.fulfill({json:{id:'11111111-1111-4111-8111-111111111111',direction:'日报',publication:{status:'published'},briefing:{window:{display:'昨天'}},notification:{status:'failed',error:'机器人缺少权限',diagnostic:{action:'repair_bot'}}}}));
@@ -32,7 +32,7 @@ test('FR02 通知失败可进入当前应用的机器人权限修复',async({pag
 test('重试通知缺权限时修复后自动补发，成功后卡片立即更新',async({page})=>{
  let sends=0,done=false;
  const task={id:'77777777-7777-4777-8777-777777777777',direction:'日报 · 测试补发',status:'ready',createdAt:'2026-11-04T01:00:00.000Z',briefing:{window:{display:'昨天'}},publication:{status:'published',url:'https://example.feishu.cn/docx/Report'},notification:{status:'failed',error:'机器人缺少权限',diagnostic:{action:'repair_bot'}}};
- await page.route('**/api/briefings?kind=daily',route=>route.fulfill({json:{items:[{...task,notification:sends>1?{status:'sent'}:task.notification}]}}));
+ await page.route('**/api/briefings?kind=daily*',route=>route.fulfill({json:{items:[{...task,notification:sends>1?{status:'sent'}:task.notification}]}}));
  await page.route('**/api/briefings/'+task.id+'/notify',route=>{sends++;return route.fulfill({json:{...task,notification:sends>1?{status:'sent'}:task.notification}});});
  const flow={flowId:'88888888-8888-4888-8888-888888888888',status:'awaiting_scan',updatingApp:true,appId:'cli_fixture123',authorizationUrl:'https://open.feishu.cn/page/cli?user_code=fixture',expiresAt:new Date(Date.now()+600000).toISOString()};
  await page.route('**/api/feishu-registration',route=>route.fulfill({json:{...flow,status:done?'completed':'awaiting_scan'}}));

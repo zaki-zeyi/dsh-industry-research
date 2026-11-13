@@ -42,3 +42,17 @@ test('友商分析：从全量信息库生成报告、浏览历史卡片并回�
   expect(reports.reports).toHaveLength(1);
   expect(reports.reports[0].taskId).toBeTruthy();
 });
+
+test('友商分析：缓存读取后仍展示进行中和失败任务卡片', async ({ page }) => {
+  const card = (id, status, error = null) => ({ taskId: id, title: `对比 ${id}`, companies: ['后摩智能', '光羽芯辰'], dimensions: ['技术路线'], status, error, url: null, createdAt: '2026-11-13T00:00:00Z' });
+  await page.route('**/api/analysis/reports*', route => route.fulfill({ json: {
+    reports: [], tasks: [card('running-comparison', 'running'), card('failed-comparison', 'failed', '报告保存失败')], syncedAt: new Date().toISOString(),
+  } }));
+  await page.goto('/');
+  await page.locator('.industry-sidebar').getByRole('button', { name: /友商分析/ }).click();
+  await expect(page.locator('.analysis-report')).toHaveCount(2);
+  await expect(page.locator('.analysis-report .company-state.running')).toHaveText('调研中');
+  await expect(page.locator('.analysis-report .company-state.failed')).toHaveText('失败');
+  await expect(page.locator('.analysis-report').getByText('报告保存失败')).toBeVisible();
+  await expect(page.locator('.analysis-report a.company-title')).toHaveCount(0);
+});
