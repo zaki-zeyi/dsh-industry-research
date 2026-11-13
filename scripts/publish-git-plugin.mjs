@@ -50,6 +50,8 @@ if (push) {
 git(['fetch', '--depth', '1', sourceDirectory, 'HEAD:refs/source/head']);
 assert.equal(value(['rev-parse', 'refs/source/head']), sourceCommit, '无法从源码目录取得产出该安装包的提交');
 git(['read-tree', 'refs/source/head']);
+// 工作流的创建/修改需要 workflow 权限，发布用的内置凭据没有该权限；安装分支因此不镜像 .github。
+git(['rm', '-r', '--cached', '-q', '--ignore-unmatch', '.github']);
 git(['checkout-index', '-a', '-f']);
 cpSync(resolve(root, 'artifacts', release.directory), directory, { recursive: true });
 // 安装包里的 README 是用户安装说明，分支根目录仍保留源码 README；从索引取回可避免工作树换行差异改写内容。

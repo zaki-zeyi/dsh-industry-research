@@ -61,6 +61,8 @@ function contract(workspace) {
   writeFileSync(resolve(work, 'source.txt'), 'source\n');
   mkdirSync(resolve(work, 'scripts'), { recursive: true });
   cpSync(script, resolve(work, 'scripts/publish-git-plugin.mjs'));
+  mkdirSync(resolve(work, '.github/workflows'), { recursive: true });
+  writeFileSync(resolve(work, '.github/workflows/acceptance.yml'), 'name: acceptance\non: push\n');
   commitAll(work, 'main 首次提交');
   git(['remote', 'add', 'origin', bare], work);
   git(['push', '-q', 'origin', 'main'], work);
@@ -79,6 +81,7 @@ test('release 分支与 main 共享历史，可以直接合并且保留源码与
     assert.equal(first.sourceCommit, firstSource);
     const tree = () => git(['ls-tree', '-r', '--name-only', 'release'], bare).split('\n');
     assert.deepEqual(tree().sort(), ['README.md', 'dist/index.html', 'node_modules/production-dependency/index.js', 'package.json', 'plugin/index.mjs', 'scripts/publish-git-plugin.mjs', 'source.txt'].sort(), '安装分支 = 源码目录 + 验证产物，且不含未跟踪的 artifacts/');
+    assert.ok(!tree().some(path => path.startsWith('.github/')), '安装分支不镜像 .github：发布凭据没有 workflow 权限');
     assert.equal(git(['rev-parse', 'release^'], bare), firstSource, '首次发布提交以源码提交为父提交');
 
     // 生产依赖里的原生辅助程序必须保留可执行位；Windows 上重新 add 会丢失该信息，发布脚本要沿用上一发布。
