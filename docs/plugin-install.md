@@ -1,6 +1,6 @@
 # 安装与发布
 
-插件包名 `dsh-industry-research`，页签「行研工作台」。当前源码版本 0.8.14。
+插件包名 `dsh-industry-research`，页签「行研工作台」。当前源码版本 0.8.15。
 
 ## 用户安装
 
@@ -42,7 +42,9 @@ dsh plugin --profile <profile> add <tgz绝对路径>
 
 已有同名正式版本时停止，必须先增加版本号。CI 失败不能当作成功发布；release 分支已同步但 Release 创建失败时，检查日志，修复后补齐同一版本资产。仓库默认分支可以保持 main；安装与冷缓存验收均显式指定 #release，避免安装开发源码。
 
-`release` 与 `main` 共享历史，不再出现 unrelated histories。需要时可直接在 `release` 分支 `git merge main`：源码改动和新增文件自动合并，产物保持不变；只有源码 `package.json`（版本号或依赖）变更时该文件需要保留安装清单，执行 `git checkout --ours package.json` 后继续合并，再按正常流程发布新版本即可。反向把 `release` 合并进 `main` 没有意义，只会把构建产物和生产依赖带进开发分支。
+`release` 与 `main` 共享历史，并且从 0.8.15 开始使用完全相同的根 `package.json`：构建不再生成另一份安装清单，发布会校验清单语义一致并从源码提交还原原始字节。运行期依赖由 `bundledDependencies` 全部内置，前端构建依赖列入 `devDependencies`，保留的开发命令不是安装钩子，安装时不会执行；`files` 仍限制实际打包内容。
+
+需要时可在 `release` 分支 `git merge main`，版本号、依赖与其他源码修改一样正常合并，无需 `git checkout --ours package.json`、自定义 merge driver 或本机 Git 配置。注意：手工合并仅同步源码和清单，不会重新生成 `dist` 和内置依赖，不能代替构建、验收和正式发布；不要把这种未发布的中间状态当成新版本安装包。反向把 `release` 合并进 `main` 只会把构建产物和生产依赖带进开发分支。
 
 安装分支不镜像 `.github`：工作流的创建和修改需要 `workflow` 权限，发布工作流内置的 `GITHUB_TOKEN` 没有该权限（实测该凭据能推送普通提交、推送工作流文件被拒），把 `.github` 纳入安装分支会让发布推送失败。手工合并 `main` 时，`main` 改过的工作流报「deleted by us」冲突，`main` 新增的工作流会被直接带回；两种情况都在提交前执行 `git rm -r .github` 再推送，下一次发布也不会带回 `.github`。发布分支不再触发源码验收工作流（`acceptance.yml` 已忽略 `release`）。
 
@@ -55,7 +57,7 @@ npm run plugin:pack
 npm run plugin:check-pack
 node scripts/release-acceptance.mjs
 node scripts/publish-git-plugin.mjs --output <新的临时目录>   # 不加 --push 时只在本地生成安装提交
-node scripts/git-install-acceptance.mjs --pnpm-cli <宿主pnpm入口> --expected-version 0.8.14
+node scripts/git-install-acceptance.mjs --pnpm-cli <宿主pnpm入口> --expected-version 0.8.15
 ```
 
 macOS CI 运行包安装及浏览器验收，不等同于真实 macOS 桌面应用点击验收。真实飞书授权、模型调研、音视频转写和机器人消息需要实际环境单独验收。

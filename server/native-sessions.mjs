@@ -100,12 +100,21 @@ export class NativeSessions {
   observeEvent(sessionId, event) {
     const id = this.bySession.get(sessionId); if (!id || this.closed) return;
     const meta = this.get(id);
-    if (event.type === 'turn/start') meta.activity = 'working';
+    if (event.type === 'turn/start') {
+      // Host-side Retry does not call send(). Clear the previous failed turn too,
+      // and remember which receipt predates this turn so it cannot revive a task.
+      meta.activity = 'working'; meta.lastTurnReason = null; meta.lastTurnErrorCode = null; meta.lastTurnCompletedAt = null;
+      meta.lastTurnStartedAt = new Date().toISOString();
+      try { meta.turnInitialDeliveryKey = JSON.stringify(agentDeliverySchema.parse(JSON.parse(readFileSync(meta.deliveryPath, 'utf8')))); }
+      catch { meta.turnInitialDeliveryKey = null; }
+    }
     else if (event.type === 'turn/end') { meta.activity = 'waiting_input'; meta.lastTurnReason = event.data?.reason?.kind; meta.lastTurnCompletedAt = new Date().toISOString(); meta.lastTurnErrorCode = /^[A-Z0-9_]{1,64}$/.test(event.data?.reason?.error?.code ?? '') ? event.data.reason.error.code : undefined; }
     else return;
     this.store.saveTerminal(meta);
     if (event.type === 'turn/end' && meta.deliveryRequestId) {
-      this.observeDeliveries(); const latest = this.get(id);
+      // A receipt may have been observed while the turn was still working.
+      // Reconcile it again now that completion is known, even if its bytes match.
+      this.observeDeliveries(id); const latest = this.get(id);
       if (!latest.delivery || latest.delivery.requestId !== latest.deliveryRequestId || latest.delivery.status === 'publishing') {
         this.onDelivery?.(meta.taskId, id, { requestId: latest.deliveryRequestId, status: 'failed', error: meta.workflow === 'cloud-only' ? '本轮飞书交付未完成，请在原生会话核对后重试；任务记录已保留。' : '本轮宿主会话已结束但未交付有效上传结果；报告已保留，请在原生会话核对后重试上传。' });
       }
@@ -126,11 +135,11 @@ export class NativeSessions {
     const path = meta.pendingPromptPath; meta.pendingPromptPath = null; this.store.saveTerminal(meta);
     void this.send(id, `请读取 ${path}，按照该文件中的用户上传要求执行。本次只上传已有报告，不重新调研。`).catch(() => this.onDelivery?.(meta.taskId, id, { requestId: meta.deliveryRequestId, status: 'failed', error: '宿主会话未接受上传指令，报告已保留，请重试。' }));
   }
-  observeDeliveries() {
+  observeDeliveries(completedId) {
     for (const id of this.bySession.values()) {
       const meta = this.get(id); if (!meta.deliveryRequestId || !meta.deliveryPath) continue;
       let receipt; try { const text = readFileSync(meta.deliveryPath, 'utf8'); if (text.length > 524288) continue; receipt = agentDeliverySchema.parse(JSON.parse(text)); } catch { continue; }
-      if (receipt.requestId !== meta.deliveryRequestId || JSON.stringify(receipt) === meta.deliveryKey) continue;
+      if (receipt.requestId !== meta.deliveryRequestId || JSON.stringify(receipt) === meta.deliveryKey && id !== completedId) continue;
       meta.deliveryKey = JSON.stringify(receipt); meta.delivery = receipt; this.store.saveTerminal(meta); this.onDelivery?.(meta.taskId, id, receipt);
     }
   }

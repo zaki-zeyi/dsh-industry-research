@@ -57,7 +57,12 @@ cpSync(resolve(root, 'artifacts', release.directory), directory, { recursive: tr
 // 安装包里的 README 是用户安装说明，分支根目录仍保留源码 README；从索引取回可避免工作树换行差异改写内容。
 git(['checkout-index', '-f', '--', 'README.md']);
 const manifest = JSON.parse(readFileSync(resolve(directory, 'package.json')));
-if (manifest.name !== 'dsh-industry-research' || manifest.scripts) throw new Error('安装分支必须使用无生命周期脚本的正式发布包');
+assert.deepEqual(manifest, source, '安装产物必须使用原始源码清单，请重新构建');
+for (const hook of ['preinstall', 'install', 'postinstall', 'prepare', 'prepack', 'postpack', 'prepublish', 'prepublishOnly', 'publish']) {
+  assert.ok(!manifest.scripts?.[hook], `发布包不得带生命周期脚本：${hook}`);
+}
+// 从源码索引恢复原始字节（含换行），两分支的包清单不再产生任何分叉。
+git(['checkout-index', '-f', '--', 'package.json']);
 git(['add', '--force', '--all']);
 // 生产依赖的可执行位（如 node-pty 的 spawn-helper）在 Windows 上无法从文件系统读回，沿用上一发布的记录。
 if (previous) {

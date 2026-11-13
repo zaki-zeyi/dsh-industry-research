@@ -1,11 +1,57 @@
 {
   "name": "dsh-industry-research",
-  "version": "0.8.14",
-  "description": "行研工作台：适用于 DeepSeek Harness 桌面版和网页版的 公司全量信息库、友商分析与宿主原生会话调研插件",
+  "version": "0.8.15",
+  "private": true,
   "type": "module",
-  "main": "./plugin/index.mjs",
   "engines": {
     "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "server": "node --env-file-if-exists=.env server/index.mjs",
+    "build": "vite build",
+    "start": "node --env-file-if-exists=.env server/index.mjs",
+    "test": "node --test --test-force-exit tests/*.test.mjs",
+    "test:e2e": "playwright test",
+    "test:live": "node --env-file-if-exists=.env scripts/live-acceptance.mjs",
+    "acceptance": "npm run build && npm test && npm run test:e2e",
+    "plugin:pack": "node scripts/build-plugin.mjs",
+    "plugin:install": "node scripts/install-dsh-plugin.mjs",
+    "accept:update": "node scripts/accept-and-update.mjs",
+    "test:native-host": "node scripts/native-host-acceptance.mjs --browser",
+    "test:feishu-qr": "node scripts/feishu-registration-smoke.mjs",
+    "plugin:check-pack": "node scripts/check-plugin-pack.mjs",
+    "bundle:windows": "node scripts/build-windows-bundle.mjs",
+    "bundle:plugins": "node scripts/prepare-bundled-plugins.mjs",
+    "test:installer": "node scripts/run-windows-installer-acceptance.mjs",
+    "test:git-install": "node scripts/git-install-acceptance.mjs",
+    "plugin:publish-git": "node scripts/publish-git-plugin.mjs"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "1.76.0",
+    "express": "4.22.3",
+    "node-pty": "1.1.0",
+    "ws": "8.22.0",
+    "zod": "4.6.7"
+  },
+  "bundledDependencies": [
+    "@larksuiteoapi/node-sdk",
+    "express",
+    "node-pty",
+    "ws",
+    "zod"
+  ],
+  "devDependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "lucide-react": "0.468.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "react-markdown": "9.0.3",
+    "remark-gfm": "4.0.0",
+    "@playwright/test": "1.61.1",
+    "fflate": "0.8.3",
+    "vite": "6.4.5"
   },
   "exports": {
     ".": "./plugin/index.mjs",
@@ -28,20 +74,6 @@
       "platform": "web"
     }
   },
-  "dependencies": {
-    "express": "4.22.3",
-    "ws": "8.22.0",
-    "zod": "4.6.7",
-    "node-pty": "1.1.0",
-    "@larksuiteoapi/node-sdk": "1.76.0"
-  },
-  "bundledDependencies": [
-    "express",
-    "ws",
-    "zod",
-    "node-pty",
-    "@larksuiteoapi/node-sdk"
-  ],
   "files": [
     "plugin",
     "server",
@@ -49,7 +81,8 @@
     "scripts/prepare-pty.mjs",
     "scripts/terminal-turn-notify.mjs",
     "scripts/repair-legacy-schedule-reference.mjs",
-    "docs",
-    "README.md"
-  ]
+    "README.md",
+    "docs"
+  ],
+  "main": "./plugin/index.mjs"
 }

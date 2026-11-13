@@ -249,8 +249,23 @@ export class ResearchService {
     const delivery = agentDeliverySchema.parse(input);
     if (t.cloudOnly) {
       const meta = this.store.terminal(terminalId); if (!meta || delivery.requestId !== meta.deliveryRequestId) return;
+      const run = t.runs.at(-1);
+      const turnStart = Date.parse(meta.lastTurnStartedAt), turnEnd = Date.parse(meta.lastTurnCompletedAt), failedAt = Date.parse(run?.endedAt);
+      // Native DSH Retry continues the existing session without executing retry()
+      // here. Only reconcile a fresh successful turn after the failed run ended;
+      // old receipts, cancellations and incomplete turns must remain failures.
+      const nativeRetryCompleted = t.nativeSession && t.status === 'failed' && !this.active.has(id)
+        && run?.status === 'failed' && run.terminalId === terminalId && run.sessionId === meta.sessionId
+        && meta.agent === 'dsh-native' && meta.taskId === id
+        && delivery.status === 'published' && meta.activity === 'waiting_input' && meta.lastTurnReason === 'completed'
+        && [turnStart, turnEnd, failedAt].every(Number.isFinite)
+        && turnStart >= failedAt && turnEnd >= turnStart && turnEnd - turnStart <= RESEARCH_TIMEOUT_MS
+        && JSON.stringify(delivery) !== meta.turnInitialDeliveryKey;
       try {
-        this.cloudWrites.assertOwner(t);
+        // This is read-only reconciliation of a finished host turn, not a new
+        // remote write. Its original run has already released the saving lock.
+        if (!nativeRetryCompleted) this.cloudWrites.assertOwner(t);
+        if (nativeRetryCompleted && (!delivery.folderToken || delivery.report && !delivery.analysisFolderToken || t.industry && !t.industry.companies.every(name => delivery.companies?.some(c => c.name === name)))) return;
         this.rememberCloudFolder(t, delivery);
         this.rememberBriefing(t, delivery);
         this.rememberInternalMaterial(t, delivery);
@@ -266,10 +281,21 @@ export class ResearchService {
       // A legacy 10-minute timeout may have rejected a valid receipt containing
       // source timestamps. Recover only a completed, matching delivery within
       // the new 30-minute limit, never a cancelled or genuinely overdue run.
-      const run = t.runs.at(-1), elapsed = Date.parse(meta.lastTurnCompletedAt) - Date.parse(run?.startedAt);
-      if (!t.analysis && t.status === 'failed' && /超时|超过 30 分钟/.test(t.error ?? '') && meta.activity === 'waiting_input' && meta.lastTurnReason === 'completed' && elapsed >= 0 && elapsed <= RESEARCH_TIMEOUT_MS && delivery.status === 'published' && delivery.folderToken && (!t.industry || t.industry.companies.every(name => delivery.companies?.some(c => c.name === name)))) {
+      const elapsed = Date.parse(meta.lastTurnCompletedAt) - Date.parse(run?.startedAt);
+      if (!nativeRetryCompleted && !t.analysis && t.status === 'failed' && /超时|超过 30 分钟/.test(t.error ?? '') && meta.activity === 'waiting_input' && meta.lastTurnReason === 'completed' && elapsed >= 0 && elapsed <= RESEARCH_TIMEOUT_MS && delivery.status === 'published' && delivery.folderToken && (!t.industry || t.industry.companies.every(name => delivery.companies?.some(c => c.name === name)))) {
         t.status = 'ready'; t.error = null; run.status = 'completed'; run.endedAt = meta.lastTurnCompletedAt;
         this.event(id, 'system', '已核对原会话有效交付，完成时间未超过 30 分钟，恢复完成状态；未重新调研。');
+      }
+      if (nativeRetryCompleted) {
+        t.status = 'ready'; t.stage = 'done'; t.error = null; t.publication = agentPublication(delivery);
+        t.runs.push({ id: newId(), startedAt: meta.lastTurnStartedAt, endedAt: meta.lastTurnCompletedAt, sessionId: meta.sessionId, terminalId,
+          ...(t.feishuApp ? { feishuApp: t.feishuApp } : {}), status: 'completed' });
+        this.save(t); this.event(id, 'agent-delivery', t.publication);
+        this.event(id, 'system', '已核对原生会话重试后的有效交付，任务状态已同步完成；未重新调研。');
+        this.cloudWrites.release(id);
+        if (t.briefing) void this.notifications?.send(id).catch(() => {});
+        if (t.internal) void this.internalNotifications?.send(id).catch(() => {});
+        return;
       }
       if ((t.briefing || t.internal) && delivery.status === 'published') t.publication = agentPublication(delivery);
       this.store.save(t); if (t.status !== 'ready') return;

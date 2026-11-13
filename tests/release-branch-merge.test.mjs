@@ -32,7 +32,7 @@ function writeArtifacts(root, version) {
   writeFileSync(resolve(stage, 'dist/index.html'), '<script src="/assets/index-fixture.js"></script>');
   writeFileSync(resolve(stage, 'plugin/index.mjs'), 'export const fixture = true;\n');
   writeFileSync(resolve(stage, 'node_modules/production-dependency/index.js'), 'module.exports = 1;\n');
-  writeFileSync(resolve(stage, 'package.json'), JSON.stringify({ name: 'dsh-industry-research', version, type: 'module', main: './plugin/index.mjs', dependencies: { 'production-dependency': '1.0.0' }, bundledDependencies: ['production-dependency'], files: ['plugin', 'dist'] }, null, 2));
+  cpSync(resolve(root, 'package.json'), resolve(stage, 'package.json'));
   const hash = value => createHash('sha256').update(value).digest('hex');
   for (const file of [`${name}.tgz`, `${name}-desktop.zip`]) writeFileSync(resolve(root, 'artifacts', file), `verified ${file}`);
   writeFileSync(resolve(root, 'artifacts/plugin-release.json'), JSON.stringify({ name: 'dsh-industry-research', version, directory: name, filename: `${name}.tgz`, sha256: hash(`verified ${name}.tgz`), zipFilename: `${name}-desktop.zip`, zipSha256: hash(`verified ${name}-desktop.zip`), sourceCommit: git(['rev-parse', 'HEAD'], root) }, null, 2));
@@ -56,7 +56,7 @@ function contract(workspace) {
   mkdirSync(bare);
   git(['init', '-q', '--bare', '--initial-branch', 'main'], bare);
   gitInit(work);
-  writeFileSync(resolve(work, 'package.json'), JSON.stringify({ name: 'dsh-industry-research', version: '1.2.3' }, null, 2));
+  writeFileSync(resolve(work, 'package.json'), JSON.stringify({ name: 'dsh-industry-research', version: '1.2.3', scripts: { test: 'node --test' }, dependencies: { 'production-dependency': '1.0.0' }, bundledDependencies: ['production-dependency'], files: ['plugin', 'dist'] }, null, 2));
   writeFileSync(resolve(work, 'README.md'), '# 源码说明\n');
   writeFileSync(resolve(work, 'source.txt'), 'source\n');
   mkdirSync(resolve(work, 'scripts'), { recursive: true });
@@ -115,20 +115,22 @@ test('release 分支与 main 共享历史，可以直接合并且保留源码与
     assert.ok(existsSync(resolve(verify, 'added-later.txt')), '合并后获得 main 新增文件');
     assert.ok(existsSync(resolve(verify, 'dist/index.html')), '合并后仍保留预构建页面');
     assert.ok(existsSync(resolve(verify, 'node_modules/production-dependency/index.js')), '合并后仍保留生产依赖');
-    assert.equal(JSON.parse(readFileSync(resolve(verify, 'package.json'), 'utf8')).scripts, undefined, '安装清单不得带生命周期脚本');
+    assert.equal(git(['rev-parse', 'release:package.json'], bare), git(['rev-parse', 'main:package.json'], bare), '源码与安装使用完全相同的包清单');
 
-    // 版本号变更时只有安装清单（package.json）需要保留 release 侧内容，其余自动合并。
-    writeFileSync(resolve(work, 'package.json'), JSON.stringify({ name: 'dsh-industry-research', version: '1.2.4' }, null, 2));
+    // 版本号、依赖同时变化也无需自定义 merge driver、--ours 或任何本机配置。
+    const updated = JSON.parse(readFileSync(resolve(work, 'package.json'), 'utf8'));
+    updated.version = '1.2.4';
+    updated.dependencies['production-dependency'] = '2.0.0';
+    writeFileSync(resolve(work, 'package.json'), JSON.stringify(updated, null, 2));
     const thirdSource = commitAll(work, 'main 版本号提升');
     git(['push', '-q', 'origin', 'main'], work);
     git(['fetch', '-q', 'origin'], verify);
     const bumped = spawnSync('git', ['merge', '--no-edit', 'origin/main'], { cwd: verify, encoding: 'utf8' });
-    assert.equal(bumped.status, 1, '安装清单必须阻止自动覆盖');
-    assert.deepEqual(git(['diff', '--name-only', '--diff-filter=U'], verify).split('\n'), ['package.json'], '唯一冲突文件是安装清单');
-    git(['checkout', '--ours', 'package.json'], verify);
-    git(['add', 'package.json'], verify);
-    git(['commit', '-q', '--no-edit'], verify);
-    assert.equal(JSON.parse(readFileSync(resolve(verify, 'package.json'), 'utf8')).version, '1.2.3', '保留安装清单中的正式版本号');
+    assert.equal(bumped.status, 0, `版本/依赖更新必须干净合并：${bumped.stdout}${bumped.stderr}`);
+    assert.equal(git(['diff', '--name-only', '--diff-filter=U'], verify), '');
+    assert.equal(JSON.parse(readFileSync(resolve(verify, 'package.json'), 'utf8')).version, '1.2.4');
+    assert.equal(JSON.parse(readFileSync(resolve(verify, 'package.json'), 'utf8')).dependencies['production-dependency'], '2.0.0');
+    assert.ok(existsSync(resolve(verify, 'node_modules/production-dependency/index.js')), '合并不删除已有产物；新版产物仍需正式构建发布');
     assert.equal(git(['status', '--porcelain'], verify), '');
 
     // 正式发布新的源码提交：安装分支同时记录上一发布与新源码提交。
@@ -153,6 +155,29 @@ test('release 分支与 main 共享历史，可以直接合并且保留源码与
     const upToDate = spawnSync('git', ['merge', '--no-edit', 'main'], { cwd: fresh, encoding: 'utf8' });
     assert.equal(upToDate.status, 0);
     assert.match(upToDate.stdout, /Already up to date/, '最新源码已并入安装分支');
+  } finally { rmSync(workspace, { recursive: true, force: true }); }
+});
+
+test('发布拒绝分叉清单及安装生命周期脚本，不写入安装分支', () => {
+  const workspace = mkdtempSync(resolve(tmpdir(), 'release-branch-manifest-'));
+  const { bare } = contract(workspace);
+  try {
+    const checkout = shallowCheckout(bare, resolve(workspace, 'checkout'));
+    writeArtifacts(checkout, '1.2.3');
+    const manifestPath = resolve(checkout, 'artifacts/dsh-industry-research-1.2.3/package.json');
+    const source = JSON.parse(readFileSync(resolve(checkout, 'package.json'), 'utf8'));
+    writeFileSync(manifestPath, JSON.stringify({ ...source, private: true }));
+    const mismatch = spawnSync(process.execPath, [resolve(checkout, 'scripts/publish-git-plugin.mjs'), '--output', resolve(workspace, 'mismatch')], { cwd: checkout, encoding: 'utf8' });
+    assert.notEqual(mismatch.status, 0);
+    assert.match(mismatch.stderr, /原始源码清单/);
+    source.scripts.prepare = 'node unsafe.mjs';
+    writeFileSync(resolve(checkout, 'package.json'), JSON.stringify(source));
+    commitAll(checkout, 'fixture: unsafe lifecycle');
+    writeArtifacts(checkout, '1.2.3');
+    const unsafe = spawnSync(process.execPath, [resolve(checkout, 'scripts/publish-git-plugin.mjs'), '--output', resolve(workspace, 'unsafe')], { cwd: checkout, encoding: 'utf8' });
+    assert.notEqual(unsafe.status, 0);
+    assert.match(unsafe.stderr, /生命周期脚本/);
+    assert.notEqual(spawnSync('git', ['rev-parse', '--verify', 'refs/heads/release'], { cwd: bare }).status, 0);
   } finally { rmSync(workspace, { recursive: true, force: true }); }
 });
 
