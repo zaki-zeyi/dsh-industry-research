@@ -10,7 +10,7 @@ const pnpm = option('--pnpm-cli') ?? process.env.DSH_PNPM_CLI;
 if (!pnpm) throw new Error('请用 --pnpm-cli 指定 DSH 实际使用的 pnpm.mjs 路径');
 const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
 if (revision.status !== 0) throw new Error('本地 Git 验收需要已提交的源码');
-const source = option('--source') ?? 'https://github.com/zaki-zeyi/dsh-industry-research';
+const source = option('--source') ?? 'https://github.com/zaki-zeyi/dsh-industry-research.git#release';
 const directory = mkdtempSync(resolve(tmpdir(), 'dsh-research-git-install-'));
 function run(command, args, extra = {}) { const result = spawnSync(command, args, { cwd: directory, stdio: 'inherit', ...extra }); if (result.error || result.status !== 0) throw result.error ?? new Error(`Git安装验收失败：${result.status}`); }
 try {

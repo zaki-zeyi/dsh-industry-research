@@ -70,27 +70,27 @@ npm run plugin:pack
 
 ## 安装
 
-当前源码版本为 **0.8.13**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
+当前源码版本为 **0.8.14**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
 Windows、macOS 桌面版以及网页版，均可在 DSH「添加插件」填写：
 
-https://github.com/zaki-zeyi/dsh-industry-research
+https://github.com/zaki-zeyi/dsh-industry-research.git#release
 
-该地址安装默认 release 分支的预构建插件；main 用于开发。网页安装发生在 DSH 服务端，服务端必须能够访问 GitHub。
+该地址显式安装 release 分支的预构建插件；main 为默认开发分支。网页安装发生在 DSH 服务端，服务端必须能够访问 GitHub。
 
 也可以下载对应版本的 desktop.zip，解压后在「添加插件」填写包含 package.json 的目录绝对路径。Windows/macOS x64、arm64 共用 ZIP；网页版需填写服务端的目录路径。安装后保留目录，按宿主提示启用或重新加载。
 
 命令行安装：
 
 ```sh
-dsh plugin --profile <profile> add https://github.com/zaki-zeyi/dsh-industry-research
+dsh plugin --profile <profile> add https://github.com/zaki-zeyi/dsh-industry-research.git#release
 # 或者安装已下载的版本包
 dsh plugin --profile <profile> add <tgz绝对路径>
 ```
 
 运行环境需要 Node.js ≥22.13、可用模型与检索工具，以及安装在 DSH 所在机器上的 Lark CLI。插件安装不包含飞书授权，首次使用需扫码绑定。
 
-0.8.13 的标准发布产物为 ZIP、TGZ 和 SHA256。Windows 一体化 EXE 是独立的可选产物，不代表最新插件版本；本插件不依赖精选插件。
+0.8.14 的标准发布产物为 ZIP、TGZ 和 SHA256。Windows 一体化 EXE 是独立的可选产物，不代表最新插件版本；本插件不依赖精选插件。
 
 维护与发布流程见 [安装及发布说明](docs/plugin-install.md)。
 

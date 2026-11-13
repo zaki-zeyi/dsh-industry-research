@@ -79,8 +79,6 @@ jobs:
           if ($release.version -ne $version) { throw 'Artifact version mismatch' }
           $notes = "docs/release-$version.md"
           if (!(Test-Path -LiteralPath $notes)) { throw 'Release notes missing' }
-          $defaultBranch = gh api 'repos/${{ github.repository }}' --jq .default_branch
-          if ($LASTEXITCODE -ne 0 -or $defaultBranch -ne 'release') { throw 'Default installation branch must be release' }
           gh release view "v$version" --repo '${{ github.repository }}' *> $null
           if ($LASTEXITCODE -eq 0) { throw 'Version already published; bump the version first' }
           Expand-Archive -LiteralPath "artifacts/$($release.zipFilename)" -DestinationPath artifacts
@@ -89,7 +87,7 @@ jobs:
           gh auth setup-git --hostname github.com
           if ($LASTEXITCODE -ne 0) { throw 'Git credential setup failed' }
           node scripts/publish-git-plugin.mjs --output "$env:RUNNER_TEMP/plugin-release" --push
-          if ($LASTEXITCODE -ne 0) { throw 'Default installation branch publication failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'Release installation branch publication failed' }
           npm install --prefix "$env:RUNNER_TEMP/pnpm" pnpm@10.11.0 --ignore-scripts
           if ($LASTEXITCODE -ne 0) { throw 'pnpm installation failed' }
           node scripts/git-install-acceptance.mjs --pnpm-cli "$env:RUNNER_TEMP/pnpm/node_modules/pnpm/bin/pnpm.cjs" --expected-version $version
