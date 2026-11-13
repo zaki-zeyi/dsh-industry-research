@@ -44,7 +44,7 @@ dsh plugin --profile <profile> add <tgz绝对路径>
 
 `release` 与 `main` 共享历史，不再出现 unrelated histories。需要时可直接在 `release` 分支 `git merge main`：源码改动和新增文件自动合并，产物保持不变；只有源码 `package.json`（版本号或依赖）变更时该文件需要保留安装清单，执行 `git checkout --ours package.json` 后继续合并，再按正常流程发布新版本即可。反向把 `release` 合并进 `main` 没有意义，只会把构建产物和生产依赖带进开发分支。
 
-安装分支不镜像 `.github`：工作流的创建和修改需要 `workflow` 权限，发布工作流内置的 `GITHUB_TOKEN` 没有该权限，把 `.github` 纳入安装分支会让发布推送被拒绝。因此 `main` 改了工作流后，手工合并可能在该文件上报「deleted by us」冲突，执行 `git rm -r .github` 后在 `release` 上提交即可；下一次发布同样不会带回 `.github`。发布分支也不再触发源码验收工作流（`acceptance.yml` 已忽略 `release`）。
+安装分支不镜像 `.github`：工作流的创建和修改需要 `workflow` 权限，发布工作流内置的 `GITHUB_TOKEN` 没有该权限（实测该凭据能推送普通提交、推送工作流文件被拒），把 `.github` 纳入安装分支会让发布推送失败。手工合并 `main` 时，`main` 改过的工作流报「deleted by us」冲突，`main` 新增的工作流会被直接带回；两种情况都在提交前执行 `git rm -r .github` 再推送，下一次发布也不会带回 `.github`。发布分支不再触发源码验收工作流（`acceptance.yml` 已忽略 `release`）。
 
 本地复现：
 
