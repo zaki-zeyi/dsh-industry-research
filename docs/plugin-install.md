@@ -42,7 +42,9 @@ dsh plugin --profile <profile> add <tgz绝对路径>
 
 已有同名正式版本时停止，必须先增加版本号。CI 失败不能当作成功发布；release 分支已同步但 Release 创建失败时，检查日志，修复后补齐同一版本资产。仓库默认分支可以保持 main；安装与冷缓存验收均显式指定 #release，避免安装开发源码。
 
-`release` 与 `main` 共享历史，不再出现 unrelated histories。需要时可直接在 `release` 分支 `git merge main`：源码改动和新增文件自动合并，产物保持不变；只有源码 `package.json`（版本号或依赖）变更时该文件需要保留安装清单，执行 `git checkout --ours package.json` 后继续合并，再按正常流程发布新版本即可。反向把 `release` 合并进 `main` 没有意义，只会把构建产物和生产依赖带进开发分支。发布分支不再触发源码验收工作流（`acceptance.yml` 已忽略 `release`）。
+`release` 与 `main` 共享历史，不再出现 unrelated histories。需要时可直接在 `release` 分支 `git merge main`：源码改动和新增文件自动合并，产物保持不变；只有源码 `package.json`（版本号或依赖）变更时该文件需要保留安装清单，执行 `git checkout --ours package.json` 后继续合并，再按正常流程发布新版本即可。反向把 `release` 合并进 `main` 没有意义，只会把构建产物和生产依赖带进开发分支。
+
+安装分支不镜像 `.github`：工作流的创建和修改需要 `workflow` 权限，发布工作流内置的 `GITHUB_TOKEN` 没有该权限，把 `.github` 纳入安装分支会让发布推送被拒绝。因此 `main` 改了工作流后，手工合并可能在该文件上报「deleted by us」冲突，执行 `git rm -r .github` 后在 `release` 上提交即可；下一次发布同样不会带回 `.github`。发布分支也不再触发源码验收工作流（`acceptance.yml` 已忽略 `release`）。
 
 本地复现：
 
