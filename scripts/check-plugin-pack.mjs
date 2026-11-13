@@ -1,0 +1,21 @@
+import { existsSync, mkdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+if (!existsSync(new URL('../dist/index.html', import.meta.url))) throw new Error('请先运行 npm run build');
+mkdirSync(new URL('../artifacts', import.meta.url), { recursive: true });
+const root = fileURLToPath(new URL('..', import.meta.url));
+const release = JSON.parse(readFileSync(resolve(root, 'artifacts/plugin-release.json')));
+const directory = resolve(root, 'artifacts', release.directory);
+const manifest = JSON.parse(readFileSync(resolve(directory, 'package.json')));
+assert.equal(manifest.name, 'dsh-industry-research');
+assert.equal(manifest.version, release.version);
+assert.equal(manifest.dsh.bundle.patch, './plugin/cordis.patch.yml');
+const patch = readFileSync(resolve(directory, 'plugin/cordis.patch.yml'), 'utf8').replaceAll('\r\n', '\n').trim();
+assert.equal(patch, '- insert:\n    - id: dsh-industry-research\n      name: dsh-industry-research', '发布包不得声明宿主共享组件，否则可能触发 bundle-in-use 无法卸载');
+assert.ok(existsSync(resolve(directory, 'scripts/repair-legacy-schedule-reference.mjs')));
+// 安装分支同样保留源码目录，因此 files 必须逐项列出运行期脚本，避免把开发脚本装进用户环境。
+assert.ok(!manifest.files.includes('scripts'), 'files 不得整目录包含 scripts');
+for (const script of ['scripts/prepare-pty.mjs', 'scripts/terminal-turn-notify.mjs', 'scripts/repair-legacy-schedule-reference.mjs']) assert.ok(manifest.files.includes(script), `files 缺少运行期脚本 ${script}`);
+console.log(`PASS: ${manifest.name} ${manifest.version} 发布包仅拥有行研组件，包含旧包修复工具`);

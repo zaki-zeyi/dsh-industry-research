@@ -1,0 +1,311 @@
+import { PlatformLogs } from './RuntimeLogs.jsx';
+import { LarkCliSetup } from './LarkCliSetup.jsx';
+import { pickHostFile } from './host-file-picker.mjs';
+import { internalMaterialPrompt } from '../server/internal-material-prompt.mjs';
+import { Briefings } from './Briefings.jsx';
+import { InternalMaterials } from './InternalMaterials.jsx';
+import { briefingPrompt, reportWindow } from './briefing-prompt.mjs';
+import React, { useEffect, useRef, useState } from 'react';
+import { Library, History, Plus, Search, ArrowUpRight, RefreshCw, X, Sparkles, LoaderCircle, Folder, Building2, Check, AlertCircle, FileText, GitCompare, Activity } from 'lucide-react';
+import { DEFAULT_COMPANIES } from '../server/industry-defaults.mjs';
+import { analysisDefaultPrompt, cleanAnalysisTitle } from '../server/analysis-defaults.mjs';
+import { hostOrigin } from './host-origin.mjs';
+import './industry.css';
+import './industry-binding.css';
+import './analysis.css';
+async function api(path, options = {}) { const r = await fetch('/api' + path, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } }); const value = await r.json(); if (!r.ok) throw new Error(value.error ?? '请求失败'); return value; }
+const time = value => new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Shanghai' }).format(new Date(value));
+const status = t => t.stage==='waiting_save'?'等待保存（其他任务正在写入）':({ ready: '已完成', failed: '失败', interrupted: '已中断', running: '调研中', queued: '排队中' })[t.status] ?? t.status;
+// Card badges stay short: a report that no local task can be matched to is simply published.
+const cardStatus = item => item.status ? ({ ready: '已完成', failed: '失败', interrupted: '已中断', running: '调研中', queued: '排队中' })[item.status] ?? item.status : '已发布';
+export function IndustryApp({ BindingModal, RootModal, Conversation }) {
+  const [config, setConfig] = useState(null), [binding, setBinding] = useState(null), [tab, setTab] = useState('library');
+  const [companies, setCompanies] = useState([]), [tasks, setTasks] = useState([]), [cursor, setCursor] = useState(null), [query, setQuery] = useState('');
+  const [reports, setReports] = useState([]), [analysisTasks, setAnalysisTasks] = useState([]), [reportsSyncedAt, setReportsSyncedAt] = useState(null);
+  const [loading, setLoading] = useState(true), [error, setError] = useState(''), [modal, setModal] = useState(''), [selected, setSelected] = useState(null), [resumeModal, setResumeModal] = useState('');
+  const [notificationTarget, setNotificationTarget] = useState(null), [notificationRevision, setNotificationRevision] = useState(0);
+  const [cardTarget,setCardTarget]=useState(null);
+  async function navigateBlockingTask(item,conversation=false) {
+    setModal('');setResumeModal('');setNotificationTarget(null);setError('');
+    try {
+      const {task}=await api('/tasks/'+item.id);
+      if(conversation){open(task);return;}
+      setSelected(null);location.hash='';setQuery('');setFilter('all');
+      setTab(task.briefing?.kind??(task.internal?'internal':'history'));
+      setTasks(items=>[task,...items.filter(t=>t.id!==task.id)]);
+      setCardTarget({id:task.id,at:Date.now()});
+    }catch(error){setError(error.message);}
+  }
+  useEffect(()=>{
+    if(!cardTarget)return;
+    let observer,timer,highlight;
+    const find=()=>{
+      const element=document.getElementById('task-card-'+cardTarget.id);
+      if(!element)return false;
+      element.scrollIntoView({block:'center',behavior:'auto'});element.focus({preventScroll:true});element.classList.add('task-card-target');
+      highlight=setTimeout(()=>element.classList.remove('task-card-target'),5000);observer?.disconnect();clearTimeout(timer);return true;
+    };
+    if(!find()){observer=new MutationObserver(find);observer.observe(document.querySelector('.industry-main'),{childList:true,subtree:true});timer=setTimeout(()=>{observer.disconnect();setError('未找到对应卡片，请从历史 AI 任务打开该会话');},10000);}
+    return()=>{observer?.disconnect();clearTimeout(timer);clearTimeout(highlight);document.getElementById('task-card-'+cardTarget.id)?.classList.remove('task-card-target');};
+  },[cardTarget]);
+  function repairNotification(task) { setNotificationTarget(task); setModal('binding-repair'); }
+  async function notificationRepaired() {
+    if (!notificationTarget) return;
+    const base = notificationTarget.internal ? 'internal-materials' : 'briefings';
+    try { const value = await api('/' + base + '/' + notificationTarget.id + '/notify', {method:'POST',body:'{}'}); if (value.notification?.status !== 'sent') setError(value.notification?.error || '权限确认后通知仍未发送，请重试'); } catch(e) { setError(e.message); }
+    setNotificationRevision(v=>v+1); setNotificationTarget(null); setModal('');
+  }
+  const [filter, setFilter] = useState('all');
+  const [refreshing, setRefreshing] = useState(false), [syncError, setSyncError] = useState(''), [syncNotice, setSyncNotice] = useState(''), [reportSyncError, setReportSyncError] = useState(''), [syncedAt, setSyncedAt] = useState(null);
+  const syncLock = useRef(false), libraryRevision = useRef(0), hasLibraryResult = useRef(false);
+  const reportSyncLock = useRef(false), reportRevision = useRef(0), hasReportResult = useRef(false), taskLock = useRef(false);
+  // Everything below reads the local cache only. Remote refreshes are explicit
+  // (mount, manual button) or on a 60s TTL, never on a 4s timer.
+  async function loadConfig() { try { setConfig(await api('/config')); } catch (e) { setError(e.message); } }
+  async function loadTasks() {
+    if (taskLock.current) return null;
+    taskLock.current = true;
+    try {
+      const t = await api('/tasks?limit=100');
+      setTasks(old => [...t.items, ...old.filter(v => !t.items.some(n => n.id === v.id))]); setCursor(old => old ?? t.nextCursor);
+      return t.items;
+    } catch (e) { setError(e.message); return null; } finally { taskLock.current = false; }
+  }
+  async function loadAnalysisCards() {
+    const revision = reportRevision.current;
+    try { const r = await api('/analysis/reports'); if (revision === reportRevision.current && !reportSyncLock.current) { setReports(r.reports.map(item => ({ ...item, title: cleanAnalysisTitle(item.title) }))); setAnalysisTasks(r.tasks ?? []); } } catch (e) { setReportSyncError(e.message); }
+  }
+  async function loadIndex() {
+    const revision = libraryRevision.current, reportVersion = reportRevision.current;
+    const [library, analysis] = await Promise.allSettled([api('/industry/library'), api('/analysis/reports')]);
+    if (library.status === 'fulfilled' && ((!syncLock.current && revision === libraryRevision.current) || !hasLibraryResult.current)) { hasLibraryResult.current = true; setCompanies(library.value.companies); setSyncedAt(library.value.syncedAt ?? null); }
+    if (analysis.status === 'fulfilled' && ((!reportSyncLock.current && reportVersion === reportRevision.current) || !hasReportResult.current)) { hasReportResult.current = true; setReports(analysis.value.reports.map(item => ({ ...item, title: cleanAnalysisTitle(item.title) }))); setAnalysisTasks(analysis.value.tasks ?? []); setReportsSyncedAt(analysis.value.syncedAt ?? null); }
+    if (library.status === 'rejected') setError(library.reason.message);
+    if (analysis.status === 'rejected') setError(analysis.reason.message);
+  }
+  async function load() {
+    try { await Promise.all([loadConfig(), loadIndex(), loadTasks()]); } finally { setLoading(false); }
+  }
+  async function refreshCompanies() {
+    if (syncLock.current) return '索引正在读取，请稍后重试';
+    syncLock.current = true; const revision=++libraryRevision.current; setRefreshing(true);
+    try { const l = await api('/industry/library?refresh=true'); if(revision!==libraryRevision.current)return '目录设置已变化，请重试'; hasLibraryResult.current = true; setCompanies(l.companies); setSyncedAt(l.syncedAt ?? null); setSyncError(''); return ''; }
+    catch (e) { if(revision===libraryRevision.current)setSyncError(e.message); return e.message; }
+    finally { syncLock.current = false; setRefreshing(false); }
+  }
+  async function refreshReports() {
+    if (reportSyncLock.current) return '分析报告正在读取，请稍后重试';
+    reportSyncLock.current = true; const revision=++reportRevision.current; setRefreshing(true);
+    try { const r = await api('/analysis/reports?refresh=true'); if(revision!==reportRevision.current)return '目录设置已变化，请重试'; hasReportResult.current = true; setReports(r.reports.map(item => ({ ...item, title: cleanAnalysisTitle(item.title) }))); setAnalysisTasks(r.tasks ?? []); setReportsSyncedAt(r.syncedAt ?? null); setReportSyncError(''); return ''; }
+    catch (e) { if(revision===reportRevision.current)setReportSyncError(e.message); return e.message; }
+    finally { reportSyncLock.current = false; setRefreshing(false); }
+  }
+  async function retryFailedReads() {
+    const reads = [];
+    if (syncError) reads.push(refreshCompanies());
+    if (reportSyncError) reads.push(refreshReports());
+    if (!reads.length) return '当前没有待重试的索引读取错误；其他操作错误请返回原页面处理或查看平台日志。';
+    const failures = (await Promise.all(reads)).filter(Boolean);
+    return failures.length ? `读取仍未恢复：${failures.join('；')}` : '索引读取已恢复，对应错误横幅已清除。';
+  }
+  const freshWithin = value => Boolean(value) && Number.isFinite(Date.parse(value)) && Date.now() - Date.parse(value) < 60000;
+  // Entering a tab reuses its cache within 60s; only an explicit refresh forces a remote read.
+  function enterLibrary() { if (!freshWithin(syncedAt)) refreshCompanies(); }
+  function enterAnalysis() { if (!freshWithin(reportsSyncedAt)) refreshReports(); }
+  async function refreshBinding() { try { const b = await api('/feishu-binding'); setBinding(b); return b; } catch (e) { setError(e.message); return null; } }
+  useEffect(() => { load(); refreshCompanies(); refreshReports(); refreshBinding(); }, []);
+  const tasksRef = useRef(tasks); tasksRef.current = tasks;
+  useEffect(() => {
+    let live = true, timer = null;
+    const terminal = ['ready', 'failed', 'interrupted'];
+    const tick = async () => {
+      if (!live) return;
+      const active = tasksRef.current.some(t => ['running', 'queued'].includes(t.status));
+      if (!document.hidden) {
+        const before = tasksRef.current, items = await loadTasks();
+        if (items?.some(item => item.analysis && !before.some(old => old.id === item.id && old.status === item.status && old.updatedAt === item.updatedAt))) loadAnalysisCards();
+        // A finished task may have written documents, so re-read the local index once.
+        if (items?.some(item => terminal.includes(item.status) && before.some(old => old.id === item.id && ['running', 'queued'].includes(old.status)))) loadIndex();
+      }
+      timer = setTimeout(tick, active ? 4000 : 30000);
+    };
+    timer = setTimeout(tick, 4000);
+    const resume = () => { if (!document.hidden && live) loadTasks(); };
+    document.addEventListener('visibilitychange', resume);
+    return () => { live = false; clearTimeout(timer); document.removeEventListener('visibilitychange', resume); };
+  }, []);
+  useEffect(() => { let live = true; const sync = () => { if (document.hidden) return; const id = location.hash.slice(1).split('/')[0]; if (/^[a-f0-9-]{36}$/.test(id)) api('/tasks/' + id).then(v => { if (live && location.hash.slice(1).split('/')[0] === id) setSelected(v.task); }).catch(e => setError(e.message)); else setSelected(null); }; sync(); window.addEventListener('hashchange', sync); const timer = setInterval(sync, 2000); return () => { live = false; clearInterval(timer); window.removeEventListener('hashchange', sync); }; }, []);
+  useEffect(() => { const receive = e => { const origin = hostOrigin(document.referrer, new URLSearchParams(location.search).get('hostOrigin')); if (origin && e.origin === origin && e.source === window.parent && e.data?.type === 'industry-research:show-report' && (e.data.taskId === '' || /^[a-f0-9-]{36}$/.test(e.data.taskId ?? ''))) location.hash = e.data.taskId; }; window.addEventListener('message', receive); return () => window.removeEventListener('message', receive); }, []);
+  const open = t => { setCardTarget(null); setSelected(t); location.hash = t.id; };
+  const back = () => { setCardTarget(null); setSelected(null); location.hash = ''; load(); };
+  async function begin() { if (config?.cloudOnly) { const b = await refreshBinding(); if (!b) return; if (!b.bound) { setResumeModal('research'); setModal('binding'); return; } } setModal('research'); }
+  async function schedule() { if (config?.cloudOnly) { const b = await refreshBinding(); if (!b) return; if (!b.bound) { setResumeModal('schedule'); setModal('binding'); return; } } setModal('schedule'); }
+  async function beginInternal() { if (config?.cloudOnly) { const b = await refreshBinding(); if (!b) return; if (!b.bound) { setResumeModal('internal-research'); setModal('binding'); return; } } setModal('internal-research'); }
+  async function beginAnalysis() {
+    if (!config?.analysisAvailable) { setError('友商分析需要在 DSH 原生会话中运行并保存到飞书'); return; }
+    if (companies.filter(c => c.url).length < 2) { setError('至少需要 2 家已有全量信息库报告的公司'); return; }
+    if (config?.cloudOnly) { const b = await refreshBinding(); if (!b) return; if (!b.bound) { setResumeModal('analysis'); setModal('binding'); return; } }
+    setModal('analysis');
+  }
+  async function retry(t) { try { const value = await api(`/tasks/${t.id}/retry`, { method: 'POST', body: JSON.stringify({ stage: 'research' }) }); open(value); load(); } catch (e) { setError(e.message); } }
+  const visible = companies.filter(c => c.name.toLowerCase().includes(query.toLowerCase()));
+  const sourceCompanies = companies.filter(c => c.url);
+  const analysisCards = [...analysisTasks, ...reports];
+  const visibleAnalysis = analysisCards.filter(r => [r.title, ...(r.companies ?? []), ...(r.dimensions ?? [])].join(' ').toLowerCase().includes(query.toLowerCase()));
+  const history = tasks.filter(t => !t.briefing && !t.internal && t.direction.includes(query) && (filter === 'all' || t.status === filter));
+  const pageName = selected ? 'AI 会话' : tab === 'daily' ? '日报' : tab === 'weekly' ? '周报' : tab === 'internal' ? '内部资料' : tab === 'logs' ? '平台日志' : tab === 'analysis' ? '友商分析' : tab === 'library' ? '全量信息库' : '历史 AI 任务';
+  const pageIntro = tab === 'library' ? '让分散的信息，成为持续积累的洞察。' : tab === 'analysis' ? '从全量信息库中提取证据，比较相同点、差异点与竞争优势。' : '每一次调研都有迹可循，随时回到原生会话继续探索。';
+  const primaryLabel = tab === 'analysis' ? '新建友商分析' : '更新全量信息库';
+  const primaryDisabled = tab === 'analysis' && (!config?.analysisAvailable || sourceCompanies.length < 2);
+  return <div className="industry-shell">
+    <aside className="industry-sidebar"><a className="industry-brand" href="#" onClick={back}><span>研</span>行研工作台</a><div className="side-caption">研究空间</div><button className={['library','history'].includes(tab) && !selected ? 'active' : ''} onClick={() => { back(); setTab('library'); setQuery(''); enterLibrary(); }}><Library size={18}/>全量信息库<span>{companies.length}</span></button><button className={tab === 'analysis' && !selected ? 'active' : ''} onClick={() => { back(); setTab('analysis'); setQuery(''); enterAnalysis(); }}><GitCompare size={18}/>友商分析<span>{analysisCards.length}</span></button>{['daily','weekly'].map(k=><button key={k} className={tab===k&&!selected?'active':''} onClick={()=>{back();setTab(k);setQuery('');}}><History size={18}/>{k==='daily'?'日报':'周报'}</button>)}<button className={tab === 'internal' && !selected ? 'active' : ''} onClick={() => { back(); setTab('internal'); setQuery(''); }}><FileText size={18}/>内部资料</button><div className="industry-side-bottom"><span className="live-dot"/>一个公司，一份持续生长的研究<small>DSH · Industry Research</small></div></aside>
+    <main className="industry-main"><header className="industry-top"><span>行研工作台 <i>/</i> {pageName}</span><div>{binding?.bound ? <><span className="industry-binding-summary" role="status" aria-label={`已绑定飞书：${binding.userName || '当前账号'}${binding.appName ? `，当前应用：${binding.appName}` : ''}`}><strong>已绑定：{binding.userName || '当前账号'}</strong>{binding.appName && <small>{binding.appName}</small>}</span><button onClick={() => setModal('binding-replace')}>更换应用</button><button onClick={() => setModal('binding-rebind')}>重新绑定</button></> : <button onClick={() => setModal('binding-bind')}>绑定飞书</button>}<button onClick={() => setModal('root')}><Folder size={14}/>设置飞书根目录</button><button aria-label="平台日志" onClick={() => { back(); setTab('logs'); }}><Activity size={16}/>平台日志</button></div></header>
+    {binding?.operation?.status==='failed' && <div className="industry-error" role="alert">所选应用已保留，但个人授权尚未完成。{binding.operation.error}</div>}
+    {(syncError || reportSyncError || error) && <div className="industry-error" role="alert"><AlertCircle size={17}/>{syncError || reportSyncError || error}<button onClick={() => setModal('cli-setup')}>检查飞书环境</button><button aria-label="关闭错误" onClick={() => { setError(''); setSyncError(''); setReportSyncError(''); }}><X size={16}/></button></div>}
+    {syncNotice && <div className="industry-success" role="status"><Check size={17}/>{syncNotice}<button aria-label="关闭提示" onClick={() => setSyncNotice('')}><X size={16}/></button></div>}
+    {selected ? <section className="industry-content"><button className="secondary" onClick={back}>← 返回工作台</button><div className="industry-heading"><div><p className="industry-eyebrow">RESEARCH SESSION</p><h1>{selected.direction}</h1><p>{status(selected)} · {time(selected.createdAt)}</p></div>{['failed', 'interrupted'].includes(selected.status) && <button className="primary" onClick={() => retry(selected)}>重试任务</button>}</div>{selected.error && <div role="alert" className="industry-error">{selected.error}</div>}{selected.nativeSession ? <Conversation task={selected}/> : <div className="industry-empty"><Sparkles/><h2>{config?.mode === 'demo' ? '离线流程演示' : '请从 DSH 打开原生会话'}</h2><p>当前任务状态：{status(selected)}。演示不会检索真实资料或上传飞书。</p></div>}</section> : tab === 'logs' ? <PlatformLogs/> : ['daily','weekly'].includes(tab) ? <Briefings focusRequest={cardTarget} kind={tab} config={config} onGenerate={begin} onSchedule={schedule} onOpen={open} onRetry={retry} onFixNotification={repairNotification} notificationRevision={notificationRevision}/> : tab === 'internal' ? <InternalMaterials focusRequest={cardTarget} config={config} onConfigChanged={directoryName => setConfig(current => ({ ...current, internalDirectoryName: directoryName }))} onCreate={beginInternal} onOpen={open} onRetry={retry} onFixNotification={repairNotification} notificationRevision={notificationRevision}/> : <section className="industry-content"><p className="industry-eyebrow">INDUSTRY INTELLIGENCE / {tab === 'analysis' ? '02' : '01'}</p><div className="industry-heading"><div><h1>{pageName}</h1><p>{pageIntro}</p></div><button className="primary" disabled={primaryDisabled} title={primaryDisabled && tab === 'analysis' ? '至少需要 2 家已有全量信息库报告的公司' : undefined} onClick={tab === 'analysis' ? beginAnalysis : begin}>{tab === 'analysis' ? <GitCompare size={17}/> : <Plus size={17}/>} {primaryLabel}</button></div>
+    {['library','history'].includes(tab) && <div role="tablist" aria-label="全量信息库视图" className="industry-library-tabs" onKeyDown={event => {
+      const keys = ['ArrowLeft','ArrowRight','Home','End']; if (!keys.includes(event.key)) return;
+      event.preventDefault(); const next = event.key === 'Home' ? 'library' : event.key === 'End' ? 'history' : tab === 'library' ? 'history' : 'library';
+      setTab(next); setQuery(''); event.currentTarget.querySelector('#library-tab-' + next)?.focus();
+    }}>{[['library','公司档案'],['history','历史 AI 任务']].map(([value,label]) => <button key={value} id={'library-tab-' + value} role="tab" aria-selected={tab === value} aria-controls="library-panel" tabIndex={tab === value ? 0 : -1} onClick={() => {setTab(value);setQuery('');}}>{label}</button>)}</div>}
+    <div id={['library','history'].includes(tab) ? 'library-panel' : undefined} role={['library','history'].includes(tab) ? 'tabpanel' : undefined} aria-labelledby={['library','history'].includes(tab) ? 'library-tab-' + tab : undefined}>
+    {config?.mode === 'demo' && <div className="industry-demo">离线演示 · 不执行真实检索或飞书上传；实际调研请在 DSH 中安装本插件。</div>}
+    {tab === 'library' && <div className="industry-overview"><div><span>已收录公司</span><strong>{companies.length}<small>家</small></strong></div><div><span>默认关注公司</span><strong>17<small>家</small></strong></div><div className="industry-storage"><span><Folder size={14}/>存储位置</span><strong>{config?.feishuRoot?.folderUrl ? <a href={config.feishuRoot.folderUrl} target="_blank" rel="noreferrer">指定飞书文件夹 <ArrowUpRight size={14}/></a> : `飞书云盘 / ${config?.feishuRoot?.rootName ?? '行研工作台'}`} / 全量信息库</strong><small>一个公司一份文档 · 按维度归档 · 来源可追溯{syncedAt && <> · 上次同步 {time(syncedAt)}</>}</small></div></div>}
+    {tab === 'analysis' && <div className="industry-overview"><div><span>友商报告</span><strong>{reports.length}<small>份</small></strong></div><div><span>可对比公司</span><strong>{sourceCompanies.length}<small>家</small></strong></div><div className="industry-storage"><span><Folder size={14}/>存储位置</span><strong>{config?.feishuRoot?.folderUrl ? <a href={config.feishuRoot.folderUrl} target="_blank" rel="noreferrer">指定飞书文件夹 <ArrowUpRight size={14}/></a> : `飞书云盘 / ${config?.feishuRoot?.rootName ?? '行研工作台'}`} / 友商分析</strong><small>严格引用全量信息库 · 带原始来源 · 可回到 AI 会话{reportsSyncedAt && <> · 上次同步 {time(reportsSyncedAt)}</>}</small></div></div>}
+    <div className="industry-toolbar"><h2>{tab === 'library' ? '公司档案' : tab === 'analysis' ? '分析报告' : '任务记录'} <span>{tab === 'library' ? companies.length : tab === 'analysis' ? analysisCards.length : tasks.length}</span></h2><div><label className="industry-search"><Search size={16}/><input aria-label="搜索" placeholder={tab === 'library' ? '搜索公司名称' : tab === 'analysis' ? '搜索报告、公司或维度' : '搜索任务'} value={query} onChange={e => setQuery(e.target.value)}/></label><button className="industry-icon" aria-label="刷新列表" disabled={refreshing} aria-busy={refreshing} onClick={() => tab === 'analysis' ? refreshReports() : tab === 'library' ? refreshCompanies() : load()}><RefreshCw size={16} className={refreshing ? 'spin' : ''}/></button></div></div>
+    {tab === 'history' && <div className="industry-filters">{[['all','全部'],['running','调研中'],['ready','已完成'],['failed','失败'],['interrupted','已中断']].map(([v,l]) => <button className={v === filter ? 'current' : ''} key={v} onClick={() => setFilter(v)}>{l}</button>)}</div>}
+    {loading ? <div className="industry-empty"><LoaderCircle className="spin"/>正在读取工作台…</div> : tab === 'library' ? visible.length ? <div className="industry-cards">{visible.map((c,i) => <article className="industry-company" key={c.name}><div className="company-top"><span className={'company-monogram color-' + i % 4}>{c.name.slice(0,1)}</span><span className="company-state">已收录</span></div><a className="company-title" href={c.url} target="_blank" rel="noreferrer">{c.name}<ArrowUpRight size={18}/></a><p>{c.dimensions.length} 个研究维度 · 本次新增 {c.added} 条</p><div className="company-dimensions">{c.dimensions.slice(0,3).map(d => <span key={d}>{d}</span>)}{c.dimensions.length > 3 && <span>+{c.dimensions.length - 3}</span>}</div>{c.conflicts > 0 && <div className="company-conflict"><AlertCircle size={14}/>{c.conflicts} 处信息冲突，请在文档中核对来源</div>}<footer><span>{time(c.updatedAt)}</span><button disabled={!c.taskId} onClick={() => { if(c.taskId) location.hash=c.taskId; }}>AI 会话 ↗</button></footer></article>)}</div> : <div className="industry-empty"><Building2 size={32}/><h2>{query ? '没有匹配的公司' : '从第一轮调研开始积累'}</h2><p>{query ? '试试其他公司名称。' : '已准备 17 家关注公司与 5 个研究维度。启动调研后，已完成的公司文档将出现在这里。'}</p>{!query && <button className="secondary" onClick={begin}><Plus size={16}/>更新全量信息库</button>}</div> : tab === 'analysis' ? visibleAnalysis.length ? <div className="industry-cards">{visibleAnalysis.map((r,i) => <article className="industry-company analysis-report" key={r.url ?? r.taskId ?? r.title}><div className="company-top"><span className={'company-monogram color-' + i % 4}><GitCompare size={18}/></span><span className={'company-state ' + (r.status ?? 'published')}>{cardStatus(r)}</span></div>{r.url ? <a className="company-title" href={r.url} target="_blank" rel="noreferrer">{r.title}<ArrowUpRight size={18}/></a> : <div className="company-title">{r.title}</div>}<p className="analysis-companies">{(r.companies ?? []).join(' × ')}</p><div className="company-dimensions">{(r.dimensions ?? []).slice(0,3).map(d => <span key={d}>{d}</span>)}{(r.dimensions ?? []).length > 3 && <span>+{(r.dimensions ?? []).length - 3}</span>}</div>{r.insufficient?.length > 0 && <div className="company-conflict"><AlertCircle size={14}/>资料不足：{r.insufficient.join('、')}</div>}{r.error && <div className="company-conflict"><AlertCircle size={14}/>{r.error}</div>}<footer><span>{time(r.updatedAt ?? r.createdAt)}</span><button disabled={!r.taskId} onClick={() => { if(r.taskId) location.hash=r.taskId; }}>AI 会话 ↗</button></footer></article>)}</div> : <div className="industry-empty"><GitCompare size={34}/><h2>{query ? '没有匹配的分析报告' : '从已有公司资料开始对比'}</h2><p>{query ? '试试其他报告标题、公司或维度。' : sourceCompanies.length >= 2 ? '选择至少两家已收录公司，生成只引用全量信息库的友商分析报告。' : '全量信息库中至少需要两家已收录公司，才能开始友商分析。'}</p>{!query && (sourceCompanies.length >= 2 ? <button className="secondary" onClick={beginAnalysis}><GitCompare size={16}/>新建友商分析</button> : <button className="secondary" onClick={() => { setTab('library'); refreshCompanies(); }}><Library size={16}/>去更新全量信息库</button>)}</div> : history.length ? <div className="industry-history">{history.map(t => <article key={t.id} id={'task-card-'+t.id} tabIndex={-1}><span className={'task-status ' + t.status}>{status(t)}</span><div><button onClick={() => open(t)}>{t.direction}</button><p>{time(t.createdAt)} · {t.sources === 'web' ? '全网查询' : t.sources}</p></div>{['failed','interrupted'].includes(t.status) && <button className="secondary" onClick={() => retry(t)}>重试</button>}<button className="secondary" onClick={() => open(t)}>继续会话 <ArrowUpRight size={14}/></button></article>)}{cursor && <button className="secondary" onClick={async () => { try { const page = await api('/tasks?limit=100&cursor=' + cursor); setTasks(v => [...v, ...page.items]); setCursor(page.nextCursor); } catch (e) { setError(e.message); } }}>加载更多</button>}</div> : <div className="industry-empty"><History size={30}/><h2>暂无{filter === 'all' ? '' : '匹配的'}任务记录</h2><p>启动调研后，进度与原生会话会保存在这里。</p></div>}
+    <footer className="industry-foot">每一条信息，都有来源。<span>INDUSTRY RESEARCH WORKSPACE</span></footer></div></section>}
+    </main>{modal === 'cli-setup' && <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-label="飞书环境检查"><div className="modal-heading"><h2>飞书环境检查</h2><button aria-label="关闭飞书环境检查" onClick={() => setModal('')}><X size={20}/></button></div><LarkCliSetup onReady={retryFailedReads}/></section></div>}{['binding','binding-bind','binding-replace','binding-rebind','binding-repair'].includes(modal) && <BindingModal onLocateTask={item=>navigateBlockingTask(item)} onOpenTask={item=>navigateBlockingTask(item,true)} onRepaired={notificationTarget ? notificationRepaired : undefined} repair={modal==='binding-repair'} initialAction={modal==='binding-bind' ? 'initial' : modal==='binding-replace' ? 'replace' : modal==='binding-rebind' ? 'rebind' : undefined} onClose={() => { setNotificationTarget(null); setResumeModal(''); setModal(''); }} onStatus={setBinding} onBound={s => { const next = resumeModal; setBinding(s); setResumeModal(''); setModal(next); }}/>} {modal === 'root' && <RootModal current={config?.feishuRoot} onClose={() => setModal('')} onSaved={result => { libraryRevision.current++; reportRevision.current++; setModal(''); if (result.settings) setConfig(current => current ? { ...current, feishuRoot: result.settings, feishuTarget: result.settings.folderUrl ? '飞书云盘 / 指定文件夹' : `飞书云盘 / ${result.settings.rootName}` } : current); if (result.library) { hasLibraryResult.current = true; setCompanies(result.library.companies ?? []); setSyncedAt(result.library.syncedAt ?? null); } if (result.import?.status === 'failed') { setSyncNotice(''); setSyncError(result.import.message); if (result.import.code === 'FEISHU_DRIVE_SCOPE_REQUIRED') refreshBinding(); } else { setError(''); setSyncError(''); setSyncNotice(result.import?.message ?? '设置已保存'); } load(); }}/>} {['schedule','research'].includes(modal) && <ResearchModal scheduled={modal==='schedule'} kind={['daily','weekly'].includes(tab)?tab:null} onClose={() => setModal('')} onCreated={t => { setModal(''); open(t); load(); }}/>} {modal === 'internal-research' && <InternalMaterialModal directoryName={config?.internalDirectoryName} onClose={() => setModal('')} onCreated={t => { setModal(''); open(t); load(); }}/>} {modal === 'analysis' && <AnalysisModal companies={sourceCompanies} onClose={() => setModal('')} onCreated={t => { setModal(''); open(t); load(); refreshReports(); }}/>}</div>;
+}
+function ChoiceGroup({ title, values, selected, onChange, onAdd }) {
+ const [custom, setCustom] = useState('');
+ return <fieldset className="industry-choices"><legend>{title}<button type="button" onClick={() => onChange(selected.length === values.length ? [] : values)}>{selected.length === values.length ? '清空' : '全选'}</button></legend><div>{values.map(v => <label key={v}><input type="checkbox" checked={selected.includes(v)} onChange={e => onChange(e.target.checked ? [...selected,v] : selected.filter(x => x !== v))}/>{v}</label>)}</div><div className="industry-add"><input aria-label={'自定义' + title} maxLength={120} placeholder={'添加自定义' + title} value={custom} onChange={e => setCustom(e.target.value)}/><button type="button" disabled={!custom.trim()} onClick={async () => { if (await onAdd(custom.trim())) setCustom(''); }}>＋ 添加</button></div></fieldset>;
+}
+function AnalysisModal({ companies, onClose, onCreated }) {
+ const names = companies.map(c => c.name), [prefs, setPrefs] = useState(null), [selectedCompanies, setSelectedCompanies] = useState(names), [dimensions, setDimensions] = useState([]), [prompt, setPrompt] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+ const key = useRef(crypto.randomUUID()), lock = useRef(false), dialog = useRef(null);
+ useEffect(() => { let live = true; api('/industry/preferences').then(v => { if (live) { setPrefs(v); setDimensions(v.dimensions); } }).catch(e => setError(e.message)); const previous = document.activeElement; dialog.current?.querySelector('button')?.focus(); const listener = e => { if (e.key === 'Escape' && !lock.current) onClose(); if (e.key === 'Tab') { const els = [...dialog.current.querySelectorAll('button:not(:disabled),input:not(:disabled),textarea:not(:disabled)')], first = els[0], last = els.at(-1); if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); } } }; document.addEventListener('keydown', listener); return () => { live = false; document.removeEventListener('keydown', listener); previous?.focus(); }; }, []);
+ const generated = analysisDefaultPrompt(selectedCompanies, dimensions);
+ const change = setter => value => { setter(value); setPrompt(null); };
+ async function addDimension(value) { try { const next = { ...prefs, dimensions: [...new Set([...prefs.dimensions, value])] }; const saved = await api('/industry/preferences', { method: 'PUT', body: JSON.stringify(next) }); setPrefs(saved); setDimensions(old => [...new Set([...old, value])]); setPrompt(null); return true; } catch (e) { setError(e.message); return false; } }
+ async function submit(e) { e.preventDefault(); if (lock.current) return; lock.current = true; setBusy(true); setError(''); try { const task = await api('/analysis/tasks', { method: 'POST', headers: { 'Idempotency-Key': key.current }, body: JSON.stringify({ companies: selectedCompanies, dimensions, prompt: prompt ?? generated }) }); onCreated(task); } catch (e) { setError(e.message); } finally { lock.current = false; setBusy(false); } }
+ return <div className="industry-modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget && !busy) onClose(); }}><section ref={dialog} className="industry-modal" role="dialog" aria-modal="true" aria-labelledby="analysis-modal-title"><header><span><GitCompare size={18}/> 友商对比</span><button disabled={busy} aria-label="关闭友商分析配置" onClick={onClose}><X size={20}/></button></header><h2 id="analysis-modal-title">新建友商分析</h2><p>只从全量信息库已有公司文档中提取资料。资料不足时会明确标注，不使用库外信息补全。</p><form onSubmit={submit}><fieldset disabled={busy || !prefs} className="industry-form-fields"><ChoiceGroup title="调研公司" values={names} selected={selectedCompanies} onChange={change(setSelectedCompanies)}/>{prefs && <ChoiceGroup title="对比维度" values={prefs.dimensions} selected={dimensions} onChange={change(setDimensions)} onAdd={addDimension}/>}<label className="industry-field">任务 Prompt <small>可直接编辑</small><textarea className="industry-prompt" required minLength={10} maxLength={14000} value={prompt ?? generated} onChange={e => setPrompt(e.target.value)}/></label></fieldset>{error && <p role="alert" className="industry-error">{error}</p>}<footer><span>{selectedCompanies.length} 家公司 · {dimensions.length} 个对比维度</span><button className="primary" disabled={busy || !prefs || selectedCompanies.length < 2 || !dimensions.length}>{busy ? <LoaderCircle className="spin" size={16}/> : <GitCompare size={16}/>}启动</button></footer></form></section></div>;
+}
+function ResearchModal({ onClose, onCreated, kind, scheduled=false }) {
+ const [prefs, setPrefs] = useState(null), [companyOptions,setCompanyOptions] = useState(DEFAULT_COMPANIES), [companies,setCompanies] = useState(DEFAULT_COMPANIES), [dimensions,setDimensions] = useState([]), [sources,setSources] = useState([]), [requirements,setRequirements] = useState(''), [prompt,setPrompt] = useState(null), [error,setError] = useState(''), [busy,setBusy] = useState(false), [savedPlan,setSavedPlan] = useState(null), [scheduleSaved,setScheduleSaved] = useState(false);
+ const [time,setTime]=useState('09:00'),[weekday,setWeekday]=useState(5),[enabled,setEnabled]=useState(true),[available,setAvailable]=useState(true);
+ const key = useRef(crypto.randomUUID()), lock = useRef(false), dialog = useRef(null);
+ useEffect(() => { let live = true; Promise.all([api('/industry/preferences'),scheduled?api('/briefings/schedule?kind='+kind):Promise.resolve(null)]).then(([v,plan]) => { if (live) {setPrefs({...v,dimensions:[...new Set([...v.dimensions,...(plan?.research.dimensions??[])])],sources:[...new Set([...v.sources,...(plan?.research.sources??[])])]});setDimensions(plan?.research.dimensions??v.dimensions);setSources(plan?.research.sources??v.sources);if(plan){setCompanies(plan.research.companies);setCompanyOptions([...new Set([...DEFAULT_COMPANIES,...plan.research.companies])]);setRequirements(plan.research.requirements);setPrompt(plan.research.prompt??null);setTime(plan.time);setWeekday(plan.weekday);setEnabled(plan.enabled);setAvailable(plan.available);setSavedPlan(plan);}} }).catch(e => setError(e.message)); const previous = document.activeElement; dialog.current?.querySelector('button')?.focus(); const listener = e => { if (e.key === 'Escape' && !lock.current) onClose(); if (e.key === 'Tab') { const els = [...dialog.current.querySelectorAll('button:not(:disabled),input:not(:disabled),textarea:not(:disabled)')], first=els[0],last=els.at(-1); if(e.shiftKey && document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey && document.activeElement===last){e.preventDefault();first.focus();} } }; document.addEventListener('keydown',listener); return () => { live=false;document.removeEventListener('keydown',listener);previous?.focus(); }; },[]);
+ const generated = kind ? briefingPrompt({kind,companies,dimensions,sources,requirements},scheduled?{display:'{{时间范围}}'}:reportWindow(kind)) : `帮我对【${companies.join('、')}】在【${sources.join('、')}】进行【${dimensions.join('、')}】的调研${requirements ? `，并满足【${requirements}】` : ''}，自动去重增量保存到飞书云盘【全量信息库】中。并呈现本次更新摘要。`;
+ const change = setter => value => { setter(value); setPrompt(null); };
+ async function addPreference(kind,value) { try { const next = {...prefs,[kind]:[...new Set([...prefs[kind],value])]}; const saved=await api('/industry/preferences',{method:'PUT',body:JSON.stringify(next)});setPrefs(saved); (kind==='dimensions'?setDimensions:setSources)(old=>[...new Set([...old,value])]);setPrompt(null);return true; }catch(e){setError(e.message);return false;} }
+ async function submit(e) { e.preventDefault();if(lock.current)return;lock.current=true;setBusy(true);setError('');try{if(scheduled){const saved=await api('/briefings/schedule',{method:'PUT',body:JSON.stringify({kind,time,weekday,enabled,research:{companies,dimensions,sources,requirements,prompt:prompt??generated}})});setSavedPlan(saved);setScheduleSaved(true);setTime(saved.time);setWeekday(saved.weekday);setEnabled(saved.enabled);return;}const t=await api(kind?'/briefings':'/industry/tasks',{method:'POST',headers:{'Idempotency-Key':key.current},body:JSON.stringify({...(kind?{kind}:{}),companies,dimensions,sources,requirements,prompt:prompt??generated})});onCreated(t);}catch(e){setError(e.message);}finally{lock.current=false;setBusy(false);} }
+ return <div className="industry-modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget&&!busy)onClose();}}><section ref={dialog} className="industry-modal" role="dialog" aria-modal="true" aria-labelledby="research-modal-title"><header><span><Sparkles size={18}/> 新一轮调研</span><button disabled={busy} aria-label="关闭调研配置" onClick={onClose}><X size={20}/></button></header><h2 id="research-modal-title">{kind ? `${scheduled?'定时':'手动'}生成${kind==='daily'?'日报':'周报'}` : '更新全量信息库'}</h2><p>选择研究范围，已有资料将自动去重、增量更新。单次调研超过 30 分钟未完成时标记失败，已完成文档保留。</p><form onSubmit={submit}><fieldset disabled={busy || !prefs} className="industry-form-fields">{scheduled&&<><label className="industry-field">发送时间（北京时间）<input type="time" required value={time} onChange={e=>{setTime(e.target.value);setSavedPlan(null);setScheduleSaved(false);}}/></label>{kind==='weekly'&&<label className="industry-field">每周<select value={weekday} onChange={e=>{setWeekday(Number(e.target.value));setSavedPlan(null);setScheduleSaved(false);}}>{['一','二','三','四','五','六','日'].map((v,i)=><option key={v} value={i+1}>周{v}</option>)}</select></label>}<label><input type="checkbox" checked={enabled} onChange={e=>{setEnabled(e.target.checked);setSavedPlan(null);setScheduleSaved(false);}}/>启用此定时任务</label><p>日报和周报分别保存调研配置。Prompt 中的 {'{{时间范围}}'} 会在每次执行时替换为当期范围。</p>{enabled&&savedPlan?.nextRunAt&&<p role="status">下次执行：{savedPlan.nextRunAt && new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'long',day:'numeric',weekday:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(savedPlan.nextRunAt))}（北京时间）</p>}{savedPlan?.todayTimePassed&&<p role="status">今天的发送时间已过。若服务在发送时间正常运行，本日不会补跑；若 DSH 在发送时间关闭，重启后会自动补发。需要立即生成时请使用“手动生成日报”。</p>}{!available&&<p role="alert">当前宿主未启用官方 Schedule 服务。</p>}</>}<ChoiceGroup title="调研公司" values={companyOptions} selected={companies} onChange={change(setCompanies)} onAdd={async value=>{setCompanyOptions(v=>[...new Set([...v,value])]);setCompanies(v=>[...new Set([...v,value])]);setPrompt(null);return true;}}/>{prefs && <><ChoiceGroup title="调研维度" values={prefs.dimensions} selected={dimensions} onChange={change(setDimensions)} onAdd={v=>addPreference('dimensions',v)}/><ChoiceGroup title="数据源" values={[...prefs.sources,'全网查询'].filter((v,i,a)=>a.indexOf(v)===i)} selected={sources} onChange={change(setSources)} onAdd={v=>addPreference('sources',v)}/></>}<label className="industry-field">其他要求<textarea maxLength={2000} placeholder="例如：优先补充最近一年的融资和产品发布信息" value={requirements} onChange={e=>change(setRequirements)(e.target.value)}/></label><label className="industry-field">任务 Prompt <small>可直接编辑</small><textarea className="industry-prompt" required minLength={10} maxLength={14000} value={prompt??generated} onChange={e=>setPrompt(e.target.value)}/></label></fieldset>{error&&<p role="alert" className="industry-error">{error}</p>}<footer><span>{companies.length} 家公司 · {dimensions.length} 个维度 · {sources.length} 个信源</span><button type={scheduleSaved?'button':'submit'} className="primary" onClick={scheduleSaved?onClose:undefined} disabled={busy||!prefs||(scheduled&&!available)||!companies.length||!dimensions.length||!sources.length}>{busy?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>}{scheduleSaved?'关闭':scheduled?'完成':'启动'}</button></footer></form></section></div>;
+}
+
+function InternalMaterialModal({ directoryName: initialDirectoryName, onClose, onCreated }) {
+  const directoryName = initialDirectoryName ?? '内部资料';
+  const [sourceType, setSourceType] = useState('local');
+  const [source, setSource] = useState('');
+  const [picking, setPicking] = useState(false);
+  const pickerController = useRef(null);
+  const [requirements, setRequirements] = useState('');
+  const [prompt, setPrompt] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const key = useRef(crypto.randomUUID());
+  const lock = useRef(false);
+  const dialog = useRef(null);
+  useEffect(() => () => pickerController.current?.abort(), []);
+  const generated = internalMaterialPrompt({source: source.trim(), requirements: requirements.trim(), directoryName});
+
+  useEffect(() => {
+    const previous = document.activeElement;
+    dialog.current?.querySelector('button')?.focus();
+    const listener = event => {
+      if (event.key === 'Escape' && !lock.current) onClose();
+      if (event.key === 'Tab') {
+        const elements = [...dialog.current.querySelectorAll('button:not(:disabled),input:not(:disabled),textarea:not(:disabled)')];
+        const first = elements[0], last = elements.at(-1);
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', listener);
+    return () => {
+      document.removeEventListener('keydown', listener);
+      previous?.focus();
+    };
+  }, []);
+
+  function changeSourceType(value) {
+    setSourceType(value);
+    pickerController.current?.abort();
+    setSource('');
+    setPrompt(null);
+    setError('');
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (lock.current) return;
+    lock.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      const task = await api('/internal-materials', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': key.current },
+        body: JSON.stringify({ directoryName, sourceType, source: source.trim(), requirements, prompt: prompt ?? generated }),
+      });
+      onCreated(task);
+    } catch (cause) {
+      setError(cause.message);
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
+  }
+
+  return <div className="industry-modal-backdrop" onMouseDown={event => {
+    if (event.target === event.currentTarget && !busy) onClose();
+  }}><section ref={dialog} className="industry-modal" role="dialog" aria-modal="true" aria-labelledby="internal-material-title">
+    <header><span><FileText size={18}/> 内部资料解析</span><button disabled={busy} aria-label="关闭内部资料解析" onClick={onClose}><X size={20}/></button></header>
+    <h2 id="internal-material-title">内部资料</h2>
+    <p>支持录音、视频和内部文档。选择本地文件或填写网络链接，由本次 DSH 会话解析。</p>
+    <form onSubmit={submit}><fieldset disabled={busy} className="industry-form-fields">
+      <fieldset className="industry-choices"><legend>资料来源</legend><div>
+        <label><input type="radio" name="source-type" checked={sourceType === 'local'} onChange={() => changeSourceType('local')}/>本地文件路径</label>
+        <label><input type="radio" name="source-type" checked={sourceType === 'url'} onChange={() => changeSourceType('url')}/>网络链接</label>
+      </div></fieldset>
+      {sourceType === 'local' ? <div className="industry-field">
+        <label htmlFor="internal-source-path">本地文件完整路径</label>
+        <output id="internal-source-path" style={{overflowWrap:'anywhere',whiteSpace:'pre-wrap',display:'block'}}>{source || '点击选择文件获取完整路径'}</output>
+        <button type="button" className="secondary" disabled={picking || busy} onClick={async () => {
+          if (picking) return; setPicking(true); setError(''); pickerController.current = new AbortController();
+          try { const file = await pickHostFile({signal:pickerController.current.signal}); if (file) {setSource(file.path);setPrompt(null);} }
+          catch (cause) { if (!pickerController.current.signal.aborted) setError(cause.message); }
+          finally {setPicking(false);}
+        }}>{picking ? '正在选择…' : '选择本地文件'}</button>
+        <small>单个文件不超过 100 MB，使用原始路径，不复制本地文件。</small>
+      </div> : <label className="industry-field">网络资料链接
+        <input required maxLength={4000} type="url" placeholder="https://…" value={source} onChange={event => { setSource(event.target.value); setPrompt(null); }}/>
+      </label>}
+      <label className="industry-field">其他要求
+        <textarea maxLength={2000} placeholder="例如：重点核对产品发布时间、融资金额和说话人身份" value={requirements} onChange={event => { setRequirements(event.target.value); setPrompt(null); }}/>
+      </label>
+      <label className="industry-field">任务 Prompt <small>可直接编辑</small>
+        <textarea className="industry-prompt" required minLength={10} maxLength={14000} value={prompt ?? generated} onChange={event => setPrompt(event.target.value)}/>
+      </label>
+      <p className="ai-config-hint">保存原始资料、逐字稿和会议纪要；提及调研公司时自动去重更新全量信息库。</p>
+      {error && <p className="industry-error" role="alert">{error}</p>}
+    </fieldset><footer><span>{sourceType === 'local' ? '本地文件' : '网络资料'} · 结果仅存飞书</span><button className="primary" disabled={busy || picking || !source.trim()}>{busy ? <LoaderCircle className="spin" size={16}/> : <FileText size={16}/>}启动</button></footer></form>
+  </section></div>;
+}

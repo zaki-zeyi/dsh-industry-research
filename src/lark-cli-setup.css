@@ -1,0 +1,8 @@
+.lark-cli-setup{border:1px solid #dce5db;border-radius:12px;padding:18px;margin:16px 0;background:#f8faf7;color:#425c49;font-size:14px;line-height:1.6;min-width:0}
+.lark-cli-setup-heading,.lark-cli-setup-actions{display:flex;align-items:center;flex-wrap:wrap;gap:12px}
+.lark-cli-setup-heading{justify-content:space-between}
+.lark-cli-setup p{margin:10px 0;font-size:14px;line-height:1.6}
+.lark-cli-setup ol{padding-left:22px}
+.lark-cli-setup label{display:block;font-weight:600;margin:12px 0}
+.lark-cli-setup input{display:block;box-sizing:border-box;width:100%;min-width:0;padding:10px;margin-top:6px;border:1px solid #d4dfd2;border-radius:6px;background:white;color:#243b2e;font:13px/1.5 monospace}
+.lark-cli-setup-actions a{color:#365d43;text-decoration:underline}

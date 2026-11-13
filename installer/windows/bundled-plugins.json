@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "plugins": [
+    {
+      "name": "dsh-brand",
+      "version": "0.2.0-rc.6",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/advance-lion/dsh-brand",
+      "sourceUrl": "https://github.com/advance-lion/dsh-brand/releases/download/v0.2.0-rc.6/dsh-brand-0.2.0-rc.6.tgz",
+      "sha256": "4ca01147bded5d1d5e684c47c0950d313184af1d753ba5950a2e55a439a884b7"
+    },
+    {
+      "name": "dshmarket",
+      "version": "1.73.11",
+      "license": "MIT",
+      "homepage": "https://github.com/dsh-market/dsh-market",
+      "sourceUrl": "https://github.com/dsh-market/dsh-market/releases/download/v1.73.11/dshmarket-1.73.11.tgz",
+      "sha256": "8d173e2d8ae03651be0ec7fd49da0ecac6d73e754ea876bfc72b9b3370ebb640",
+      "additionalDependencies": [
+        "@deepseek-ai/schemastery@3.19.0"
+      ]
+    },
+    {
+      "name": "@xmanrui/dsh-im",
+      "version": "5.10.0",
+      "license": "MIT",
+      "homepage": "https://github.com/xmanrui/dsh-im",
+      "sourceUrl": "https://registry.npmjs.org/@xmanrui/dsh-im/-/dsh-im-5.10.0.tgz",
+      "sha256": "e9518676cf57e4af88fc5a2bf4cc2d838073c579ddc0c6fd256e72ba88339f25"
+    },
+    {
+      "name": "dsh-orb",
+      "version": "0.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/mini-yifan/dsh-orb-cordis",
+      "sourceUrl": "https://github.com/mini-yifan/dsh-orb-cordis/releases/download/plugin-v0.2.0/dsh-orb-0.2.0.tgz",
+      "sha256": "cdf25778e7bea99606a67d04e054c405866f0812e12d6cc30e7270ae28f4c72e"
+    }
+  ]
+}

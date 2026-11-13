@@ -46,7 +46,9 @@
     "plugin",
     "server",
     "dist",
-    "scripts",
+    "scripts/prepare-pty.mjs",
+    "scripts/terminal-turn-notify.mjs",
+    "scripts/repair-legacy-schedule-reference.mjs",
     "docs",
     "README.md"
   ]

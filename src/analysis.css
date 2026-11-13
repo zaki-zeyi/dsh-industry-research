@@ -1,0 +1,11 @@
+.analysis-report .company-monogram { display: inline-flex; align-items: center; justify-content: center; }
+.analysis-report .company-state.insufficient { background: #fff2e7; color: #a07b50; }
+.analysis-report .analysis-companies { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.7; }
+/* The card badge reports the task state, not just "a report exists". */
+.analysis-report .company-state.running,
+.analysis-report .company-state.queued { background: #fdf6e7; border-color: #f2e3c2; color: #93702f; }
+.analysis-report .company-state.failed,
+.analysis-report .company-state.interrupted { background: #fff2e7; border-color: #f3dccb; color: #a0644a; }
+.analysis-report .company-state.ready,
+.analysis-report .company-state.published { background: #edf5e8; border-color: #dfebd5; color: #6c8b55; }
+.analysis-report .company-conflict { align-items: flex-start; overflow-wrap: anywhere; }
