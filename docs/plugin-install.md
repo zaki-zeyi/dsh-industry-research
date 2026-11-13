@@ -31,7 +31,7 @@ dsh plugin --profile <profile> add <tgz绝对路径>
 
 ## 维护者发布
 
-在 main 更新 package.json/package-lock.json 的同一版本后，合入 main 自动触发 **Publish verified plugin**。失败后可在已有Actions运行中重试。release分支只包含可安装产物，发布工作流保存在main，不要求发布凭据具有修改默认分支工作流的权限。流程：
+在 main 更新 package.json/package-lock.json 的同一版本后，合入 main 自动触发 **Publish verified plugin**。失败后可在已有Actions运行中重试。发布分支是源码镜像加验证产物，推送使用工作流内置凭据，不需要额外的仓库设置；安装内容仍由安装清单的 `files` 决定。流程：
 
 1. Windows 和 macOS 分别运行构建、业务测试、浏览器测试。
 2. 打包 ZIP/TGZ，校验独立安装、页面、生产依赖和原生 PTY。
