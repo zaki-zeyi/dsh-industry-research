@@ -1,9 +1,10 @@
+import { topicDocumentKey } from './topics.mjs';
 import { createHash } from 'node:crypto';
 import { libraryKey, listDriveFolder } from './industry.mjs';
 import { LibraryRefreshError } from './library-errors.mjs';
 import { matchingFolders, driveToken } from './folder-identity.mjs';
 
-const labels = { daily: '日报', weekly: '周报' };
+const labels = { daily: '日报', weekly: '周报', topic: '专题调研库' };
 const isDocument = file => ['docx', 'doc'].includes(file.type) && /^https:\/\//.test(file.url ?? '');
 const idFor = url => 'cloud-' + createHash('sha256').update(url).digest('hex').slice(0, 24);
 async function readFolders(tokens, read) {
@@ -44,13 +45,14 @@ export async function cloudPublications(service, kind, { refresh = false, run } 
   const items = files.filter(isDocument).map(file => {
     const title = String(file.name ?? '').trim() || (labels[kind] ?? '内部资料');
     const common = { id: idFor(file.url), remoteOnly: true, direction: title, status: 'ready', createdAt: timestamp(file), publication: { status: 'published', url: file.url } };
-    return kind === 'internal'
+    return kind === 'topic' ? {...common,topic:{question:title,sources:[],requirements:'',topicId:idFor(file.url).slice(6,14)+'-0000-4000-8000-'+createHash('sha256').update(file.url).digest('hex').slice(8,20)}} : kind === 'internal'
       ? { ...common, internal: { directoryName, sourceType: 'url', source: file.url, sourceLabel: title }, publication: { ...common.publication, sourceTitle: title } }
       : { ...common, briefing: { kind, window: { display: '飞书历史报告 · 统计区间见文档' } } };
   });
   // Do not write a result fetched for an application/root that changed mid-request.
   if (publicationCacheKey(service.feishuSettings(), service.binding?.applicationSnapshot?.(), kind, service.store.setting('internal-directory-name') ?? '内部资料') !== key)
     throw new LibraryRefreshError('LIBRARY_CHANGED', '同步期间飞书应用或目录已变化，请重新刷新', 409);
+  if(kind==='topic')for(const item of items)service.store.saveSetting(topicDocumentKey({...item,feishuRoot:root,feishuApp:app}),{url:item.publication.url});
   const result = { items, syncedAt: new Date().toISOString() };
   service.store.saveSetting(key, result);
   return result;

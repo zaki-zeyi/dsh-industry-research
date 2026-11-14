@@ -10,14 +10,15 @@ export class BriefingNotifications {
   }
   async deliver(id, options) {
     const s=this.service,t=s.require(id);
-    if(!t.briefing||t.status!=='ready'||t.publication.status!=='published'||t.notification?.status==='sent')return t;
+    if((!t.briefing&&!t.topic?.window)||t.status!=='ready'||t.publication.status!=='published'||t.notification?.status==='sent')return t;
     let attemptedAppId;
     try {
       const context=await notificationContext(s,t,options),{recipient,application,idempotencyKey}=context;
       attemptedAppId=application.appId;
       t.notification={status:'sending',recipient,appId:application.appId,idempotencyKey,attemptedAt:new Date().toISOString()};s.save(t);
-      const name=t.briefing.kind==='daily'?'日报':'周报';
-      const text=t.publication.noUpdates?`本${t.briefing.kind==='daily'?'日':'周'}无更新\n${t.briefing.window.display}`:`${name}已完成${t.publication.partial?'（部分资料缺失，详见报告）':''}\n${t.briefing.window.display}\n${t.publication.url}`;
+      const b=t.briefing??{kind:'daily',window:t.topic.window};
+      const name=t.topic?'专题日报 · '+t.topic.question:b.kind==='daily'?'日报':'周报';
+      const text=t.publication.noUpdates?`${t.topic?'专题日报 · '+t.topic.question+'\n':''}本${b.kind==='daily'?'日':'周'}无更新\n${b.window.display}`:`${name}已完成${t.publication.partial?'（部分资料缺失，详见报告）':''}\n${b.window.display}\n${t.publication.url}`;
       const response=await s.binding.json(['im','+messages-send','--as','bot','--user-id',recipient,'--text',text,'--idempotency-key',idempotencyKey],application);
       if(response.ok!==true)throw Object.assign(new Error('unconfirmed notification'), { stderr: JSON.stringify(response) });
       const messageId=response.data?.message_id??response.message_id;

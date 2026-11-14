@@ -1,5 +1,7 @@
 # dsh-industry-research · 行研工作台
 
+0.9.0 新增专题调研（PRD 修订版 325）：按问题发起调研，自定义 Prompt，保存至飞书「专题调研库」，并为每个专题独立设置日报。详见 [专题调研说明](docs/topics-0.9.0.md)。
+
 基于飞书《行研平台prd》修订版 4632 的 DeepSeek Harness 插件，在独立命名空间内提供公司全量信息库、日报/周报、内部资料与友商分析。开发源码位于 `main`；`release` 分支与 `main` 共享同一条历史，内容为源码目录（不含 `.github`）叠加经 CI 验证的预构建安装产物，安装包仍按 `files` 只包含产品代码、页面、文档和运行期脚本。
 
 0.8.15 更新：开发与安装共用根包清单，版本/依赖变更不再引发固定合并冲突；修复原生会话重试完成后任务仍显示失败的状态同步问题。详见 [发布说明](docs/release-0.8.15.md)。
@@ -72,7 +74,7 @@ npm run plugin:pack
 
 ## 安装
 
-当前源码版本为 **0.8.14**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
+当前源码版本为 **0.9.0**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
 Windows、macOS 桌面版以及网页版，均可在 DSH「添加插件」填写：
 
