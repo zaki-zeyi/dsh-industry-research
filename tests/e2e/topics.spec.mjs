@@ -6,7 +6,14 @@ test('FR05 专题调研创建、可编辑提示、续聊、独立日报与页签
  const dialog=page.getByRole('dialog');await dialog.getByLabel('调研问题',{exact:true}).fill('国产推理芯片的软件生态如何发展？');
  await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/国产推理芯片.*专题调研库/);
  await dialog.getByLabel('其他要求',{exact:true}).fill('注明证据日期');
- await dialog.getByLabel('自定义数据源').fill('专题测试信源');await dialog.getByRole('button',{name:'添加数据源',exact:true}).click();
+ const sourceGroup=dialog.getByRole('group',{name:/^数据源/});
+ await expect(sourceGroup).toHaveClass('industry-choices');
+ await sourceGroup.getByRole('button',{name:'全选',exact:true}).click();
+ await expect(sourceGroup.getByRole('checkbox',{name:'全网查询',exact:true})).toBeChecked();
+ await sourceGroup.getByRole('button',{name:'清空',exact:true}).click();
+ await expect(sourceGroup.getByRole('checkbox',{checked:true})).toHaveCount(0);
+ await sourceGroup.getByRole('button',{name:'全选',exact:true}).click();
+ await sourceGroup.getByLabel('自定义数据源').fill('专题测试信源');await sourceGroup.getByRole('button',{name:'＋ 添加',exact:true}).click();
  await expect(dialog.getByLabel('专题测试信源',{exact:true})).toBeChecked();
  await page.screenshot({path:'artifacts/fr05-topic-modal.png',fullPage:true});
  await dialog.getByRole('button',{name:'启动',exact:true}).click();await expect(page.getByRole('button',{name:'← 返回工作台'})).toBeVisible();
@@ -15,6 +22,7 @@ test('FR05 专题调研创建、可编辑提示、续聊、独立日报与页签
  await expect(page.locator('.topic-card .task-status')).toHaveText('已完成');
  await page.getByRole('button',{name:'设置日报',exact:true}).click();
  await expect(dialog.getByLabel('调研问题',{exact:true})).toHaveValue('国产推理芯片的软件生态如何发展？');
+ await expect(dialog.getByRole('group',{name:/^数据源/})).toHaveClass('industry-choices');
  await expect(dialog.getByLabel('发送时间（北京时间）')).toHaveValue('09:00');
  await dialog.getByLabel('发送时间（北京时间）').fill('10:30');await dialog.getByLabel('启用此定时任务').check();
  await dialog.getByRole('button',{name:'完成',exact:true}).click();await expect(dialog).toHaveCount(0);
