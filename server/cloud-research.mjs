@@ -1,3 +1,4 @@
+import { topicCloudPrompt } from './topics.mjs';
 import { briefingCloudPrompt } from './briefings.mjs';
 import { industryCloudPrompt } from './industry-prompt.mjs';
 import { internalMaterialCloudPrompt } from './internal-materials.mjs';
@@ -9,8 +10,9 @@ import { agentDeliverySchema } from './agent-delivery.mjs';
 export function cloudPrompt(task, meta) {
   return writeGuard(meta)+cloudContent(task,meta);
 }
-function writeGuard(meta){return meta.writeClientPath?`【并行调研与保存锁】先完成资料检索，各会话可以并行。任何飞书写入（根目录、子目录、公司文档、报告和索引）之前，必须执行 node ${JSON.stringify(meta.writeClientPath)} ${JSON.stringify(meta.writeConfigPath)}，等待命令成功返回最新目录和索引JSON。等待时不要绕过锁或重发创建，不修改任何飞书资源。返回JSON中的feishuRoot、industryLibrary、briefingLibrary、analysisIndex和internalFolders覆盖下面可能过时的快照；逐条复用最新链接和token。目录唯一性由平台在保存锁内检查，根目录和业务子目录只使用返回的token；禁止自行创建文件夹。缺少所需目录token时停止写入并回传失败，不得把本机缓存缺失当成飞书目录不存在。持锁期间先读取远端最新原文/索引再增量合并，保留其他任务刚写入的公司和条目。保存并回传回执后结束本轮，由平台释放锁；不要自行释放后继续写入。命令失败则停止写入并回传失败。用户后续续聊若要写入，也必须先重新获取锁；任务已结束时需要从工作台启动新一轮调研。\n\n`: "";}
+function writeGuard(meta){return meta.writeClientPath?`【并行调研与保存锁】先完成资料检索，各会话可以并行。任何飞书写入（根目录、子目录、公司文档、报告和索引）之前，必须执行 node ${JSON.stringify(meta.writeClientPath)} ${JSON.stringify(meta.writeConfigPath)}，等待命令成功返回最新目录和索引JSON。等待时不要绕过锁或重发创建，不修改任何飞书资源。返回JSON中的feishuRoot、industryLibrary、briefingLibrary、topicLibrary、topicDocument、analysisIndex和internalFolders覆盖下面可能过时的快照；逐条复用最新链接和token。目录唯一性由平台在保存锁内检查，根目录和业务子目录只使用返回的token；禁止自行创建文件夹。缺少所需目录token时停止写入并回传失败，不得把本机缓存缺失当成飞书目录不存在。持锁期间先读取远端最新原文/索引再增量合并，保留其他任务刚写入的公司和条目。保存并回传回执后结束本轮，由平台释放锁；不要自行释放后继续写入。命令失败则停止写入并回传失败。用户后续续聊若要写入，也必须先重新获取锁；任务已结束时需要从工作台启动新一轮调研。\n\n`: "";}
 function cloudContent(task, meta) {
+  if (task.topic) return topicCloudPrompt(task,meta);
   if (task.briefing) return briefingCloudPrompt(task, meta);
   if (task.internal) return internalMaterialCloudPrompt(task, meta);
   if (task.analysis) return analysisCloudPrompt(task, meta);

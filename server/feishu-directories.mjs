@@ -1,3 +1,4 @@
+import { TOPIC_FOLDER, topicFolderKey } from './topics.mjs';
 import { createHash } from 'node:crypto';
 import { runLark } from './lark-cli.mjs';
 import { folderCacheKey } from './feishu-folder.mjs';
@@ -134,6 +135,11 @@ export class FeishuDirectories {
       const same = current.folderToken === folderToken;
       const manifestUrl = same && current.manifestUrl || await this.index(app, folderToken, '分析报告索引');
       task.analysisIndex = store.saveSetting(analysisKey(root, app), { ...(same ? current : { reports: [] }), rootFolderToken: root.folderToken, folderToken, manifestUrl });
+    }
+    if(task.topic){
+      const previous=store.setting(topicFolderKey(task));
+      const folderToken=await get(root.folderToken,TOPIC_FOLDER,proven(previous,'folderToken','reportFolderToken',old=>Boolean(old.topic)));
+      task.topicLibrary=store.saveSetting(topicFolderKey(task),{rootFolderToken:root.folderToken,folderToken});
     }
     if (task.internal) {
       const name = task.internal.directoryName ?? '内部资料', previous = store.setting(internalFolderKey(task));

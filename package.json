@@ -1,6 +1,6 @@
 {
   "name": "dsh-industry-research",
-  "version": "0.8.15",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -42,15 +42,15 @@
     "zod"
   ],
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
+    "fflate": "0.8.3",
     "lucide-react": "0.468.0",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "react-markdown": "9.0.3",
     "remark-gfm": "4.0.0",
-    "@playwright/test": "1.61.1",
-    "fflate": "0.8.3",
     "vite": "6.4.5"
   },
   "exports": {
@@ -84,5 +84,6 @@
     "README.md",
     "docs"
   ],
-  "main": "./plugin/index.mjs"
+  "main": "./plugin/index.mjs",
+  "description": "行研工作台：公司全量信息库、专题调研、日报周报、友商分析与宿主原生会话"
 }

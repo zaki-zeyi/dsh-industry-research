@@ -50,6 +50,7 @@ export class NativeSessions {
   async reconcileWorkspace() {
     const workspace = await this.workspace();
     const sessions = new Set(this.store.terminalList().filter(v => v.agent === 'dsh-native').map(v => v.sessionId));
+    for(const plan of Object.values(this.store.setting('topic-schedules')??{}))if(plan.sessionId)sessions.add(plan.sessionId);
     const schedule = this.store.setting('briefing-schedule'); if (schedule?.sessionId) sessions.add(schedule.sessionId);
     const failures = [];
     for (const sessionId of sessions) {

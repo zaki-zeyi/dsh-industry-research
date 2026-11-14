@@ -232,7 +232,7 @@ test('根目录还没有 token 时保存成功但不读取飞书', async () => {
 });
 
 test('保存并导入 API 返回设置、导入摘要和公司列表', async () => {
-  const f = fixture(); const mock = runFor({
+  const f = fixture(); f.service.binding = { command: 'lark-cli' }; const mock = runFor({
     'root123:': { files: [{ name: '全量信息库', token: 'library123', type: 'folder', url: 'https://tenant.feishu.cn/drive/folder/library123' }], has_more: false },
     'library123:': { files: [{ name: '公司索引', token: 'manifest', type: 'docx', url: docUrl('ManifestDoc') }], has_more: false },
   }, JSON.stringify({ companies: [company('后摩智能'), company('光羽芯辰')] }), 'lark-cli');

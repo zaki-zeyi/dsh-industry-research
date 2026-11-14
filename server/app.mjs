@@ -1,3 +1,4 @@
+import { topicTask, topicScope, topicDocumentKey } from './topics.mjs';
 import { cloudPublications, mergePublicationCards, publicationCacheKey } from './cloud-publications.mjs';
 import { createScopedSync } from './sync-once.mjs';
 import { briefingTask } from './briefings.mjs';
@@ -64,6 +65,19 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
       const cached=await cloudPublications(service,kind); return {...cached,syncError:safe.message};
     }
   }
+  app.get('/api/topics',async(req,res,next)=>{try{
+    res.setHeader('Cache-Control','no-store');
+    const remote=await readPublications('topic',{refresh:req.query.refresh==='true',force:req.query.force==='true'});
+    const scope=topicScope(service.feishuSettings(),service.binding?.applicationSnapshot?.());
+    const local=service.store.list().filter(t=>t.topic&&topicScope(t.feishuRoot,t.feishuApp)===scope).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+    const seen=new Set(),items=local.filter(t=>{if(seen.has(t.topic.topicId))return false;seen.add(t.topic.topicId);return true;}).map(t=>({...t,publication:{...t.publication,url:t.publication?.url??service.store.setting(topicDocumentKey(t))?.url}}));
+    res.json({...remote,items:mergePublicationCards(items,remote.items).map(t=>({...t,schedule:service.topicSchedules?.get(t.topic.topicId)}))});
+  }catch(e){next(e);}});
+  app.post('/api/topics',async(req,res,next)=>{try{const key=req.headers['idempotency-key'];if(key)z.string().min(1).max(100).parse(key);const prior=key&&service.store.request(key);if(prior)return res.status(202).json(await service.createAuthorized(topicTask({...req.body,topicId:service.require(prior.task_id).topic.topicId}),key));res.status(202).json(await service.createAuthorized(topicTask(req.body),key));}catch(e){next(e);}});
+  app.get('/api/topics/:id/schedule',(req,res,next)=>{try{z.string().uuid().parse(req.params.id);res.json(service.topicSchedules.get(req.params.id));}catch(e){next(e);}});
+  app.put('/api/topics/:id/schedule',async(req,res,next)=>{try{res.json(await service.topicSchedules.save(req.params.id,req.body));}catch(e){next(e);}});
+  app.post('/api/topics/trigger/:id',async(req,res,next)=>{try{z.string().uuid().parse(req.params.id);const body=z.object({scope:z.string().min(1)}).strict().parse(req.body);res.status(202).json(await service.topicSchedules.trigger(req.params.id,body));}catch(e){next(e);}});
+  app.post('/api/topics/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);if(!t.topic?.window||t.status!=='ready')throw new ServiceError(409,'专题日报尚未完成');await service.notifications.send(t.id,{currentUser:true});res.json(service.require(t.id));}catch(e){next(e);}});
   app.get('/api/briefings', async (req,res,next) => { try { const kind = z.enum(['daily','weekly']).optional().parse(req.query.kind); const kinds = kind ? [kind] : ['daily','weekly']; const results=await Promise.all(kinds.map(k => readPublications(k,{refresh:req.query.refresh === 'true',force:req.query.force === 'true'}))); const remote=results.flatMap(v=>v.items); const local=service.store.list().filter(t => t.briefing && (!kind || t.briefing.kind === kind)).map(t => ({id:t.id,direction:t.direction,status:t.status,createdAt:t.createdAt,briefing:t.briefing,stage:t.stage,publication:t.publication,notification:t.notification})); res.json({items:mergePublicationCards(local,remote),syncError:results.find(v=>v.syncError)?.syncError,syncedAt:results.map(v=>v.syncedAt).filter(Boolean).sort().at(-1) ?? null}); } catch(error) { next(libraryReadError(error)); } });
   app.post('/api/briefings', async(req,res,next)=>{try {res.status(202).json(await service.createAuthorized(briefingTask(req.body),req.headers['idempotency-key']));}catch(e){next(e);}});
   app.post('/api/briefings/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);if(!t.briefing||t.status!=='ready')throw new ServiceError(409,'报告尚未完成');await service.notifications.send(t.id,{currentUser:true});res.json(service.require(t.id));}catch(e){next(e);}});
@@ -182,7 +196,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     let tasks = service.store.list();
     if (req.query.cursor) { const index = tasks.findIndex(t => t.id === req.query.cursor); if (index < 0) throw new ServiceError(400, '分页游标无效'); tasks = tasks.slice(index + 1); }
     const page = tasks.slice(0, limit);
-    res.json({ items: page.map(({ id, direction, sources, status, stage, createdAt, updatedAt, publication, report, mode, ai, briefing, internal }) => ({ id, ai, briefing, internal, direction, sources, status, stage, createdAt, updatedAt, publication, mode, summary: service.cloudOnly ? null : report?.summary ?? null })), nextCursor: tasks.length > limit ? page.at(-1).id : null });
+    res.json({ items: page.map(({ id, direction, sources, status, stage, createdAt, updatedAt, publication, report, mode, ai, briefing, internal, topic }) => ({ id, ai, briefing, internal, topic, direction, sources, status, stage, createdAt, updatedAt, publication, mode, summary: service.cloudOnly ? null : report?.summary ?? null })), nextCursor: tasks.length > limit ? page.at(-1).id : null });
   } catch(e) { next(e); } });
   app.post('/api/tasks', async (req, res, next) => { try { const key = req.headers['idempotency-key']; if (key) z.string().min(1).max(100).parse(key); res.status(202).json(await service.createAuthorized(req.body, key)); } catch(e) { next(e); } });
   app.get('/api/tasks/:id', (req, res, next) => { try { const t = service.require(req.params.id); res.json(service.cloudOnly ? { task: { ...t, report: null, reports: [], draft: '', localPublication: undefined }, events: [] } : { task: t, events: service.store.events(req.params.id) }); } catch(e) { next(e); } });

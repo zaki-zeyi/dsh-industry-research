@@ -1,0 +1,27 @@
+import {test,expect} from '@playwright/test';
+test('FR05 专题调研创建、可编辑提示、续聊、独立日报与页签隔离',async({page})=>{
+ await page.goto('/');await page.getByRole('button',{name:'专题调研',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'专题调研',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'启动专题调研',exact:true}).click();
+ const dialog=page.getByRole('dialog');await dialog.getByLabel('调研问题',{exact:true}).fill('国产推理芯片的软件生态如何发展？');
+ await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/国产推理芯片.*专题调研库/);
+ await dialog.getByLabel('其他要求',{exact:true}).fill('注明证据日期');
+ await dialog.getByLabel('自定义数据源').fill('专题测试信源');await dialog.getByRole('button',{name:'添加数据源',exact:true}).click();
+ await expect(dialog.getByLabel('专题测试信源',{exact:true})).toBeChecked();
+ await page.screenshot({path:'artifacts/fr05-topic-modal.png',fullPage:true});
+ await dialog.getByRole('button',{name:'启动',exact:true}).click();await expect(page.getByRole('button',{name:'← 返回工作台'})).toBeVisible();
+ await page.getByRole('button',{name:'← 返回工作台'}).click();
+ await expect(page.getByRole('link',{name:'打开专题报告'})).toHaveAttribute('href',/feishu.cn\/docx\//);
+ await expect(page.locator('.topic-card .task-status')).toHaveText('已完成');
+ await page.getByRole('button',{name:'设置日报',exact:true}).click();
+ await expect(dialog.getByLabel('调研问题',{exact:true})).toHaveValue('国产推理芯片的软件生态如何发展？');
+ await expect(dialog.getByLabel('发送时间（北京时间）')).toHaveValue('09:00');
+ await dialog.getByLabel('发送时间（北京时间）').fill('10:30');await dialog.getByLabel('启用此定时任务').check();
+ await dialog.getByRole('button',{name:'完成',exact:true}).click();await expect(dialog).toHaveCount(0);
+ await expect(page.getByText('专题日报 · 每天 10:30（北京时间）')).toBeVisible();
+ await page.getByRole('button',{name:'设置日报',exact:true}).click();await expect(dialog.getByLabel('发送时间（北京时间）')).toHaveValue('10:30');await dialog.getByRole('button',{name:'关闭专题配置'}).click();
+ await page.getByRole('button',{name:'日报',exact:true}).click();await expect(page.locator('.topic-card')).toHaveCount(0);
+ await page.getByRole('button',{name:'专题调研',exact:true}).click();await expect(page.locator('.topic-card')).toHaveCount(1);
+ await page.screenshot({path:'artifacts/fr05-topic-library.png',fullPage:true});
+ await page.getByRole('button',{name:'AI 会话详情',exact:false}).click();await expect(page.getByRole('button',{name:'← 返回工作台'})).toBeVisible();
+});

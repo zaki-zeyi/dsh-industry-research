@@ -397,3 +397,5 @@
 .material-directory-settings { display: grid; gap: 12px; margin-top: 16px; max-width: 520px; }
 .material-directory-settings label { display: grid; gap: 8px; font-size: 14px; }
 .material-directory-settings input { width: 100%; min-height: 42px; padding: 10px 12px; border: 1px solid #dce3d8; border-radius: 8px; font: inherit; background: white; }
+/* Topic source choices share the workbench form spacing. */
+.industry-choice-grid{display:flex;flex-wrap:wrap;gap:8px 16px;margin:12px 0;font-weight:400}.industry-choice-grid label{display:flex;align-items:center;gap:6px}.topic-card h2{font-size:17px;line-height:1.5;overflow-wrap:anywhere}.topic-card footer{flex-wrap:wrap;gap:10px}

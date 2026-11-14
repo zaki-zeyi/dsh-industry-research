@@ -1,3 +1,4 @@
+import { topicMetadata, rememberTopic } from './topics.mjs';
 import {CloudWrites} from './cloud-writes.mjs';
 import { briefingInput, briefingKey } from './briefings.mjs';
 import { RESEARCH_TIMEOUT_MS } from './cloud-research.mjs';
@@ -12,7 +13,7 @@ import { promptFor, reportSchema } from './report.mjs';
 import { agentDeliverySchema, agentPublication } from './agent-delivery.mjs';
 import { ServiceError } from './service-error.mjs';
 
-export const createSchema = z.object({ direction: z.string().trim().min(2, '调研方向至少填写两个字').max(200), sources: z.string().trim().min(1).max(2000).default('web'), prompt: z.string().trim().min(10).max(14000).optional(), industry: industryInputSchema.optional(), analysis: analysisInputSchema.optional(), briefing: briefingInput.extend({ window: z.object({start:z.string(),end:z.string(),display:z.string()}) }).optional(), internal: internalMaterialMetadataSchema.optional() }).refine(value => !(value.industry && value.analysis), '任务不能同时包含公司调研和友商分析配置');
+export const createSchema = z.object({ direction: z.string().trim().min(2, '调研方向至少填写两个字').max(200), sources: z.string().trim().min(1).max(2000).default('web'), prompt: z.string().trim().min(10).max(14000).optional(), topic: topicMetadata.optional(), industry: industryInputSchema.optional(), analysis: analysisInputSchema.optional(), briefing: briefingInput.extend({ window: z.object({start:z.string(),end:z.string(),display:z.string()}) }).optional(), internal: internalMaterialMetadataSchema.optional() }).refine(value => [value.topic,value.industry,value.analysis,value.briefing,value.internal].filter(Boolean).length <= 1, '任务不能同时包含公司调研和友商分析配置');
 const creationPermit = Symbol('feishu-bound');
 export { ServiceError } from './service-error.mjs';
 export class ResearchService {
@@ -52,7 +53,7 @@ export class ResearchService {
   async createAuthorized(input, key, metadata = {}) {
     const bound = this.cloudOnly ? await this.binding.requireBound() : null;
     const task = this.create(input, key, creationPermit, metadata);
-    if ((task.briefing || task.internal) && !task.notificationRecipient && bound?.openId) {
+    if ((task.briefing || task.internal || task.topic?.window) && !task.notificationRecipient && bound?.openId) {
       task.notificationRecipient = bound.openId;
       task.notificationApp = { ...task.feishuApp, ...(bound.appId ? { appId: bound.appId } : {}) };
       this.store.save(task);
@@ -65,13 +66,14 @@ export class ResearchService {
     if (key) { const prior = this.store.request(key); if (prior) { if (prior.input !== serialized) throw new ServiceError(409, '该请求标识已用于不同的任务'); return this.require(prior.task_id); } }
     if (data.internal?.workflowVersion === 1534) data.internal.research = { companies: [...new Set([...DEFAULT_COMPANIES, ...library(this.store, this.feishuSettings(), this.binding?.applicationSnapshot?.()).companies.map(c => c.name)])], dimensions: preferences(this.store).dimensions };
     const id = newId(); const now = new Date().toISOString(); const application = this.binding?.applicationSnapshot?.() ?? { mode: 'default' }; const root = this.feishuSettings(application);
+    if (data.topic && !this.cloudOnly) throw new ServiceError(409, '专题调研需要在 DSH 原生会话中运行，并将报告保存到飞书');
     if (data.analysis && !this.cloudOnly) throw new ServiceError(409, '友商分析需要在 DSH 原生会话中运行，并将报告保存到飞书');
     const sourceLibrary = data.analysis ? library(this.store, root, application) : null;
     if (data.analysis) {
       const missing = missingAnalysisSources(sourceLibrary, data.analysis.companies);
       if (missing.length) throw new ServiceError(409, `以下公司尚无全量信息库报告：${missing.join('、')}，请先更新全量信息库`);
     }
-    const task = { id, industry: data.industry, analysis: data.analysis, analysisSources: sourceLibrary, analysisIndex: data.analysis ? analysisLibrary(this.store, root, application) : undefined, briefing: data.briefing, internal: data.internal, ...(metadata.scheduled ? { scheduled: metadata.scheduled } : {}), feishuApp: application, cloudOnly: Boolean(this.cloudOnly), feishuRoot: root, autoUpload: this.researcher.transport === 'dsh-native' && this.publisher.kind === 'agent', ai: this.researcher.transport === 'dsh-native' ? { agent: 'dsh-native', configuration: 'host' } : this.aiSettings?.snapshot() ?? { agent: 'codex' }, direction: data.direction, sources: data.sources, prompt: data.prompt ?? promptFor(data.direction, data.sources, root.rootName, root.folderUrl), mode: this.mode, terminalMode: this.researcher.transport === 'pty', nativeSession: this.researcher.transport === 'dsh-native', status: 'queued', stage: 'queued', createdAt: now, updatedAt: now, runs: [], reports: [], report: null, draft: '', error: null, publication: { ...(this.publisher.kind === 'agent' ? { owner: 'agent' } : {}), target: this.publisher.kind === 'agent' ? 'feishu' : this.publisher.kind ?? (this.mode === 'demo' ? 'demo' : 'feishu'), status: 'pending', documentId: null, url: null, writtenBlocks: 0 } };
+    const task = { id, topic: data.topic, industry: data.industry, analysis: data.analysis, analysisSources: sourceLibrary, analysisIndex: data.analysis ? analysisLibrary(this.store, root, application) : undefined, briefing: data.briefing, internal: data.internal, ...(metadata.scheduled ? { scheduled: metadata.scheduled } : {}), feishuApp: application, cloudOnly: Boolean(this.cloudOnly), feishuRoot: root, autoUpload: this.researcher.transport === 'dsh-native' && this.publisher.kind === 'agent', ai: this.researcher.transport === 'dsh-native' ? { agent: 'dsh-native', configuration: 'host' } : this.aiSettings?.snapshot() ?? { agent: 'codex' }, direction: data.direction, sources: data.sources, prompt: data.prompt ?? promptFor(data.direction, data.sources, root.rootName, root.folderUrl), mode: this.mode, terminalMode: this.researcher.transport === 'pty', nativeSession: this.researcher.transport === 'dsh-native', status: 'queued', stage: 'queued', createdAt: now, updatedAt: now, runs: [], reports: [], report: null, draft: '', error: null, publication: { ...(this.publisher.kind === 'agent' ? { owner: 'agent' } : {}), target: this.publisher.kind === 'agent' ? 'feishu' : this.publisher.kind ?? (this.mode === 'demo' ? 'demo' : 'feishu'), status: 'pending', documentId: null, url: null, writtenBlocks: 0 } };
     this.store.transaction(() => { this.store.save(task); this.store.event(id, 'user', task.prompt); if (key) this.store.saveRequest(key, serialized, id); });
     this.enqueue(id, 'research'); return this.require(id);
   }
@@ -117,6 +119,7 @@ export class ResearchService {
           const latest=this.require(id);t.feishuRoot=latest.feishuRoot;
           this.cloudWrites.assertOwner(t);
           this.rememberCloudFolder(t, delivery);
+          rememberTopic(this,t,delivery);
           this.rememberBriefing(t, delivery);
           this.rememberInternalMaterial(t, delivery);
           if (t.analysis) {
@@ -131,7 +134,7 @@ export class ResearchService {
           t.publication = agentPublication(delivery); t.status = 'ready'; t.stage = 'done';
           run.status = 'completed'; run.endedAt = new Date().toISOString(); this.save(t);
           this.cloudWrites.release(id);
-          if(t.briefing) await this.notifications?.send(id);
+          if(t.briefing || t.topic?.window) await this.notifications?.send(id);
           if(t.internal) await this.internalNotifications?.send(id);
           this.event(id, 'system', t.internal ? '内部资料解析文档已保存到飞书；原始资料链接与解析结果可在历史记录或 AI 会话中查看。' : '报告已保存到飞书，可从首页报告卡片打开；原生会话可继续对话。'); return;
         }
@@ -267,7 +270,8 @@ export class ResearchService {
         if (!nativeRetryCompleted) this.cloudWrites.assertOwner(t);
         if (nativeRetryCompleted && (!delivery.folderToken || delivery.report && !delivery.analysisFolderToken || t.industry && !t.industry.companies.every(name => delivery.companies?.some(c => c.name === name)))) return;
         this.rememberCloudFolder(t, delivery);
-        this.rememberBriefing(t, delivery);
+        rememberTopic(this,t,delivery);
+          this.rememberBriefing(t, delivery);
         this.rememberInternalMaterial(t, delivery);
         if (t.analysis) {
           if (delivery.report) {
@@ -293,11 +297,11 @@ export class ResearchService {
         this.save(t); this.event(id, 'agent-delivery', t.publication);
         this.event(id, 'system', '已核对原生会话重试后的有效交付，任务状态已同步完成；未重新调研。');
         this.cloudWrites.release(id);
-        if (t.briefing) void this.notifications?.send(id).catch(() => {});
+        if (t.briefing || t.topic?.window) void this.notifications?.send(id).catch(() => {});
         if (t.internal) void this.internalNotifications?.send(id).catch(() => {});
         return;
       }
-      if ((t.briefing || t.internal) && delivery.status === 'published') t.publication = agentPublication(delivery);
+      if ((t.briefing || t.internal || t.topic?.window) && delivery.status === 'published') t.publication = agentPublication(delivery);
       this.store.save(t); if (t.status !== 'ready') return;
     }
     if (t.publication.status === 'not_requested' || t.publication.requestId && delivery.requestId !== t.publication.requestId) return;
@@ -323,13 +327,13 @@ export class ResearchService {
   recover() {
     const notificationsToRetry = [];
     for (const t of this.store.list()) {
-      if((t.briefing||t.internal)&&t.notification?.status==='sending'){t.notification={...t.notification,status:'failed',error:'服务重启，通知结果待核对；报告已保留，可重试通知。'};this.store.save(t);}
+      if((t.briefing||t.internal||t.topic?.window)&&t.notification?.status==='sending'){t.notification={...t.notification,status:'failed',error:'服务重启，通知结果待核对；报告已保留，可重试通知。'};this.store.save(t);}
       if (t.status === 'queued') this.enqueue(t.id, 'research');
       else if (t.status === 'running') { t.status = 'interrupted'; t.error = t.cloudOnly ? '服务重启导致调研中断，任务与会话已保留，请先核对飞书文档后重试' : '服务重启导致调研中断，已保留草稿与会话，请重试'; const run = t.runs.at(-1); if (run) run.status = 'interrupted'; this.save(t); this.event(t.id, 'system', t.error); }
       else if (t.report && t.publication.owner === 'agent' && t.publication.requestId && t.publication.status === 'publishing') { t.publication.status = 'failed'; t.publication.error = '服务重启导致上传中断，报告已保留，请点击重试上传，由 Agent 先核对已有文档。'; this.save(t); }
       else if (t.report && t.autoUpload && t.publication.status === 'not_requested') this.enqueue(t.id, 'publish');
       else if (t.report && ['publishing', 'pending'].includes(t.publication.status)) this.enqueue(t.id, 'publish');
-      if (t.scheduled && t.briefing && t.status === 'ready' && t.publication?.status === 'published' && t.notification?.status !== 'sent') notificationsToRetry.push(t.id);
+      if (t.scheduled && (t.briefing || t.topic?.window) && t.status === 'ready' && t.publication?.status === 'published' && t.notification?.status !== 'sent') notificationsToRetry.push(t.id);
     }
     for (const id of notificationsToRetry) void this.notifications?.send(id).catch(() => {});
   }
