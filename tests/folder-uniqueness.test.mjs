@@ -253,3 +253,13 @@ test('原生任务通过实际HTTP保存锁取得已有目录，交付使用原�
     assert.ok(runtime.service.store.runtimeLogs().some(e => e.event === 'feishu.directories.finished' && e.details.taskId === t.id));
   } finally { await runtime.close(); f.close(); }
 });
+test('PRD468 同一专题复用总报和日报目录，发现已有总报不重建',async()=>{
+ const {topicTask,topicDocumentKey}=await import('../server/topics.mjs');
+ const f=fixture({Root:[folder('专题调研','Topics')],Topics:[folder('AI推理产业','Topic')],Topic:[document('总报','ExistingTotal'),folder('日报','Daily')],Daily:[]});
+ try{
+  const first=task(topicTask({question:'AI推理产业',sources:['官网'],topicId:'11111111-1111-4111-8111-111111111111'}));
+  await f.directories.prepare(first);assert.equal(first.topicLibrary.folderToken,'Topic');assert.equal(first.topicLibrary.dailyFolderToken,'Daily');assert.equal(f.store.setting(topicDocumentKey(first)).url,'https://tenant.feishu.cn/docx/ExistingTotal');
+  const daily=task(topicTask({question:'AI推理产业',sources:['官网'],topicId:first.topic.topicId},new Date('2026-11-15T01:00:00Z')));await f.directories.prepare(daily);
+  assert.equal(daily.topicLibrary.folderToken,'Topic');assert.equal(daily.topicLibrary.dailyFolderToken,'Daily');assert.equal(f.creates().length,0);
+ }finally{f.close();}
+});

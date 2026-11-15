@@ -1,4 +1,4 @@
-import { TOPIC_FOLDER, topicFolderKey } from './topics.mjs';
+import { TOPIC_FOLDER, topicFolderKey, topicRootKey, legacyTopicFolderKey, topicDocumentKey } from './topics.mjs';
 import { createHash } from 'node:crypto';
 import { runLark } from './lark-cli.mjs';
 import { folderCacheKey } from './feishu-folder.mjs';
@@ -137,9 +137,19 @@ export class FeishuDirectories {
       task.analysisIndex = store.saveSetting(analysisKey(root, app), { ...(same ? current : { reports: [] }), rootFolderToken: root.folderToken, folderToken, manifestUrl });
     }
     if(task.topic){
-      const previous=store.setting(topicFolderKey(task));
-      const folderToken=await get(root.folderToken,TOPIC_FOLDER,proven(previous,'folderToken','reportFolderToken',old=>Boolean(old.topic)));
-      task.topicLibrary=store.saveSetting(topicFolderKey(task),{rootFolderToken:root.folderToken,folderToken});
+      if(task.topic.workflowVersion!==468){
+        const previous=store.setting(legacyTopicFolderKey(task));
+        const folderToken=await get(root.folderToken,'专题调研库',proven(previous,'folderToken','reportFolderToken',old=>Boolean(old.topic)));
+        task.topicLibrary=store.saveSetting(legacyTopicFolderKey(task),{rootFolderToken:root.folderToken,folderToken});
+      }else{
+        const previous=store.setting(topicFolderKey(task))??{},parent=store.setting(topicRootKey(task));
+        const topicsFolderToken=await get(root.folderToken,TOPIC_FOLDER,parent?.rootFolderToken===root.folderToken?parent.folderToken:undefined);
+        store.saveSetting(topicRootKey(task),{rootFolderToken:root.folderToken,folderToken:topicsFolderToken});
+        const folderToken=await get(topicsFolderToken,previous.name??task.topic.question,previous.topicsFolderToken===topicsFolderToken?previous.folderToken:undefined);
+        const dailyFolderToken=await get(folderToken,'日报',previous.folderToken===folderToken?previous.dailyFolderToken:undefined);
+        task.topicLibrary=store.saveSetting(topicFolderKey(task),{rootFolderToken:root.folderToken,topicsFolderToken,folderToken,dailyFolderToken,name:previous.name??task.topic.question});
+        if(!store.setting(topicDocumentKey(task))?.url){const url=await this.index(app,folderToken,'总报');if(url)store.saveSetting(topicDocumentKey(task),{url});}
+      }
     }
     if (task.internal) {
       const name = task.internal.directoryName ?? '内部资料', previous = store.setting(internalFolderKey(task));

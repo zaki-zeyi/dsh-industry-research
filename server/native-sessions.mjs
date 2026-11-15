@@ -105,6 +105,7 @@ export class NativeSessions {
       // Host-side Retry does not call send(). Clear the previous failed turn too,
       // and remember which receipt predates this turn so it cannot revive a task.
       meta.activity = 'working'; meta.lastTurnReason = null; meta.lastTurnErrorCode = null; meta.lastTurnCompletedAt = null;
+      meta.turnSequence = (meta.turnSequence ?? 0) + 1;
       meta.lastTurnStartedAt = new Date().toISOString();
       try { meta.turnInitialDeliveryKey = JSON.stringify(agentDeliverySchema.parse(JSON.parse(readFileSync(meta.deliveryPath, 'utf8')))); }
       catch { meta.turnInitialDeliveryKey = null; }

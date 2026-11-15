@@ -399,3 +399,5 @@
 .material-directory-settings input { width: 100%; min-height: 42px; padding: 10px 12px; border: 1px solid #dce3d8; border-radius: 8px; font: inherit; background: white; }
 /* Topic report cards. */
 .topic-card h2{font-size:17px;line-height:1.5;overflow-wrap:anywhere}.topic-card footer{flex-wrap:wrap;gap:10px}
+.topic-open{background:none;border:0;padding:0;text-align:left;color:#294f3c;font-weight:600;line-height:1.6;overflow-wrap:anywhere}.topic-section-heading{margin:26px 0 18px}.topic-section-heading small{font-size:12px;color:#819077}.topic-report-card h3{line-height:1.7;font-size:17px;overflow-wrap:anywhere}
+.industry-overview.topic-overview{display:block}.topic-overview .industry-storage{width:100%;padding:0}.topic-overview .industry-storage strong{max-width:100%}

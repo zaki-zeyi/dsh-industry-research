@@ -1,5 +1,7 @@
 # dsh-industry-research · 行研工作台
 
+0.10.0：专题列表进入独立详情页，分别展示专题总报和全部专题日报。目录统一为「专题调研 / 具体专题」，日报每期独立保存在其「日报」子目录。详见 [专题总报与日报](docs/topics-0.10.0.md)。
+
 0.9.1：专题调研与专题日报直接复用「更新全量信息库」的数据源配置组件，统一选项样式、全选/清空和自定义数据源交互。
 
 0.9.0 新增专题调研（PRD 修订版 325）：按问题发起调研，自定义 Prompt，保存至飞书「专题调研库」，并为每个专题独立设置日报。详见 [专题调研说明](docs/topics-0.9.0.md)。
@@ -76,7 +78,7 @@ npm run plugin:pack
 
 ## 安装
 
-当前源码版本为 **0.9.1**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
+当前源码版本为 **0.10.0**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
 Windows、macOS 桌面版以及网页版，均可在 DSH「添加插件」填写：
 

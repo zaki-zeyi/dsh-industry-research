@@ -21,6 +21,9 @@ export const analysisReportSchema = z.object({
   insufficient: z.array(reportLabel).max(60).transform(v => [...new Set(v)]).default([]),
 }).strict();
 const industryReceipt = {
+  topicRootFolderToken: folderTokenSchema.optional(),
+  topicFolderToken: folderTokenSchema.optional(),
+  topicDailyFolderToken: folderTokenSchema.optional(),
   materialFolderToken: folderTokenSchema.optional(),
   minutesFolderToken: folderTokenSchema.optional(),
   minutesUrl: z.string().max(2000).refine(v => feishuUrl(v), '必须是飞书会议纪要链接').optional(),

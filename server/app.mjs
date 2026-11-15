@@ -1,4 +1,4 @@
-import { topicTask, topicScope, topicDocumentKey } from './topics.mjs';
+import { topicTask, topicScope, topicDocumentKey, topicCards, topicInput } from './topics.mjs';
 import { cloudPublications, mergePublicationCards, publicationCacheKey } from './cloud-publications.mjs';
 import { createScopedSync } from './sync-once.mjs';
 import { briefingTask } from './briefings.mjs';
@@ -68,12 +68,16 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.get('/api/topics',async(req,res,next)=>{try{
     res.setHeader('Cache-Control','no-store');
     const remote=await readPublications('topic',{refresh:req.query.refresh==='true',force:req.query.force==='true'});
-    const scope=topicScope(service.feishuSettings(),service.binding?.applicationSnapshot?.());
-    const local=service.store.list().filter(t=>t.topic&&topicScope(t.feishuRoot,t.feishuApp)===scope).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
-    const seen=new Set(),items=local.filter(t=>{if(seen.has(t.topic.topicId))return false;seen.add(t.topic.topicId);return true;}).map(t=>({...t,publication:{...t.publication,url:t.publication?.url??service.store.setting(topicDocumentKey(t))?.url}}));
-    res.json({...remote,items:mergePublicationCards(items,remote.items).map(t=>({...t,schedule:service.topicSchedules?.get(t.topic.topicId)}))});
+    const items=topicCards(service,remote.items);
+    res.json({...remote,items});
   }catch(e){next(e);}});
-  app.post('/api/topics',async(req,res,next)=>{try{const key=req.headers['idempotency-key'];if(key)z.string().min(1).max(100).parse(key);const prior=key&&service.store.request(key);if(prior)return res.status(202).json(await service.createAuthorized(topicTask({...req.body,topicId:service.require(prior.task_id).topic.topicId}),key));res.status(202).json(await service.createAuthorized(topicTask(req.body),key));}catch(e){next(e);}});
+  app.post('/api/topics',async(req,res,next)=>{try{
+    const key=req.headers['idempotency-key'];if(key)z.string().min(1).max(100).parse(key);
+    const input=topicInput.parse(req.body),prior=key&&service.store.request(key);
+    if(prior){const task=service.require(prior.task_id);if(!task.topic)throw new ServiceError(409,'该请求标识已用于其他任务');return res.status(202).json(await service.createAuthorized(topicTask({...input,topicId:task.topic.topicId}),key));}
+    const existing=topicCards(service,(await cloudPublications(service,'topic')).items).find(t=>t.topic.question===input.question);
+    res.status(202).json(await service.createAuthorized(topicTask({...input,topicId:input.topicId??existing?.topic.topicId}),key));
+  }catch(e){next(e);}});
   app.get('/api/topics/:id/schedule',(req,res,next)=>{try{z.string().uuid().parse(req.params.id);res.json(service.topicSchedules.get(req.params.id));}catch(e){next(e);}});
   app.put('/api/topics/:id/schedule',async(req,res,next)=>{try{res.json(await service.topicSchedules.save(req.params.id,req.body));}catch(e){next(e);}});
   app.post('/api/topics/trigger/:id',async(req,res,next)=>{try{z.string().uuid().parse(req.params.id);const body=z.object({scope:z.string().min(1)}).strict().parse(req.body);res.status(202).json(await service.topicSchedules.trigger(req.params.id,body));}catch(e){next(e);}});
@@ -180,7 +184,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
       });
     }
   });
-  app.get('/api/config', (_req, res) => res.json({ mode: service.mode, nativeWorkspace: service.nativeSessions?.workspaceState?.() ?? null, cloudOnly: Boolean(service.cloudOnly), analysisAvailable: Boolean(service.cloudOnly), terminalAvailable: Boolean(service.terminals), nativeSessionAvailable: Boolean(service.nativeSessions), transport: service.researcher.transport ?? 'json', terminalPermissions: service.terminals?.permissions ?? null, publicationTarget: service.publisher.kind ?? 'demo', publicationOwner: 'agent', singleUser: true, feishuTarget: service.feishuSettings().folderUrl ? '飞书云盘 / 指定文件夹' : `飞书云盘 / ${service.feishuSettings().rootName}`, feishuRoot: service.feishuSettings(), internalDirectoryName: service.store.setting("internal-directory-name") ?? "内部资料", publicationScope: libraryKey(service.feishuSettings(), service.binding?.applicationSnapshot?.())+':'+(service.feishuSettings().folderToken??'') }));
+  app.get('/api/config', (_req, res) => res.json({ mode: service.mode, nativeWorkspace: service.nativeSessions?.workspaceState?.() ?? null, cloudOnly: Boolean(service.cloudOnly), topicSelectionScope:JSON.stringify([service.binding?.applicationSnapshot?.(),service.feishuSettings().folderUrl??service.feishuSettings().rootName]), topicScope:topicScope(service.feishuSettings(),service.binding?.applicationSnapshot?.()), analysisAvailable: Boolean(service.cloudOnly), terminalAvailable: Boolean(service.terminals), nativeSessionAvailable: Boolean(service.nativeSessions), transport: service.researcher.transport ?? 'json', terminalPermissions: service.terminals?.permissions ?? null, publicationTarget: service.publisher.kind ?? 'demo', publicationOwner: 'agent', singleUser: true, feishuTarget: service.feishuSettings().folderUrl ? '飞书云盘 / 指定文件夹' : `飞书云盘 / ${service.feishuSettings().rootName}`, feishuRoot: service.feishuSettings(), internalDirectoryName: service.store.setting("internal-directory-name") ?? "内部资料", publicationScope: libraryKey(service.feishuSettings(), service.binding?.applicationSnapshot?.())+':'+(service.feishuSettings().folderToken??'') }));
   app.get('/api/tasks/:id/agent-qr', (req, res, next) => { try {
     const t = service.require(req.params.id);
     if (t.publication.status !== 'awaiting_authorization' || !t.terminalId || !service.terminals) throw new ServiceError(404, '当前没有待扫描的授权二维码');
