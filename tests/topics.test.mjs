@@ -95,3 +95,17 @@ test('PRD468 旧版日报作为总报保留，新总报可复用其链接',()=>{
  values.set(topicDocumentKey(current),{url:old.publication.url});
  assert.doesNotThrow(()=>rememberTopic(service,current,{status:'published',reportFolderToken:'Topic',topicFolderToken:'Topic',topicRootFolderToken:'Topics',url:old.publication.url}));
 });
+test('专题日报使用新版官方 Schedule 请求，更新失败保留原任务且不再返回500',async()=>{
+ const values=new Map(),records=new Map(),calls=[];let rejectSave=false;
+ const service={store:{setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v),runtimeLog(){}},feishuSettings:()=>({rootName:'研究',folderToken:'Root'}),binding:{applicationSnapshot:()=>({}),requireBound:async()=>({})},nativeSessions:{createHostSession:async()=>({sessionId:'session-real'}),bindSession:async()=>{}},briefingSchedules:{endpointFile:'/tmp/endpoint'}};
+ const host={sessionController:{resolveAgent:async()=>({agent:{session:{}}})},permissionPresets:{set(){}},schedule:{
+  async create(request,actor){assert.equal(typeof request,'object');assert.equal(actor,'session-real');assert.deepEqual(request.target,{kind:'session',sessionId:'session-real'});assert.deepEqual(request.timing,{kind:'daily',daily:{time:'10:10:00',time_zone:'Asia/Shanghai'}});assert.ok(request.title.length<=120);const record={id:'official-task',...request};records.set(record.id,record);calls.push('create');return record;},
+  async edit(request,actor){assert.equal(actor,'session-real');calls.push(request.action);if(rejectSave)throw new TypeError('host private details');const record={id:request.id,...request.patch};records.set(record.id,record);return record;}
+ }};
+ const plans=new TopicSchedules(service,host);
+ const first=await plans.save(id,{time:'10:10',research:{...input,question:'很长的专题'.repeat(35)}});
+ assert.equal(first.enabled,true);assert.equal(first.time,'10:10');assert.deepEqual(calls,['create']);
+ rejectSave=true;await assert.rejects(plans.save(id,{time:'11:00',research:input}),e=>e.status===503&&!e.message.includes('private'));
+ assert.equal(plans.get(id).time,'10:10');assert.equal(plans.get(id).enabled,true);assert.equal(plans.get(id).record.id,'official-task');
+ rejectSave=false;await plans.save(id,{time:'11:00',research:input});assert.deepEqual(calls,['create','update','update']);assert.equal(plans.get(id).time,'11:00');assert.equal(records.size,1);
+});

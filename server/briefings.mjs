@@ -1,3 +1,4 @@
+import { saveHostSchedule, removeHostSchedule } from './host-schedule.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
@@ -85,13 +86,13 @@ export class BriefingSchedules {
     if(!sessionId&&v.enabled){const created=await this.service.nativeSessions.createHostSession();sessionId=created.sessionId;const r=await this.host.sessionController.resolveAgent(sessionId);this.host.permissionPresets.set(r.agent.session,'danger-full-access');}
     if(sessionId&&v.enabled)await this.service.nativeSessions.bindSession(sessionId);
     const persist=()=>this.service.store.saveSetting('briefing-schedule',{...old,sessionId,plans,records});
-    if(records[v.kind]){await this.schedule.delete({sessionId,id:records[v.kind].id});delete records[v.kind];}
+    if(records[v.kind]){await removeHostSchedule(this.schedule,sessionId,records[v.kind].id);delete records[v.kind];}
     const previousPlan=plans[v.kind];
     const activationChanged=!previousPlan?.activatedAt||previousPlan.time!==v.time||previousPlan.weekday!==v.weekday||(!previousPlan.enabled&&v.enabled);
     plans[v.kind]={...v,enabled:false};persist();
     if(v.enabled){
       const prompt=`使用终端 Node.js 读取 ${this.endpointFile} 的 url 字段，向该 url 加 /api/briefings/trigger/${v.kind} 发起 POST，Content-Type application/json，body {}。这会创建独立调研会话。不要自行调研。失败在此会话说明原因；成功后保持安静，报告会话及飞书机器人通知用户。`;
-      records[v.kind]=await this.schedule.create(sessionId,{title:'行研'+labelFor(v.kind),prompt,[v.kind]:{time:v.time+':00',time_zone:'Asia/Shanghai',...(v.kind==='weekly'?{weekdays:[v.weekday]}:{})}});
+      records[v.kind]=await saveHostSchedule(this.schedule,sessionId,{title:'行研'+labelFor(v.kind),prompt,[v.kind]:{time:v.time+':00',time_zone:'Asia/Shanghai',...(v.kind==='weekly'?{weekdays:[v.weekday]}:{})}});
     }
     plans[v.kind]={...v,...(v.enabled?{activatedAt:activationChanged?new Date().toISOString():previousPlan.activatedAt}:{})};persist();return this.get(v.kind);
   }
