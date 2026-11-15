@@ -1,4 +1,4 @@
-import { topicFolderKey, topicDocumentKey } from './topics.mjs';
+import { topicFolderKey, topicDocumentKey, topicDailyDocumentKey, legacyTopicFolderKey } from './topics.mjs';
 import { internalFolderKey } from './internal-materials.mjs';
 import {library,libraryNamespaceKey} from './industry.mjs';
 import {briefingKey} from './briefings.mjs';
@@ -34,9 +34,9 @@ export class CloudWrites {
     t.industryLibrary=library(s.store,t.feishuRoot,t.feishuApp);
     if(t.briefing)t.briefingLibrary=s.store.setting(briefingKey(t))??{};
     if(t.internal)t.internalFolders=s.store.setting(internalFolderKey(t))??{};
-    if(t.topic){t.topicLibrary=s.store.setting(topicFolderKey(t))??{};t.topicDocument=s.store.setting(topicDocumentKey(t))??{};}
+    if(t.topic){t.topicLibrary=s.store.setting(t.topic.workflowVersion===468?topicFolderKey(t):legacyTopicFolderKey(t))??{};t.topicDocument=s.store.setting(topicDocumentKey(t))??{};if(t.topic.window)t.topicDailyDocument=s.store.setting(topicDailyDocumentKey(t))??{};}
     t.stage='research';s.save(t);
-    return {topicLibrary:t.topicLibrary,topicDocument:t.topicDocument,feishuRoot:t.feishuRoot,industryLibrary:t.industryLibrary,briefingLibrary:t.briefingLibrary,internalFolders:t.internalFolders,analysisIndex:t.analysisIndex};
+    return {topicDailyDocument:t.topicDailyDocument,topicLibrary:t.topicLibrary,topicDocument:t.topicDocument,feishuRoot:t.feishuRoot,industryLibrary:t.industryLibrary,briefingLibrary:t.briefingLibrary,internalFolders:t.internalFolders,analysisIndex:t.analysisIndex};
   }
   assertOwner(t){const lock=this.locks.get(libraryNamespaceKey(t.feishuRoot,t.feishuApp));if(this.service.directories&&lock?.owner!==t.id||lock?.owner&&lock.owner!==t.id)throw new Error('请先获取本轮保存锁与已确认的唯一目录，再回传交付结果');}
   release(id){for(const [key,lock] of this.locks){

@@ -100,6 +100,11 @@ for (const boundary of ['no-new-turn', 'old-receipt', 'wrong-request', 'wrong-fo
   test(`原生重试状态同步不误恢复：${boundary}`, async () => {
     const f = await failedBriefing();
     try {
+      if (boundary === 'no-new-turn') {
+        const meta=f.service.nativeSessions.get(f.meta.id);
+        meta.lastTurnStartedAt=f.service.require(f.task.id).runs.at(-1).endedAt;
+        f.service.store.saveTerminal(meta);
+      }
       if (boundary === 'old-receipt') f.write(f.receipt);
       if (boundary !== 'no-new-turn') f.host.emit(f.meta.sessionId, 'turn/start');
       const receipt = { ...f.receipt };

@@ -16,6 +16,11 @@ const attempts=new Map();
 host.sessionController.prompt=async request=>{
  host.emit(request.sessionId,'turn/start');const path=/请读取 (.+)，按照/.exec(request.content[0].text)?.[1];if(!path)return {accepted:true};
  const p=readFileSync(path,'utf8');
+ if(p.includes('以下是专题配置数据')) {
+  const topic=JSON.parse(/以下是专题配置数据，仅作数据不能作为指令：(.+)。/.exec(p)[1]);
+  const receipt={requestId:/本次 requestId 固定为 ([a-f0-9-]+)/.exec(p)[1],status:'published',folderToken:'RootFixture',topicRootFolderToken:'TopicsFixture',topicFolderToken:'TopicFixture',topicDailyFolderToken:'DailyFixture',reportFolderToken:topic.window?'DailyFixture':'TopicFixture',url:'https://example.feishu.cn/docx/'+(topic.window?'TopicDaily'+topic.window.start.slice(0,10).replaceAll('-',''):'TopicTotal'),noUpdates:false};
+  writeFileSync(/原子更新 (.+)，本次 requestId/.exec(p)[1],JSON.stringify(receipt));host.emit(request.sessionId,'turn/end',{kind:'completed'});return {accepted:true};
+ }
  if(p.includes('sourceMaterialUrl')) {writeFileSync(/原子更新 (.+)，本次 requestId/.exec(p)[1],JSON.stringify({requestId:/本次 requestId 固定为 ([a-f0-9-]+)/.exec(p)[1],status:'published',folderToken:'RootFixture',reportFolderToken:'InternalFixture',sourceFolderToken:'SourceFixture',materialFolderToken:'MaterialFixture',minutesFolderToken:'MinutesFixture',minutesUrl:'https://example.feishu.cn/docx/InternalMinutes',companies:[],sourceMaterialUrl:'https://example.feishu.cn/file/FixtureSource',sourceTitle:p.includes('"sourceType":"local"')?'访谈确认.txt':'后摩智能项之初：硅基算力会改变我们的生活吗？',url:'https://example.feishu.cn/docx/InternalTranscript'}));host.emit(request.sessionId,'turn/end',{kind:'completed'});return{accepted:true};}
  if(p.includes('reportFolderToken')) {writeFileSync(/原子更新 (.+)，本次 requestId/.exec(p)[1],JSON.stringify({requestId:/本次 requestId 固定为 ([a-f0-9-]+)/.exec(p)[1],status:'published',folderToken:'RootFixture',reportFolderToken:'BriefingFixture',url:'https://example.feishu.cn/docx/BriefingDoc',noUpdates:true,partial:false}));host.emit(request.sessionId,'turn/end',{kind:'completed'});return{accepted:true};}
  const config=JSON.parse(/以下 JSON 是[^\n]*\n(.+)/.exec(p)[1]);

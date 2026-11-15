@@ -156,7 +156,7 @@ export class ResearchService {
     } catch (e) {
       const message = signal.aborted ? '执行已中断，已保留内容和记录' : (e.message ?? '任务执行失败');
       if (t.stage === 'publish') { t.publication.status = signal.aborted ? 'interrupted' : 'failed'; t.publication.error = message; }
-      else { t.status = signal.aborted ? 'interrupted' : 'failed'; t.error = message; const run = t.runs.at(-1); if (run) { run.status = t.status; run.endedAt = new Date().toISOString(); } }
+      else { t.status = signal.aborted ? 'interrupted' : 'failed'; t.error = message; const run = t.runs.at(-1); if (run) { run.status = t.status; run.endedAt = new Date().toISOString(); if(t.nativeSession&&t.terminalId)run.failedTurnSequence=this.store.terminal(t.terminalId)?.turnSequence??0; } }
       if (t.cloudOnly) { const saved = this.require(id); if (saved.feishuRoot?.folderToken) t.feishuRoot = saved.feishuRoot; }
       this.save(t); this.event(id, 'error', message);
     }
@@ -262,6 +262,7 @@ export class ResearchService {
         && meta.agent === 'dsh-native' && meta.taskId === id
         && delivery.status === 'published' && meta.activity === 'waiting_input' && meta.lastTurnReason === 'completed'
         && [turnStart, turnEnd, failedAt].every(Number.isFinite)
+        && Number(meta.turnSequence??0)>Number(run?.failedTurnSequence??0)
         && turnStart >= failedAt && turnEnd >= turnStart && turnEnd - turnStart <= RESEARCH_TIMEOUT_MS
         && JSON.stringify(delivery) !== meta.turnInitialDeliveryKey;
       try {

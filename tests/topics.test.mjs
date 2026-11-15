@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { topicTask, topicPrompt, rememberTopic, topicScope, topicDocumentKey, topicFolderKey } from '../server/topics.mjs';
+import { topicTask, topicPrompt, rememberTopic, topicScope, topicDocumentKey, topicFolderKey, topicDailyDocumentKey, topicCards } from '../server/topics.mjs';
 import { TopicSchedules } from '../server/topic-schedules.mjs';
 import { cloudPrompt } from '../server/cloud-research.mjs';
 import { startRuntime } from '../server/runtime.mjs';
@@ -14,18 +14,18 @@ test('FR05 配置校验、可编辑 Prompt、日报完整自然日及互斥任�
  assert.throws(()=>topicTask({...input,question:''}));assert.throws(()=>topicTask({...input,sources:[]}));
  const t=topicTask({...input,topicId:id,prompt:'自定义任务，请特别关注产品性能'},new Date('2026-11-15T01:00:00Z'));
  assert.equal(t.topic.window.start,'2026-11-13T16:00:00.000Z');assert.equal(t.topic.topicId,id);assert.equal(t.prompt,'自定义任务，请特别关注产品性能');
- assert.match(topicPrompt(input),/专题调研库/);assert.match(topicPrompt(input),/调研依据/);
+ assert.match(topicPrompt(input),/专题调研/);assert.match(topicPrompt(input),/调研依据/);
  assert.throws(()=>createSchema.parse({...t,industry:{companies:['A'],dimensions:['产品'],sources:['官网']}}));
  const p=cloudPrompt({...t,feishuApp:{},publication:{}},{deliveryPath:'/tmp/receipt',deliveryRequestId:id,writeClientPath:'/tmp/lock',writeConfigPath:'/tmp/config'});
- assert.match(p,/保存锁/);assert.match(p,/资料不足/);assert.match(p,/同一专题一个文档/);assert.match(p,/不存本地正文/);
+ assert.match(p,/保存锁/);assert.match(p,/资料不足/);assert.match(p,/每期日报一个独立文档/);assert.match(p,/不存本地正文/);
 });
 test('FR05 专题交付保护目录和已有文档，保留部分成果',()=>{
  const values=new Map(),service={store:{setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v)}};
  const task={...topicTask({...input,topicId:id}),feishuRoot:{rootName:'研究',folderToken:'Root'},feishuApp:{appId:'app'}};
- rememberTopic(service,task,{status:'publishing',reportFolderToken:'Topic',url:'https://example.feishu.cn/docx/First'});
+ rememberTopic(service,task,{status:'publishing',topicRootFolderToken:'Topics',topicFolderToken:'Topic',reportFolderToken:'Topic',url:'https://example.feishu.cn/docx/First'});
  assert.equal(values.get(topicDocumentKey(task)).url,'https://example.feishu.cn/docx/First');
  assert.throws(()=>rememberTopic(service,task,{status:'published',reportFolderToken:'Other'}));
- assert.throws(()=>rememberTopic(service,task,{status:'published',reportFolderToken:'Topic',url:'https://example.feishu.cn/docx/Duplicate'}));
+ assert.throws(()=>rememberTopic(service,task,{status:'published',topicRootFolderToken:'Topics',topicFolderToken:'Topic',reportFolderToken:'Topic',url:'https://example.feishu.cn/docx/Duplicate'}));
  assert.throws(()=>rememberTopic(service,task,{status:'published'}));
  assert.notEqual(topicScope(task.feishuRoot,{ownerOpenId:'a'}),topicScope(task.feishuRoot,{ownerOpenId:'b'}));
  assert.equal(values.get(topicFolderKey(task)).folderToken,'Topic');
@@ -62,4 +62,36 @@ test('FR05 专题日报消息包含问题，通知幂等且失败保留报告',a
  if(args[0]==='auth')return {appId:'cli_test',identities:{user:{available:true,verified:true,openId:'ou_test'},bot:{available:true,verified:true}}};sends.push(args);return {ok:true};}}};
  const notifications=new BriefingNotifications(service);await Promise.all([notifications.send(id),notifications.send(id)]);await notifications.send(id);
  assert.equal(sends.length,1);assert.equal(task.notification.status,'sent');assert.match(sends[0][sends[0].indexOf('--text')+1],/中国推理芯片.*\n本日无更新/);
+});
+test('PRD468 总报与两期日报分别保存，重试复用本期且拒绝覆盖',()=>{
+ const values=new Map(),tasks=[],service={store:{setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v),list:()=>tasks}};
+ const base={feishuRoot:{rootName:'研究',folderToken:'Root'},feishuApp:{appId:'App'}},receipt={status:'published',folderToken:'Root',topicRootFolderToken:'Topics',topicFolderToken:'Topic',topicDailyFolderToken:'Daily'};
+ const total={...topicTask({...input,topicId:id}),...base,id:'total',publication:{url:'https://example.feishu.cn/docx/Total'}};
+ rememberTopic(service,total,{...receipt,reportFolderToken:'Topic',url:total.publication.url});tasks.push(total);
+ const day1={...topicTask({...input,topicId:id},new Date('2026-11-15T01:00:00Z')),...base,id:'day1',publication:{url:'https://example.feishu.cn/docx/Day1'}};
+ const day2={...topicTask({...input,topicId:id},new Date('2026-11-16T01:00:00Z')),...base,id:'day2',publication:{url:'https://example.feishu.cn/docx/Day2'}};
+ rememberTopic(service,day1,{...receipt,reportFolderToken:'Daily',url:day1.publication.url});tasks.push(day1);
+ rememberTopic(service,day2,{...receipt,reportFolderToken:'Daily',url:day2.publication.url});tasks.push(day2);
+ assert.equal(values.get(topicDocumentKey(total)).url,total.publication.url);assert.equal(values.get(topicDailyDocumentKey(day1)).url,day1.publication.url);
+ assert.throws(()=>rememberTopic(service,day2,{...receipt,reportFolderToken:'Daily',url:total.publication.url}));
+ assert.throws(()=>rememberTopic(service,day2,{...receipt,reportFolderToken:'Topic',url:day2.publication.url}));
+ rememberTopic(service,day2,{...receipt,reportFolderToken:'Daily',url:day2.publication.url});
+ service.feishuSettings=()=>base.feishuRoot;service.binding={applicationSnapshot:()=>base.feishuApp};for(const t of tasks)t.createdAt='2026-11-15T00:00:00Z';
+ const cards=topicCards(service,[]);assert.equal(cards.length,1);assert.equal(cards[0].totalReport.id,'total');assert.deepEqual(cards[0].dailyReports.map(t=>t.id),['day2','day1']);
+});
+test('PRD468 读取层级目录导入总报与所有日报，不将日报覆盖总报链接',async()=>{
+ const {cloudPublications}=await import('../server/cloud-publications.mjs');
+ const values=new Map(),files={Root:[{type:'folder',name:'专题调研',token:'Topics'}],Topics:[{type:'folder',name:'测试专题',token:'Topic'}],Topic:[{type:'docx',name:'总报',url:'https://example.feishu.cn/docx/Total'},{type:'folder',name:'日报',token:'Daily'}],Daily:[{type:'docx',name:'专题日报 · 测试专题 · 2026-11-14',url:'https://example.feishu.cn/docx/Day1'},{type:'docx',name:'专题日报 · 测试专题 · 2026-11-15',url:'https://example.feishu.cn/docx/Day2'}]};
+ const service={cloudOnly:true,feishuSettings:()=>({rootName:'研究',folderToken:'Root'}),binding:{applicationSnapshot:()=>({})},store:{list:()=>[],setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v)}};
+ const result=await cloudPublications(service,'topic',{refresh:true,run:async(c,args)=>({stdout:JSON.stringify({ok:true,data:{files:files[args[args.indexOf('--folder-token')+1]]??[],has_more:false}})})});
+ const groups=topicCards(service,result.items);assert.equal(groups.length,1);assert.equal(groups[0].totalReport.publication.url,'https://example.feishu.cn/docx/Total');assert.equal(groups[0].dailyReports.length,2);
+ assert.equal(groups[0].dailyReports[0].publication.url,'https://example.feishu.cn/docx/Day2');
+ assert.equal(values.get(topicDocumentKey({...groups[0],feishuRoot:service.feishuSettings(),feishuApp:{}})).url,'https://example.feishu.cn/docx/Total');
+});
+test('PRD468 旧版日报作为总报保留，新总报可复用其链接',()=>{
+ const old={id:'old',topic:{topicId:id,window:{start:'2026-11-01T16:00:00.000Z'}},feishuRoot:{rootName:'研究',folderToken:'Root'},feishuApp:{},publication:{url:'https://example.feishu.cn/docx/Legacy'}};
+ const values=new Map(),service={store:{list:()=>[old],setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v)}};
+ const current={...topicTask({...input,topicId:id}),id:'new',feishuRoot:old.feishuRoot,feishuApp:{}};
+ values.set(topicDocumentKey(current),{url:old.publication.url});
+ assert.doesNotThrow(()=>rememberTopic(service,current,{status:'published',reportFolderToken:'Topic',topicFolderToken:'Topic',topicRootFolderToken:'Topics',url:old.publication.url}));
 });

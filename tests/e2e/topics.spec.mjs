@@ -3,8 +3,8 @@ test('FR05 专题调研创建、可编辑提示、续聊、独立日报与页签
  await page.goto('/');await page.getByRole('button',{name:'专题调研',exact:true}).click();
  await expect(page.getByRole('heading',{name:'专题调研',exact:true})).toBeVisible();
  await page.getByRole('button',{name:'启动专题调研',exact:true}).click();
- const dialog=page.getByRole('dialog');await dialog.getByLabel('调研问题',{exact:true}).fill('国产推理芯片的软件生态如何发展？');
- await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/国产推理芯片.*专题调研库/);
+ const dialog=page.getByRole('dialog');await dialog.getByLabel('调研方向',{exact:true}).fill('国产推理芯片的软件生态如何发展？');
+ await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/国产推理芯片.*专题调研/);
  await dialog.getByLabel('其他要求',{exact:true}).fill('注明证据日期');
  const sourceGroup=dialog.getByRole('group',{name:/^数据源/});
  await expect(sourceGroup).toHaveClass('industry-choices');
@@ -18,10 +18,10 @@ test('FR05 专题调研创建、可编辑提示、续聊、独立日报与页签
  await page.screenshot({path:'artifacts/fr05-topic-modal.png',fullPage:true});
  await dialog.getByRole('button',{name:'启动',exact:true}).click();await expect(page.getByRole('button',{name:'← 返回工作台'})).toBeVisible();
  await page.getByRole('button',{name:'← 返回工作台'}).click();
- await expect(page.getByRole('link',{name:'打开专题报告'})).toHaveAttribute('href',/feishu.cn\/docx\//);
- await expect(page.locator('.topic-card .task-status')).toHaveText('已完成');
+ await expect(page.getByRole('link',{name:'打开总报'})).toHaveAttribute('href',/feishu.cn\/docx\//);
+ await expect(page.locator('.topic-report-card .task-status')).toHaveText('已完成');
  await page.getByRole('button',{name:'设置日报',exact:true}).click();
- await expect(dialog.getByLabel('调研问题',{exact:true})).toHaveValue('国产推理芯片的软件生态如何发展？');
+ await expect(dialog.getByLabel('调研方向',{exact:true})).toHaveValue('国产推理芯片的软件生态如何发展？');
  await expect(dialog.getByRole('group',{name:/^数据源/})).toHaveClass('industry-choices');
  await expect(dialog.getByLabel('发送时间（北京时间）')).toHaveValue('09:00');
  await dialog.getByLabel('发送时间（北京时间）').fill('10:30');await dialog.getByLabel('启用此定时任务').check();
@@ -29,7 +29,26 @@ test('FR05 专题调研创建、可编辑提示、续聊、独立日报与页签
  await expect(page.getByText('专题日报 · 每天 10:30（北京时间）')).toBeVisible();
  await page.getByRole('button',{name:'设置日报',exact:true}).click();await expect(dialog.getByLabel('发送时间（北京时间）')).toHaveValue('10:30');await dialog.getByRole('button',{name:'关闭专题配置'}).click();
  await page.getByRole('button',{name:'日报',exact:true}).click();await expect(page.locator('.topic-card')).toHaveCount(0);
- await page.getByRole('button',{name:'专题调研',exact:true}).click();await expect(page.locator('.topic-card')).toHaveCount(1);
+ await page.getByRole('button',{name:'专题调研',exact:true}).click();await expect(page.locator('.topic-report-card')).toHaveCount(1);
+ await page.getByRole('button',{name:'← 返回专题列表'}).click();await expect(page.locator('.topic-card')).toHaveCount(1);
+ await page.getByRole('button',{name:'进入专题',exact:false}).click();await expect(page.getByRole('heading',{name:'专题总报',exact:true})).toBeVisible();
  await page.screenshot({path:'artifacts/fr05-topic-library.png',fullPage:true});
  await page.getByRole('button',{name:'AI 会话详情',exact:false}).click();await expect(page.getByRole('button',{name:'← 返回工作台'})).toBeVisible();
+});
+
+test('PRD468 专题列表进入详情，分别展示总报与全部日期日报，刷新不丢失层级',async({page})=>{
+ const topicId='99999999-9999-4999-8999-999999999999',question='AI 推理产业发展';
+ const report=(id,name,url,daily)=>({id,direction:name,status:'ready',nativeSessionId:'session-'+id,createdAt:'2026-11-15T01:00:00Z',topic:{topicId,question,workflowVersion:468,...(daily?{window:{start:name,end:name,display:name}}:{})},publication:{status:'published',url}});
+ const total=report('total','总报','https://example.feishu.cn/docx/Total'),daily1=report('day1','2026-11-13','https://example.feishu.cn/docx/Day1',true),daily2=report('day2','2026-11-14','https://example.feishu.cn/docx/Day2',true);
+ await page.route(/\/api\/industry\/library(?:\?.*)?$/,route=>route.fulfill({json:{companies:[]}}));
+ let reads=0;await page.route(/\/api\/topics(?:\?.*)?$/,route=>{reads++;return route.fulfill({json:{items:[{...total,totalReport:total,dailyReports:[daily2,daily1],schedule:{enabled:false}}],syncedAt:new Date().toISOString()}});});
+ await page.goto('/');await page.getByRole('button',{name:'专题调研',exact:true}).click();
+ await expect(page.locator('.topic-card')).toHaveCount(1);await expect(page.getByRole('link',{name:'打开总报',exact:false})).toHaveCount(0);
+ await page.getByRole('button',{name:question,exact:true}).click();await expect(page.getByRole('heading',{name:question,exact:true})).toBeVisible();
+ await expect(page.getByRole('link',{name:'打开总报',exact:false})).toHaveAttribute('href',total.publication.url);
+ await expect(page.getByRole('link',{name:'打开专题日报',exact:false})).toHaveCount(2);await expect(page.locator('.topic-report-card')).toHaveCount(3);
+ await expect(page.getByText('2026-11-13',{exact:true})).toBeVisible();await expect(page.getByText('2026-11-14',{exact:true})).toBeVisible();
+ const before=reads;await page.getByRole('button',{name:'刷新',exact:true}).click();await expect.poll(()=>reads).toBeGreaterThan(before);await expect(page.getByRole('heading',{name:question,exact:true})).toBeVisible();
+ await page.screenshot({path:'artifacts/prd468-topic-detail.png',fullPage:true});
+ await page.getByRole('button',{name:'← 返回专题列表'}).click();await expect(page.locator('.topic-card')).toHaveCount(1);
 });
