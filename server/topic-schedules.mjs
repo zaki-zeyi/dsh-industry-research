@@ -1,7 +1,8 @@
+import { saveHostSchedule, removeHostSchedule, scheduleFailure } from './host-schedule.mjs';
 import { z } from 'zod';
 import { topicInput, topicTask, topicScope } from './topics.mjs';
 import { previousScheduleRun, scheduleTiming } from './briefings.mjs';
-export const topicScheduleInput=z.object({time:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),enabled:z.boolean(),research:topicInput}).strict();
+export const topicScheduleInput=z.object({time:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),enabled:z.boolean().default(true),research:topicInput}).strict();
 export class TopicSchedules {
   constructor(service,host){this.service=service;this.host=host;this.chain=Promise.resolve();}
   get schedule(){return typeof this.host?.get==='function'?this.host.get('schedule'):this.host?.schedule;}
@@ -19,14 +20,16 @@ export class TopicSchedules {
     let sessionId=old.sessionId;
     if(v.enabled&&!sessionId){sessionId=(await this.service.nativeSessions.createHostSession()).sessionId;const r=await this.host.sessionController.resolveAgent(sessionId);this.host.permissionPresets.set(r.agent.session,'danger-full-access');}
     if(v.enabled)await this.service.nativeSessions.bindSession(sessionId);
-    if(old.record)await this.schedule.delete({sessionId,id:old.record.id});
+
     const plan={...v,topicId:id,scope,sessionId,enabled:false};
-    const persist=()=>this.service.store.saveSetting('topic-schedules',{...this.all(),[key]:plan});persist();
+    const persist=()=>this.service.store.saveSetting('topic-schedules',{...this.all(),[key]:plan});
     if(v.enabled){
       const endpoint=this.service.briefingSchedules.endpointFile;
       const prompt=`使用 Node.js 读取 ${JSON.stringify(endpoint)} 的 url，向该 url 加 /api/topics/trigger/${id} 发起 POST，Content-Type application/json，body ${JSON.stringify({scope})}。不要自行调研，平台会创建独立会话并通知用户。`;
-      plan.record=await this.schedule.create(sessionId,{title:'专题日报 · '+v.research.question,prompt,daily:{time:v.time+':00',time_zone:'Asia/Shanghai'}});
+      try{plan.record=await saveHostSchedule(this.schedule,sessionId,{title:'专题日报 · '+v.research.question,prompt,daily:{time:v.time+':00',time_zone:'Asia/Shanghai'}},old.record);}
+      catch(error){this.service.store.saveSetting('topic-schedules',{...this.all(),[key]:Object.keys(old).length?{...old,sessionId}:{...v,topicId:id,scope,sessionId,enabled:false}});this.service.store.runtimeLog('topic.schedule.failed',{phase:'schedule_save',code:typeof error.code==='string'?error.code:'SCHEDULE_SAVE_FAILED'},'error');throw scheduleFailure(error);}
     }
+    if(!v.enabled&&old.record){try{await removeHostSchedule(this.schedule,sessionId,old.record.id);}catch(error){throw scheduleFailure(error);}}
     plan.enabled=v.enabled;plan.activatedAt=old.enabled&&old.time===v.time?old.activatedAt:new Date().toISOString();persist();return this.get(id);
   }
   async trigger(id,{scope=this.scope(),scheduledFor=Date.now()}={}){

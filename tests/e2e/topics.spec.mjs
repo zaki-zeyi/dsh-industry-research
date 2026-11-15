@@ -24,7 +24,7 @@ test('FR05 专题调研创建、可编辑提示、续聊、独立日报与页签
  await expect(dialog.getByLabel('调研方向',{exact:true})).toHaveValue('国产推理芯片的软件生态如何发展？');
  await expect(dialog.getByRole('group',{name:/^数据源/})).toHaveClass('industry-choices');
  await expect(dialog.getByLabel('发送时间（北京时间）')).toHaveValue('09:00');
- await dialog.getByLabel('发送时间（北京时间）').fill('10:30');await dialog.getByLabel('启用此定时任务').check();
+ await dialog.getByLabel('发送时间（北京时间）').fill('10:30');await expect(dialog.getByLabel('启用此定时任务')).toHaveCount(0);
  await dialog.getByRole('button',{name:'完成',exact:true}).click();await expect(dialog).toHaveCount(0);
  await expect(page.getByText('专题日报 · 每天 10:30（北京时间）')).toBeVisible();
  await page.getByRole('button',{name:'设置日报',exact:true}).click();await expect(dialog.getByLabel('发送时间（北京时间）')).toHaveValue('10:30');await dialog.getByRole('button',{name:'关闭专题配置'}).click();
