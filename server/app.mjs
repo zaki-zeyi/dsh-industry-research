@@ -1,5 +1,5 @@
 import { documentKind, documentDeletionInput } from './document-deletions.mjs';
-import { documentScope, documentOperationKey, documentRemoved } from './document-deletion-state.mjs';
+import { documentScope, documentOperationKey, documentRemoved, taskDocumentRemoved } from './document-deletion-state.mjs';
 import { topicDeletionInput } from './topic-deletions.mjs';
 import { topicTask, topicScope, topicDocumentKey, topicCards, topicInput, assertTopicAvailable } from './topics.mjs';
 import { cloudPublications, mergePublicationCards, publicationCacheKey } from './cloud-publications.mjs';
@@ -100,7 +100,15 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.put('/api/topics/:id/schedule',async(req,res,next)=>{try{res.json(await service.topicSchedules.save(req.params.id,req.body));}catch(e){next(e);}});
   app.post('/api/topics/trigger/:id',async(req,res,next)=>{try{z.string().uuid().parse(req.params.id);const body=z.object({scope:z.string().min(1)}).strict().parse(req.body);res.status(202).json(await service.topicSchedules.trigger(req.params.id,body));}catch(e){next(e);}});
   app.post('/api/topics/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);assertTopicAvailable(service,t.topic,t.feishuRoot,t.feishuApp);if(!t.topic?.window||t.status!=='ready')throw new ServiceError(409,'专题日报尚未完成');await service.notifications.send(t.id,{currentUser:true});res.json(service.require(t.id));}catch(e){next(e);}});
-  app.get('/api/briefings', async (req,res,next) => { try { const kind = z.enum(['daily','weekly']).optional().parse(req.query.kind); const kinds = kind ? [kind] : ['daily','weekly']; const results=await Promise.all(kinds.map(k => readPublications(k,{refresh:req.query.refresh === 'true',force:req.query.force === 'true'}))); const remote=results.flatMap(v=>v.items); const local=service.store.list().filter(t => t.briefing && (!kind || t.briefing.kind === kind)).map(t => ({id:t.id,direction:t.direction,status:t.status,createdAt:t.createdAt,briefing:t.briefing,stage:t.stage,publication:t.publication,notification:t.notification})); res.json({items:mergePublicationCards(local,remote),syncError:results.find(v=>v.syncError)?.syncError,syncedAt:results.map(v=>v.syncedAt).filter(Boolean).sort().at(-1) ?? null}); } catch(error) { next(libraryReadError(error)); } });
+  app.get('/api/briefings', async (req,res,next) => { try {
+    const kind=z.enum(['daily','weekly']).optional().parse(req.query.kind),kinds=kind?[kind]:['daily','weekly'];
+    const root=service.feishuSettings(),account=service.binding?.applicationSnapshot?.(),scope=documentScope(root,account);
+    const results=await Promise.all(kinds.map(k=>readPublications(k,{refresh:req.query.refresh==='true',force:req.query.force==='true'})));
+    if(documentScope(service.feishuSettings(),service.binding?.applicationSnapshot?.())!==scope)throw new ServiceError(409,'读取期间飞书账号或存储位置已变化，请刷新');
+    const remote=results.flatMap(v=>v.items).filter(t=>!documentRemoved(service.store,root,account,t.publication?.url));
+    const local=service.store.list().filter(t=>t.briefing&&(!kind||t.briefing.kind===kind)&&(!t.feishuRoot||documentScope(t.feishuRoot,t.feishuApp)===scope)&&!taskDocumentRemoved(service.store,t)&&!documentRemoved(service.store,root,account,t.publication?.url)).map(t=>({id:t.id,direction:t.direction,status:t.status,createdAt:t.createdAt,briefing:t.briefing,stage:t.stage,publication:t.publication,notification:t.notification}));
+    res.json({items:mergePublicationCards(local,remote),syncError:results.find(v=>v.syncError)?.syncError,syncedAt:results.map(v=>v.syncedAt).filter(Boolean).sort().at(-1)??null});
+  }catch(error){next(libraryReadError(error));} });
   app.post('/api/briefings', async(req,res,next)=>{try {res.status(202).json(await service.createAuthorized(briefingTask(req.body),req.headers['idempotency-key']));}catch(e){next(e);}});
   app.post('/api/briefings/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);if(!t.briefing||t.status!=='ready')throw new ServiceError(409,'报告尚未完成');await service.notifications.send(t.id,{currentUser:true});res.json(service.require(t.id));}catch(e){next(e);}});
   app.get('/api/internal-materials', async (req, res, next) => { try {

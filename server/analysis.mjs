@@ -8,6 +8,7 @@ import { analysisReportSchema } from './agent-delivery.mjs';
 import { ANALYSIS_FOLDER_NAME, analysisDefaultPrompt, cleanAnalysisTitle } from './analysis-defaults.mjs';
 import { library } from './industry.mjs';
 import { LibraryRefreshError, libraryReadError } from './library-errors.mjs';
+import { documentRemoved, taskDocumentRemoved, assertDocumentAvailable } from './document-deletion-state.mjs';
 
 
 const label = z.string().trim().min(1).max(120).refine(v => !/[\x00-\x1f\x7f]/.test(v), '名称不能包含控制字符');
@@ -25,7 +26,7 @@ export function analysisKey(root, app) {
 
 export function analysisLibrary(store, root, app) {
   const current = store.setting(analysisKey(root, app)) ?? { reports: [], folderToken: null, manifestUrl: null, syncedAt: null };
-  return { ...current, reports: (current.reports ?? []).map(report => ({ ...report, title: cleanAnalysisTitle(report.title) })) };
+  return { ...current, reports: (current.reports ?? []).filter(report=>!documentRemoved(store,root,app,report.url)).map(report => ({ ...report, title: cleanAnalysisTitle(report.title) })) };
 }
 
 const sameCompanies = (left, right) => {
@@ -42,9 +43,9 @@ const sameCompanies = (left, right) => {
 // stored index keeps exactly what the Agent wrote.
 export function analysisTaskCards(store, library, root, app) {
   const key = analysisKey(root ?? {}, app);
-  const reports = (library.reports ?? []).map(report => ({ ...report }));
+  const reports = (library.reports ?? []).filter(report=>!documentRemoved(store,root,app,report.url)).map(report => ({ ...report }));
   const newestFirst = (store.list?.() ?? [])
-    .filter(task => task?.analysis && Array.isArray(task.analysis.companies) && analysisKey(task.feishuRoot ?? {}, task.feishuApp) === key)
+    .filter(task => task?.analysis && !taskDocumentRemoved(store,task) && Array.isArray(task.analysis.companies) && analysisKey(task.feishuRoot ?? {}, task.feishuApp) === key)
     .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
   const claimed = new Set(), pending = [];
   for (const task of newestFirst) {
@@ -104,6 +105,8 @@ export function missingAnalysisSources(sourceLibrary, companies) {
 
 export function mergeAnalysisDelivery(store, task, delivery) {
   if (!task.analysis) return null;
+  assertDocumentAvailable({store},task);
+  if(documentRemoved(store,task.feishuRoot,task.feishuApp,delivery.report?.url))throw new Error('该友商分析已删除，不能通过旧回执恢复');
   if (!delivery.analysisFolderToken) throw new Error('缺少友商分析目录 ID');
   if (!delivery.report) throw new Error('缺少友商分析报告链接');
   const report = delivery.report;
@@ -183,7 +186,7 @@ export async function refreshAnalysisLibrary(store, root, app, run = defaultExec
 
   const localByUrl = new Map(latest.reports.map(report => [report.url, report]));
   const tasks = store.list?.() ?? [];
-  const reports = remote.map(report => {
+  const reports = remote.filter(report=>!documentRemoved(store,root,app,report.url)).map(report => {
     const localReport = localByUrl.get(report.url);
     if (localReport && Date.parse(localReport.updatedAt) > Date.parse(report.updatedAt)) return localReport;
     const taskId = localReport?.taskId ?? tasks.find(task => task.analysis && task.analysisReport?.url === report.url)?.id;

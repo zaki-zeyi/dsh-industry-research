@@ -1,4 +1,4 @@
-export const libraryMergeRules = `
+const previousLibraryRules = `
 【全量信息库合并规则（强制）】
 写回公司文档前，必须先完整读取目标公司文档，建立“维度—条目—事实—时间—来源”清单；不得只看文档末尾或最近一次更新。
 将本次资料拆成独立事实，逐条与已有条目比较，并分类为：重复、补充、状态更新、冲突、新增。
@@ -8,18 +8,27 @@ export const libraryMergeRules = `
 修改完成后重新读取受影响的章节，核对重复、结构、时间顺序和来源完整性；确认后才更新公司索引的 added/conflicts 并回传。
 `;
 
-export const topicMergeRules = libraryMergeRules
+export const libraryMergeRules = previousLibraryRules
+  .replace('【全量信息库合并规则（强制）】','【全量信息库合并规则】')
+  .replace('同时写入新状态和时间','同时写入新状态、时间和来源')
+  .replace('修改完成后重新读取受影响的章节','每条条目紧跟来源链接及对应时间，保留已有人工备注。\n修改完成后重新读取受影响的章节');
+
+const forTopic = rules => rules
+  .replace('【全量信息库合并规则】', '【专题总报合并规则】')
   .replace('【全量信息库合并规则（强制）】', '【专题总报合并规则（强制）】')
   .replaceAll('公司文档', '专题总报')
   .replace('也禁止写入日报/周报正文', '也禁止写入专题日报正文')
   .replace('禁止把本次调研摘要整体追加到专题总报', '禁止把本次调研摘要或专题日报整体追加到专题总报')
   .replace('确认后才更新公司索引的 added/conflicts 并回传', '确认后才回传已合并的总报链接 topicTotalUrl');
+export const topicMergeRules=forTopic(libraryMergeRules);
 
 // Defaults, saved schedules and runtime instructions use the same complete
 // policy. A custom prompt containing only its heading must not bypass it.
 export function withLibraryMergeRules(prompt) {
-  return prompt.includes(libraryMergeRules.trim()) ? prompt : prompt + libraryMergeRules;
+  const text=prompt.replaceAll(previousLibraryRules.trim(),libraryMergeRules.trim());
+  return text.includes(libraryMergeRules.trim()) ? text : text + libraryMergeRules;
 }
 export function withTopicMergeRules(prompt) {
-  return prompt.includes(topicMergeRules.trim()) ? prompt : prompt + topicMergeRules;
+  const text=prompt.replaceAll(forTopic(previousLibraryRules).trim(),topicMergeRules.trim());
+  return text.includes(topicMergeRules.trim()) ? text : text + topicMergeRules;
 }

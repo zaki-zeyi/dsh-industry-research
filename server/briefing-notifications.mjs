@@ -1,6 +1,7 @@
 import { notificationFailure } from './notification-errors.mjs';
 import { notificationContext, notificationSent } from './notification-context.mjs';
 import { recordTrace } from './connection-trace.mjs';
+import { assertDocumentAvailable } from './document-deletion-state.mjs';
 
 export class BriefingNotifications {
   constructor(service) { this.service=service; this.active=new Map(); }
@@ -11,6 +12,7 @@ export class BriefingNotifications {
   async deliver(id, options) {
     const s=this.service,t=s.require(id);
     if((!t.briefing&&!t.topic?.window)||t.status!=='ready'||t.publication.status!=='published'||t.notification?.status==='sent')return t;
+    assertDocumentAvailable(s,t);
     let attemptedAppId;
     try {
       const context=await notificationContext(s,t,options),{recipient,application,idempotencyKey}=context;

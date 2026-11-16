@@ -26,7 +26,7 @@ test('FR05 专题调研创建、可编辑提示、续聊、独立日报与页签
  await expect(dialog.getByLabel('调研方向',{exact:true})).toHaveValue('国产推理芯片的软件生态如何发展？');
  await expect(dialog.getByRole('group',{name:/^数据源/})).toHaveClass('industry-choices');
  await expect(dialog.getByLabel('发送时间（北京时间）')).toHaveValue('09:00');
- await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/每日日报信息去重增量合并保存到【本专题调研】的总报/);await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/【专题总报合并规则（强制）】/);await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/禁止把本次调研摘要或专题日报整体追加到专题总报/);
+ await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/每日日报信息去重合并保存到【本专题调研】的总报/);await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/【专题总报合并规则】/);await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/禁止把本次调研摘要或专题日报整体追加到专题总报/);
  await dialog.getByLabel('发送时间（北京时间）').fill('10:30');await expect(dialog.getByLabel('启用此定时任务')).toHaveCount(0);
  await dialog.getByRole('button',{name:'完成',exact:true}).click();await expect(dialog).toHaveCount(0);
  await expect(page.getByText('专题日报 · 每天 10:30（北京时间）')).toBeVisible();
@@ -38,7 +38,7 @@ test('FR05 专题调研创建、可编辑提示、续聊、独立日报与页签
  await page.getByRole('button',{name:'设置日报',exact:true}).click();await expect(dialog.getByLabel('发送时间（北京时间）')).toHaveValue('10:30');
  await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/自定义补充：关注算力成本/);
  await expect(dialog.getByLabel('任务 Prompt',{exact:false})).not.toHaveValue(/【调研结论】|【调研依据】/);
- await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/每日日报信息去重增量合并保存到【本专题调研】的总报/);await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/【专题总报合并规则（强制）】/);await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/禁止把本次调研摘要或专题日报整体追加到专题总报/);
+ await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/每日日报信息去重合并保存到【本专题调研】的总报/);await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/【专题总报合并规则】/);await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/禁止把本次调研摘要或专题日报整体追加到专题总报/);
  await dialog.getByRole('button',{name:'关闭专题配置'}).click();
  await page.getByRole('button',{name:'日报',exact:true}).click();await expect(page.locator('.topic-card')).toHaveCount(0);
  await page.getByRole('button',{name:'专题调研',exact:true}).click();await expect(page.locator('.topic-report-card')).toHaveCount(1);

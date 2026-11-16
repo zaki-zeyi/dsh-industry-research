@@ -7,7 +7,7 @@ import { industryPrompt } from '../server/industry.mjs';
 import { internalMaterialPrompt, internalMaterialCloudPrompt } from '../server/internal-materials.mjs';
 import { topicDailyPrompt, withTopicTotalMerge } from '../server/topic-defaults.mjs';
 import { topicTask, topicCloudPrompt } from '../server/topics.mjs';
-import { libraryMergeRules, topicMergeRules, withLibraryMergeRules } from '../server/library-merge-prompt.mjs';
+import { libraryMergeRules, topicMergeRules, withLibraryMergeRules, withTopicMergeRules } from '../server/library-merge-prompt.mjs';
 import { BriefingSchedules } from '../server/briefings.mjs';
 
 const meta = { deliveryPath: 'delivery.json', deliveryRequestId: 'request-fixture' };
@@ -82,7 +82,7 @@ test('PRD4821 专题日报将完整规则应用于总报，保留自定义要求
   const old='调研 {{时间范围}}，重点比较运行成本。\n每日日报信息去重增量保存到【本专题调研】的总报。';
   const upgraded=withTopicTotalMerge(old);
   assert.equal(withTopicTotalMerge(upgraded),upgraded);
-  assert.match(upgraded,/重点比较运行成本/);assert.match(upgraded,/去重增量合并保存/);
+  assert.match(upgraded,/重点比较运行成本/);assert.match(upgraded,/去重合并保存/);
   const task={...topicTask({...v,prompt:old},new Date('2026-11-16T01:00:00Z')),feishuApp:{},publication:{}};
   const actual=topicCloudPrompt(task,meta);
   assert.ok(actual.includes(topicMergeRules.trim()));
@@ -106,4 +106,15 @@ test('PRD4821 旧日报周报配置读出时补齐规则，不改保存数据或
     assert.equal(plan.time,saved.plans[kind].time);assert.equal(plan.enabled,saved.plans[kind].enabled);
     assert.equal(saved.plans[kind].research.prompt,oldPrompt);
   }
+});
+
+test('PRD4896 新状态附时间及来源链接，上一版完整规则原位升级且保留用户要求',()=>{
+  const old=libraryMergeRules.replace('【全量信息库合并规则】','【全量信息库合并规则（强制）】').replace('同时写入新状态、时间和来源','同时写入新状态和时间').replace('每条条目紧跟来源链接及对应时间，保留已有人工备注。\n','');
+  const prompt=withLibraryMergeRules('重点研究产品历史。\n'+old+'\n保留原始要求。');
+  assert.match(prompt,/重点研究产品历史/);assert.match(prompt,/保留原始要求/);
+  assert.match(prompt,/同时写入新状态、时间和来源/);assert.match(prompt,/每条条目紧跟来源链接及对应时间/);
+  assert.doesNotMatch(prompt,/（强制）/);assert.equal(prompt.split('【全量信息库合并规则】').length-1,1);
+  assert.equal(withLibraryMergeRules(prompt),prompt);
+  const previousTopic=topicMergeRules.replace('【专题总报合并规则】','【专题总报合并规则（强制）】').replace('同时写入新状态、时间和来源','同时写入新状态和时间').replace('每条条目紧跟来源链接及对应时间，保留已有人工备注。\n','');
+  const next=withTopicMergeRules(previousTopic);assert.equal(next,topicMergeRules);assert.equal(withTopicMergeRules(next),next);
 });

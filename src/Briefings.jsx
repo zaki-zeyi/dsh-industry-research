@@ -1,7 +1,8 @@
 import { StorageOverview } from './StorageOverview.jsx';
+import { DocumentDeleteModal } from './DocumentDeleteModal.jsx';
 import { NotificationRetry } from './NotificationRetry.jsx';
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, ArrowUpRight, CalendarDays, LoaderCircle, RefreshCw } from 'lucide-react';
+import { AlertCircle, ArrowUpRight, CalendarDays, LoaderCircle, RefreshCw, Trash2 } from 'lucide-react';
 import { createTabStore } from './tab-store.mjs';
 import { useTabEntry, useTabPolling } from './use-tab-store.js';
 
@@ -18,8 +19,9 @@ const loadersFor = kind => ({
   sync: ({ force }) => api('?kind=' + kind + '&refresh=true' + (force ? '&force=true' : '')),
 });
 
-export function Briefings({ kind, config, onGenerate, onSchedule, onOpen, onRetry, onFixNotification, notificationRevision, focusRequest }) {
+export function Briefings({ kind, config, onGenerate, onSchedule, onOpen, onRetry, onFixNotification, onRebind, notificationRevision, focusRequest }) {
   const [query, setQuery] = useState('');
+  const [deleting,setDeleting]=useState(null);
   const key = scopeKey(kind, config), loaders = loadersFor(kind);
   const state = useTabEntry(briefingsStore, key, loaders);
   // Backstop: a card explicitly marked as another kind never reaches this tab.
@@ -44,6 +46,6 @@ export function Briefings({ kind, config, onGenerate, onSchedule, onOpen, onRetr
   {t.publication.status === 'published' && <a className="briefing-action" href={t.publication.url} target="_blank" rel="noreferrer">打开飞书{name}<ArrowUpRight size={16}/></a>}
   {t.notification?.status === 'sent' && <><p className="card-caption">飞书机器人已通知</p>{t.notification.notice && <p className="card-caption notification-redirect-notice" role="status">{t.notification.notice}</p>}</>}
   {t.notification?.status === 'failed' && <div className="card-alert" role="alert"><AlertCircle size={15}/><span>{t.notification.error}</span><div className="card-alert-actions"><NotificationRetry task={t} base="briefings" onRepair={onFixNotification} onUpdated={value => briefingsStore.replaceItem(key, value.id, value)}/></div></div>}
-  <footer><button disabled={t.remoteOnly} title={t.remoteOnly ? '此报告没有本机 AI 会话记录' : undefined} onClick={() => onOpen(t)}>AI 会话详情 ↗</button>{['failed', 'interrupted'].includes(t.status) && <button onClick={() => onRetry(t)}>重试</button>}</footer>
-</article>)}</div>}{!pending && !items.length ? <div className="industry-empty"><h2>暂无{name}记录</h2><p>生成报告后，每份报告和对应 AI 会话都会保存在这里。</p></div> : null}</section>;
+  <footer className="document-card-footer"><button disabled={t.remoteOnly} title={t.remoteOnly ? '此报告没有本机 AI 会话记录' : undefined} onClick={() => onOpen(t)}>AI 会话详情 ↗</button>{['failed', 'interrupted'].includes(t.status) && <button onClick={() => onRetry(t)}>重试</button>}<button type="button" className="document-delete" aria-label={'删除'+name+'：'+t.direction} title={'删除'+name} onClick={()=>setDeleting(t)}><Trash2 size={15}/></button></footer>
+</article>)}</div>}{!pending && !items.length ? <div className="industry-empty"><h2>暂无{name}记录</h2><p>生成报告后，每份报告和对应 AI 会话都会保存在这里。</p></div> : null}{deleting&&<DocumentDeleteModal key={kind+deleting.id} kind={kind} target={deleting.id} title={deleting.direction} scope={config?.documentScope} onClose={()=>setDeleting(null)} onRebind={()=>{setDeleting(null);onRebind?.();}} onDeleted={()=>{briefingsStore.removeItem(key,deleting.id);setDeleting(null);}}/>}</section>;
 }
