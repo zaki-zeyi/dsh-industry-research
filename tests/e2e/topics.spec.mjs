@@ -5,6 +5,8 @@ test('FR05 专题调研创建、可编辑提示、续聊、独立日报与页签
  await page.getByRole('button',{name:'启动专题调研',exact:true}).click();
  const dialog=page.getByRole('dialog');await dialog.getByLabel('调研方向',{exact:true}).fill('国产推理芯片的软件生态如何发展？');
  await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/国产推理芯片.*专题调研/);
+ await expect(dialog.getByLabel('任务 Prompt',{exact:false})).not.toHaveValue(/【调研结论】|【调研依据】/);
+ await expect(dialog.getByText('报告按问题、结论、依据组织。',{exact:false})).toHaveCount(0);
  await dialog.getByLabel('其他要求',{exact:true}).fill('注明证据日期');
  const sourceGroup=dialog.getByRole('group',{name:/^数据源/});
  await expect(sourceGroup).toHaveClass('industry-choices');
@@ -28,7 +30,16 @@ test('FR05 专题调研创建、可编辑提示、续聊、独立日报与页签
  await dialog.getByLabel('发送时间（北京时间）').fill('10:30');await expect(dialog.getByLabel('启用此定时任务')).toHaveCount(0);
  await dialog.getByRole('button',{name:'完成',exact:true}).click();await expect(dialog).toHaveCount(0);
  await expect(page.getByText('专题日报 · 每天 10:30（北京时间）')).toBeVisible();
- await page.getByRole('button',{name:'设置日报',exact:true}).click();await expect(dialog.getByLabel('发送时间（北京时间）')).toHaveValue('10:30');await dialog.getByRole('button',{name:'关闭专题配置'}).click();
+ await page.route(/\/api\/topics\/[^/]+\/schedule$/,async route=>{
+  if(route.request().method()!=='GET')return route.continue();
+  const response=await route.fetch(),plan=await response.json();
+  await route.fulfill({response,json:{...plan,research:{...plan.research,prompt:'自定义补充：关注算力成本。报告按照【调研问题】【调研结论】【调研依据】组织，每条依据紧跟来源链接和日期。'}}});
+ });
+ await page.getByRole('button',{name:'设置日报',exact:true}).click();await expect(dialog.getByLabel('发送时间（北京时间）')).toHaveValue('10:30');
+ await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/自定义补充：关注算力成本/);
+ await expect(dialog.getByLabel('任务 Prompt',{exact:false})).not.toHaveValue(/【调研结论】|【调研依据】/);
+ await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/每日日报信息去重增量保存到【本专题调研】的总报/);
+ await dialog.getByRole('button',{name:'关闭专题配置'}).click();
  await page.getByRole('button',{name:'日报',exact:true}).click();await expect(page.locator('.topic-card')).toHaveCount(0);
  await page.getByRole('button',{name:'专题调研',exact:true}).click();await expect(page.locator('.topic-report-card')).toHaveCount(1);
  await page.getByRole('button',{name:'← 返回专题列表'}).click();await expect(page.locator('.topic-card')).toHaveCount(1);
