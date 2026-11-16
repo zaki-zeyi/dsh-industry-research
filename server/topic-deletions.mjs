@@ -1,3 +1,4 @@
+import { serializeTrash } from './cloud-trash.mjs';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { ServiceError } from './service-error.mjs';
@@ -64,7 +65,7 @@ export class TopicDeletions {
     return {topicId:id,scope,question:card.topic.question,status:'ready',confirmation,totalCount:card.totalReport?.publication?.url?1:0,dailyCount:card.dailyReports.length,targets};
   }
   remove(id,input){
-    const data=topicDeletionInput.parse(input),job=this.chain.then(()=>this.commit(id,data));this.chain=job.catch(()=>{});return job;
+    const data=topicDeletionInput.parse(input),job=this.chain.then(()=>serializeTrash(this.service,()=>this.commit(id,data)));this.chain=job.catch(()=>{});return job;
   }
   async json(c,args){
     let result;

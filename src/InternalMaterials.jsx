@@ -1,7 +1,8 @@
+import { DocumentDeleteModal } from './DocumentDeleteModal.jsx';
 import { StorageOverview } from './StorageOverview.jsx';
 import { NotificationRetry } from './NotificationRetry.jsx';
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, ArrowUpRight, FileText, LoaderCircle, RefreshCw } from 'lucide-react';
+import { AlertCircle, ArrowUpRight, FileText, LoaderCircle, RefreshCw, Trash2 } from 'lucide-react';
 import { createTabStore } from './tab-store.mjs';
 import { useTabEntry, useTabPolling } from './use-tab-store.js';
 
@@ -42,12 +43,13 @@ const loaders = {
   sync: ({ force }) => api('?refresh=true' + (force ? '&force=true' : '')),
 };
 
-export function InternalMaterials({ config, onConfigChanged, onCreate, onOpen, onRetry, onFixNotification, notificationRevision, focusRequest }) {
+export function InternalMaterials({ config, onConfigChanged, onCreate, onOpen, onRebind, onRetry, onFixNotification, notificationRevision, focusRequest }) {
   const [query, setQuery] = useState('');
   const [editingDirectory, setEditingDirectory] = useState(false);
   const [directoryName, setDirectoryName] = useState('');
   const [savingDirectory, setSavingDirectory] = useState(false);
   const [error, setError] = useState('');
+  const [reconciling,setReconciling]=useState(null),[deleting,setDeleting]=useState(null);
   const key = scopeKey(config);
   const state = useTabEntry(internalMaterialsStore, key, loaders);
   const items = state.items.filter(task => task.internal);
@@ -65,6 +67,10 @@ export function InternalMaterials({ config, onConfigChanged, onCreate, onOpen, o
       onConfigChanged?.(value.directoryName); setEditingDirectory(false);
     } catch (cause) { setError(cause.message); }
     finally { setSavingDirectory(false); }
+  }
+  async function reconcile(task){
+    if(reconciling)return;setReconciling(task.id);setError('');
+    try{const value=await api('/'+task.id+'/reconcile',{method:'POST'});internalMaterialsStore.replaceItem(key,value.id,value);}catch(error){setError(error.message);}finally{setReconciling(null);}
   }
   const banner = error || state.syncError || state.error;
   const refresh = () => { setError(''); return internalMaterialsStore.refresh(key, loaders); };
@@ -109,14 +115,17 @@ export function InternalMaterials({ config, onConfigChanged, onCreate, onOpen, o
       </div>}
       {task.notification?.status === 'sent' && <><p className="card-caption">飞书机器人已通知</p>{task.notification.notice && <p className="card-caption notification-redirect-notice" role="status">{task.notification.notice}</p>}</>}
       {task.notification?.status === 'failed' && <div className="card-alert" role="alert"><AlertCircle size={15}/><span>{task.notification.error}</span><div className="card-alert-actions"><NotificationRetry task={task} base="internal-materials" onRepair={onFixNotification} onUpdated={value => internalMaterialsStore.replaceItem(key, value.id, value)}/></div></div>}
-      <footer>
+      <footer className="document-card-footer">
         <button disabled={task.remoteOnly} title={task.remoteOnly ? '此资料没有本机 AI 会话记录' : undefined} onClick={() => onOpen(task)}>AI 会话详情 ↗</button>
+        {task.status==='failed'&&task.error==='内部资料尚未完成信息库增量同步'&&<button disabled={Boolean(reconciling)} onClick={()=>reconcile(task)}>{reconciling===task.id?'核对中…':'核对已完成结果'}</button>}
         {['failed', 'interrupted'].includes(task.status) && <button onClick={() => onRetry(task)}>重试</button>}
+        <button type="button" className="document-delete" aria-label={'删除内部资料：'+sourceDisplay(task)} title="删除内部资料" onClick={()=>setDeleting(task)}><Trash2 size={15}/></button>
       </footer>
     </article>)}</div>}
     {!pending && items.length === 0 && <div className="industry-empty">
       <FileText size={32}/><h2>{query ? '没有匹配的内部资料' : '从第一份录音或内部文档开始'}</h2>
       <p>支持本地文件路径或网络链接；解析完成后保存飞书逐字稿及会议纪要。</p>
     </div>}
+    {deleting&&<DocumentDeleteModal kind="internal" target={deleting.id} title={sourceDisplay(deleting)} scope={config?.documentScope} onClose={()=>setDeleting(null)} onRebind={()=>{setDeleting(null);onRebind?.();}} onDeleted={async()=>{const id=deleting.id;setDeleting(null);internalMaterialsStore.removeItem(key,id);await internalMaterialsStore.reload(key,loaders);}}/>}
   </section>;
 }

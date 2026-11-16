@@ -1,3 +1,4 @@
+import { assertDocumentAvailable } from './document-deletion-state.mjs';
 import { topicMetadata, rememberTopic, assertTopicAvailable } from './topics.mjs';
 import {CloudWrites} from './cloud-writes.mjs';
 import { briefingInput, briefingKey } from './briefings.mjs';
@@ -7,7 +8,7 @@ import { analysisInputSchema, analysisLibrary, mergeAnalysisDelivery, missingAna
 import { EventEmitter } from 'node:events';
 import { z } from 'zod';
 import { folderSettings, folderCacheKey } from './feishu-folder.mjs';
-import { internalFolderKey, internalMaterialMetadataSchema } from './internal-materials.mjs';
+import { internalFolderKey, internalMaterialMetadataSchema, normalizeInternalDelivery } from './internal-materials.mjs';
 import { newId } from './store.mjs';
 import { promptFor, reportSchema } from './report.mjs';
 import { agentDeliverySchema, agentPublication } from './agent-delivery.mjs';
@@ -117,7 +118,7 @@ export class ResearchService {
         if (t.cloudOnly) {
           const delivery = agentDeliverySchema.parse(report.cloudDelivery);
           if (delivery.status !== 'published') throw new Error('未收到有效飞书报告链接');
-          const latest=this.require(id);t.feishuRoot=latest.feishuRoot;
+          const latest=this.require(id);t.feishuRoot=latest.feishuRoot;t.industryLibrary=latest.industryLibrary??t.industryLibrary;
           this.cloudWrites.assertOwner(t);
           this.rememberCloudFolder(t, delivery);
           rememberTopic(this,t,delivery);
@@ -165,6 +166,7 @@ export class ResearchService {
   retry(id, stage) {
     const t = this.require(id);
     assertTopicAvailable(this,t.topic,t.feishuRoot,t.feishuApp);
+    assertDocumentAvailable(this,t);
     if (t.nativeSession && !this.nativeSessions) throw new ServiceError(503, '请在宿主 DSH 插件中重试此原生会话');
     if (this.active.has(id) || this.queue.some(x => x.id === id)) throw new ServiceError(409, '任务正在执行，请勿重复重试');
     if (stage === 'publish') {
@@ -222,6 +224,8 @@ export class ResearchService {
   }
   rememberInternalMaterial(t, delivery) {
     if (!t.internal) return;
+    assertDocumentAvailable(this,t);
+    normalizeInternalDelivery(t,delivery);
     const key = internalFolderKey(t), prior = this.store.setting(key) ?? {};
     if (prior.transcriptFolderToken && delivery.reportFolderToken && prior.transcriptFolderToken !== delivery.reportFolderToken) throw new Error('内部解析资料子目录不一致');
     if (prior.sourceFolderToken && delivery.sourceFolderToken && prior.sourceFolderToken !== delivery.sourceFolderToken) throw new Error('原始内部资料子目录不一致');
@@ -330,6 +334,7 @@ export class ResearchService {
   recover() {
     const notificationsToRetry = [];
     for (const t of this.store.list()) {
+      if(t.internal){try{assertDocumentAvailable(this,t);}catch{continue;}}
       if(t.topic){try{assertTopicAvailable(this,t.topic,t.feishuRoot,t.feishuApp);}catch{continue;}}
       if((t.briefing||t.internal||t.topic?.window)&&t.notification?.status==='sending'){t.notification={...t.notification,status:'failed',error:'服务重启，通知结果待核对；报告已保留，可重试通知。'};this.store.save(t);}
       if (t.status === 'queued') this.enqueue(t.id, 'research');
@@ -341,5 +346,5 @@ export class ResearchService {
     }
     for (const id of notificationsToRetry) void this.notifications?.send(id).catch(() => {});
   }
-  async close() { this.closed = true; const jobs = [...this.active.values()]; for (const j of jobs) j.controller.abort(); await Promise.allSettled(jobs.map(j => j.promise)); await this.notifications?.close(); await this.internalNotifications?.close(); await this.topicDeletions?.close(); this.bus.removeAllListeners(); }
+  async close() { this.closed = true; const jobs = [...this.active.values()]; for (const j of jobs) j.controller.abort(); await Promise.allSettled(jobs.map(j => j.promise)); await this.notifications?.close(); await this.internalNotifications?.close(); await this.topicDeletions?.close(); await this.internalReconciliation?.close(); await this.documentDeletions?.close(); this.bus.removeAllListeners(); }
 }

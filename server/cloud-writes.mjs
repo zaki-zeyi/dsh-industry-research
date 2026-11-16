@@ -1,3 +1,4 @@
+import { assertDocumentAvailable, assertCompanyWriteTargets } from './document-deletion-state.mjs';
 import { assertTopicAvailable, topicFolderKey, topicDocumentKey, topicDailyDocumentKey, legacyTopicFolderKey } from './topics.mjs';
 import { internalFolderKey } from './internal-materials.mjs';
 import {library,libraryNamespaceKey} from './industry.mjs';
@@ -11,6 +12,7 @@ export class CloudWrites {
   async acquire(id,requestId){
     const s=this.service,t=s.require(id),active=s.active.get(id);
     assertTopicAvailable(s,t.topic,t.feishuRoot,t.feishuApp);
+    assertDocumentAvailable(s,t);
     const meta=t.terminalId&&s.store.terminal(t.terminalId);
     if(!active||active.controller.signal.aborted||meta?.deliveryRequestId!==requestId)throw Object.assign(new Error('任务轮次已失效'),{status:409});
     const key=libraryNamespaceKey(t.feishuRoot,t.feishuApp);
@@ -31,10 +33,13 @@ export class CloudWrites {
   async snapshot(t){
     const s=this.service;
     assertTopicAvailable(s,t.topic,t.feishuRoot,t.feishuApp);
+    assertDocumentAvailable(s,t);
     if(s.directories)await s.directories.prepare(t,s.active.get(t.id)?.controller.signal);
     else s.prepareCloudRoot(t);
     assertTopicAvailable(s,t.topic,t.feishuRoot,t.feishuApp);
+    assertDocumentAvailable(s,t);
     t.industryLibrary=library(s.store,t.feishuRoot,t.feishuApp);
+    assertCompanyWriteTargets(s,t);
     if(t.briefing)t.briefingLibrary=s.store.setting(briefingKey(t))??{};
     if(t.internal)t.internalFolders=s.store.setting(internalFolderKey(t))??{};
     if(t.topic){t.topicLibrary=s.store.setting(t.topic.workflowVersion===468?topicFolderKey(t):legacyTopicFolderKey(t))??{};t.topicDocument=s.store.setting(topicDocumentKey(t))??{};if(t.topic.window)t.topicDailyDocument=s.store.setting(topicDailyDocumentKey(t))??{};}

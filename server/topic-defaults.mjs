@@ -1,5 +1,6 @@
+export const topicTotalTitle=question=>question+'专题调研总报';
 export function topicPrompt(v) {
-  return `帮我对【${v.question}】在【${v.sources.join('、')}】进行调研${v.requirements ? `，并满足【${v.requirements}】` : ''}，自动去重增量保存到飞书云盘【专题调研】对应专题的【总报】中。关键信息注明来源链接和日期，并呈现本次更新摘要。`;
+  return `帮我对【${v.question}】在【${v.sources.join('、')}】进行调研${v.requirements ? `，并满足【${v.requirements}】` : ''}，自动去重增量保存到飞书云盘【专题调研】对应专题的【总报】中，文档命名为【${topicTotalTitle(v.question)}】。关键信息注明来源链接和日期，并呈现本次更新摘要。`;
 }
 export function topicDailyPrompt(v,range='{{时间范围}}') {
   return withTopicTotalMerge(`帮我对【${v.question}】在【${v.sources.join('、')}】进行专题日报调研，统计【${range}】内的新披露${v.requirements ? `，并满足【${v.requirements}】` : ''}。保存到飞书云盘【专题调研】对应专题的【日报】目录，每期一份独立报告，不覆盖其他日期的日报。关键信息注明来源链接和日期，并呈现本次更新摘要。`);

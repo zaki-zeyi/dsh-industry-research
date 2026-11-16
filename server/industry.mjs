@@ -1,3 +1,4 @@
+import { documentRemoved, documentDeletionState } from './document-deletion-state.mjs';
 import { larkExec as defaultExec, runLark } from './lark-cli.mjs';
 import { companyReceiptSchema } from './agent-delivery.mjs';
 import { z } from 'zod';
@@ -24,7 +25,7 @@ export function libraryKey(root, app) {
 }
 export function library(store, root, app) {
   const key=libraryKey(root,app), token=rootToken(root), exact=store.setting(key);
-  if(exact)return exact;
+  if(exact)return {...exact,companies:exact.companies.filter(c=>!documentRemoved(store,root,app,c.url))};
   const legacy=token && store.setting(libraryNamespaceKey(root,app));
   if(legacy){
     // Old releases did not always stamp the root. Recover only when task
@@ -33,14 +34,14 @@ export function library(store, root, app) {
       && t.feishuRoot?.folderToken && (legacy.manifestUrl && (t.industryLibrary?.manifestUrl===legacy.manifestUrl || t.analysisSources?.manifestUrl===legacy.manifestUrl)
         || legacy.companies?.some(c=>c.url===t.publication?.url))).map(t=>t.feishuRoot.folderToken));
     const provenRoot=legacy.rootFolderToken ?? (roots.size===1?[...roots][0]:null);
-    if(provenRoot===token)return store.saveSetting(key,{...legacy,rootFolderToken:token});
+    if(provenRoot===token){store.saveSetting(key,{...legacy,rootFolderToken:token});return library(store,root,app);}
   }
   return {companies:[],folderToken:null};
 }
 export function industryPrompt(input) {
   return `帮我对【${input.companies.join('、')}】在【${input.sources.join('、')}】进行【${input.dimensions.join('、')}】的调研${input.requirements ? `，并满足【${input.requirements}】` : ''}，按维度就地合并到飞书云盘【全量信息库】对应公司文档，不新增“增量更新”章节。并呈现本次更新摘要。`;
 }
-export function mergeCompanyDelivery(store, task, delivery) {
+export function mergeCompanyDelivery(store, task, delivery, {preserveExisting=false}={}) {
   const research = task.industry ?? task.briefing ?? task.internal?.research;
   if (!research || !delivery.libraryFolderToken) return;
   const key = libraryKey(task.feishuRoot, task.feishuApp), current = library(store, task.feishuRoot, task.feishuApp);
@@ -49,6 +50,7 @@ export function mergeCompanyDelivery(store, task, delivery) {
   if (!delivery.libraryFolderToken) throw new Error('缺少全量信息库目录 ID');
   const names = new Set(); const urls = new Set();
   for (const c of delivery.companies ?? []) {
+    if(documentDeletionState(store,task.feishuRoot,task.feishuApp,c.url))throw new Error('公司资料已删除或正在删除，旧回执不能恢复文档');
     if (!research.companies.includes(c.name) || names.has(c.name) || urls.has(c.url)) throw new Error('公司交付包含未请求公司或重复文档');
     const previous = current.companies.find(v => v.name === c.name);
     if (previous && previous.url !== c.url) throw new Error('已收录公司必须更新原文档，禁止重复创建');
@@ -56,7 +58,7 @@ export function mergeCompanyDelivery(store, task, delivery) {
     names.add(c.name); urls.add(c.url);
   }
   const byName = new Map(current.companies.map(c => [c.name, c]));
-  for (const c of delivery.companies ?? []) byName.set(c.name, { ...c, dimensions: [...new Set([...(byName.get(c.name)?.dimensions ?? []), ...c.dimensions])], updatedAt: c.updatedAt ?? new Date().toISOString(), taskId: task.id });
+  for (const c of delivery.companies ?? []) {if(preserveExisting&&byName.has(c.name))continue;byName.set(c.name, { ...c, dimensions: [...new Set([...(byName.get(c.name)?.dimensions ?? []), ...c.dimensions])], updatedAt: c.updatedAt ?? new Date().toISOString(), taskId: task.id });}
   store.saveSetting(key, { rootFolderToken:rootToken(task.feishuRoot), folderToken: delivery.libraryFolderToken, manifestUrl: delivery.manifestUrl ?? current.manifestUrl, companies: [...byName.values()] });
 }
 export function companyTaskInput(input) { const v = industryInputSchema.parse(input); return { direction: `更新全量信息库 · ${v.companies.length} 家公司`, sources: v.sources.join('、'), prompt: v.prompt ?? industryPrompt(v), industry: v }; }
@@ -193,10 +195,11 @@ export async function importLibrary(store, root, app, run = defaultExec, { comma
   if (imported === undefined) {
     ({ imported, indexFound, manifestUrl, libraryFolderToken, listing } = await discoverLibrary(run, app, root, { command, libraryFolderToken: selectedToken }));
   }
+  imported=imported.filter(c=>!documentRemoved(store,root,app,c.url));
   const syncedAt = new Date().toISOString();
   const latest=library(store,root,app);
   if(latest.manifestUrl!==current.manifestUrl||latest.folderToken!==current.folderToken)throw new LibraryRefreshError('LIBRARY_CHANGED','同步期间公司目录已变化，请刷新重试',409);
-  const companies = mergeImportedCompanies(store, root, app, current.companies, latest.companies, imported);
+  const companies = mergeImportedCompanies(store, root, app, current.companies, latest.companies, imported).filter(c=>!documentRemoved(store,root,app,c.url));
   const saved = store.saveSetting(key, {
     ...current,
     folderToken: libraryFolderToken ?? null,
@@ -243,7 +246,7 @@ export async function refreshLibrary(store, root, app, run = defaultExec, { comm
   const latest = library(store, root, app);
   if (latest.manifestUrl !== current.manifestUrl || latest.folderToken !== current.folderToken) throw new LibraryRefreshError('LIBRARY_CHANGED', '同步期间公司索引已改变，请刷新重试；本地记录保留', 409);
   const localByName = new Map(latest.companies.map(c => [c.name, c]));
-  const companies = remote.map(c => {
+  const companies = remote.filter(c=>!documentRemoved(store,root,app,c.url)).map(c => {
     const local = localByName.get(c.name);
     if (local?.url===c.url && Date.parse(local.updatedAt) > Date.parse(c.updatedAt)) return local;
     const related = (local?.url===c.url ? local.taskId : undefined) ?? relatedTaskId(store,root,app,c.name,c.url);
@@ -252,5 +255,5 @@ export async function refreshLibrary(store, root, app, run = defaultExec, { comm
   const known = new Set(companies.map(c => c.name));
   // Keep only entries delivered during this request, not remotely removed entries.
   for (const local of latest.companies) if (!known.has(local.name) && !current.companies.some(c => c.name === local.name && c.updatedAt === local.updatedAt)) companies.push(local);
-  return store.saveSetting(key, { ...latest, companies, syncedAt: new Date().toISOString() });
+  return store.saveSetting(key, { ...latest, companies:companies.filter(c=>!documentRemoved(store,root,app,c.url)), syncedAt: new Date().toISOString() });
 }

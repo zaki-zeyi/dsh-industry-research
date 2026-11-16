@@ -1,3 +1,5 @@
+import { DocumentDeletions } from './document-deletions.mjs';
+import { InternalReconciliation } from './internal-reconciliation.mjs';
 import { TopicDeletions } from './topic-deletions.mjs';
 import { TopicSchedules } from './topic-schedules.mjs';
 import {BriefingNotifications} from './briefing-notifications.mjs';
@@ -65,6 +67,8 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     service.topicDeletions = new TopicDeletions(service,{publicationRun});
     service.notifications = new BriefingNotifications(service);
     service.internalNotifications = new InternalMaterialNotifications(service);
+    service.internalReconciliation = new InternalReconciliation(service);
+    service.documentDeletions = new DocumentDeletions(service,{publicationRun});
     if (nativeSessions) await nativeSessions.reconcileWorkspace();
     recordTrace(store,'runtime.started',{status:'ready',phase:service.mode});
     service.recover();
