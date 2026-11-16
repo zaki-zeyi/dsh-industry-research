@@ -7,7 +7,7 @@ test('迁移后的PRD：日报周报和内部资料弹窗展示完整合并规�
     for(const mode of ['手动','定时']){
       await page.getByRole('button',{name:mode+'生成'+label,exact:true}).click();
       const dialog=page.getByRole('dialog'),prompt=dialog.getByLabel('任务 Prompt',{exact:false});
-      await expect(prompt).toHaveValue(/【全量信息库合并规则（强制）】/);
+      await expect(prompt).toHaveValue(/【全量信息库合并规则】/);
       await expect(prompt).toHaveValue(/重复、补充、状态更新、冲突、新增/);
       await expect(prompt).toHaveValue(/禁止把本次调研摘要整体追加到公司文档/);
       await dialog.getByLabel('其他要求',{exact:true}).fill('特别保留融资历史与人工备注');

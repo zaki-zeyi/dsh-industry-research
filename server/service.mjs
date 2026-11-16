@@ -215,6 +215,7 @@ export class ResearchService {
   }
   rememberBriefing(t, delivery) {
     if (!t.briefing) return;
+    assertDocumentAvailable(this,t);
     if (delivery.noUpdates && delivery.partial) throw new Error('资料缺口不能标记为全部无更新');
     if (delivery.status === 'published' && !delivery.noUpdates && !delivery.partial && (!delivery.libraryFolderToken || !delivery.manifestUrl || !delivery.companies?.length)) throw new Error('日报/周报尚未完成全量信息库增量同步');
     const key=briefingKey(t), prior=this.store.setting(key) ?? {};
@@ -334,7 +335,7 @@ export class ResearchService {
   recover() {
     const notificationsToRetry = [];
     for (const t of this.store.list()) {
-      if(t.internal){try{assertDocumentAvailable(this,t);}catch{continue;}}
+      try{assertDocumentAvailable(this,t);}catch{continue;}
       if(t.topic){try{assertTopicAvailable(this,t.topic,t.feishuRoot,t.feishuApp);}catch{continue;}}
       if((t.briefing||t.internal||t.topic?.window)&&t.notification?.status==='sending'){t.notification={...t.notification,status:'failed',error:'服务重启，通知结果待核对；报告已保留，可重试通知。'};this.store.save(t);}
       if (t.status === 'queued') this.enqueue(t.id, 'research');

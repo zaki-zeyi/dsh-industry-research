@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { libraryKey, listDriveFolder } from './industry.mjs';
 import { LibraryRefreshError } from './library-errors.mjs';
 import { matchingFolders, driveToken } from './folder-identity.mjs';
+import { documentRemoved } from './document-deletion-state.mjs';
 
 const labels = { daily: '日报', weekly: '周报', topic: '专题调研库' };
 const isDocument = file => ['docx', 'doc'].includes(file.type) && /^https:\/\//.test(file.url ?? '');
@@ -27,7 +28,7 @@ export async function cloudPublications(service, kind, { refresh = false, run } 
   const directoryName = service.store.setting('internal-directory-name') ?? '内部资料';
   const key = publicationCacheKey(root, app, kind, directoryName);
   const cached = service.store.setting(key) ?? { items: [] };
-  if (!refresh || !service.cloudOnly || !root.folderToken) return cached;
+  if (!refresh || !service.cloudOnly || !root.folderToken) return {...cached,items:cached.items.filter(t=>!documentRemoved(service.store,root,app,t.publication?.url))};
   const list = async token => {
     const result = await listDriveFolder(run, app, token, { command: service.binding?.command });
     if (result.truncated) throw new LibraryRefreshError('LIBRARY_TOO_LARGE', '飞书目录过大，本地记录已保留；请缩小目录后刷新');
@@ -54,7 +55,7 @@ export async function cloudPublications(service, kind, { refresh = false, run } 
   if (publicationCacheKey(service.feishuSettings(), service.binding?.applicationSnapshot?.(), kind, service.store.setting('internal-directory-name') ?? '内部资料') !== key)
     throw new LibraryRefreshError('LIBRARY_CHANGED', '同步期间飞书应用或目录已变化，请重新刷新', 409);
 
-  const result = { items, syncedAt: new Date().toISOString() };
+  const result = { items:items.filter(t=>!documentRemoved(service.store,root,app,t.publication?.url)), syncedAt: new Date().toISOString() };
   service.store.saveSetting(key, result);
   return result;
 }

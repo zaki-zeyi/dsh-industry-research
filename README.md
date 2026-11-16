@@ -1,5 +1,7 @@
 # dsh-industry-research · 行研工作台
 
+0.13.0：补齐友商分析删除，新增日报、周报删除；确认具体报告后移入飞书回收站，保留公司资料和定时配置，删除后刷新不恢复旧卡片。对齐 PRD4896 的去重合并措辞及状态来源规则。
+
 0.12.1：对齐迁移后的 PRD，日报、周报、内部资料及专题日报统一强制条目级合并，保留事实历史与来源，禁止将摘要整段追加到公司文档或专题总报；旧定时配置自动兼容。
 
 0.12.0：公司资料与内部资料支持确认后移入飞书回收站；专题总报名为“XXX专题调研总报”。修复内部资料已增量成功却因回执字段遗漏显示失败，支持读回核对并恢复旧记录。
@@ -20,7 +22,7 @@
 
 0.9.0 新增专题调研（PRD 修订版 325）：按问题发起调研，自定义 Prompt，保存至飞书「专题调研库」，并为每个专题独立设置日报。详见 [专题调研说明](docs/topics-0.9.0.md)。
 
-基于飞书[《行研平台prd》](https://zcnnosk3k1j9.feishu.cn/wiki/DClUwzIndiJ5i3kFWgmcECkQnYc)修订版 4821 的 DeepSeek Harness 插件，在独立命名空间内提供公司全量信息库、日报/周报、内部资料、友商分析与专题调研。开发源码位于 `main`；`release` 分支与 `main` 共享同一条历史，内容为源码目录（不含 `.github`）叠加经 CI 验证的预构建安装产物，安装包仍按 `files` 只包含产品代码、页面、文档和运行期脚本。
+基于飞书[《行研平台prd》](https://zcnnosk3k1j9.feishu.cn/wiki/DClUwzIndiJ5i3kFWgmcECkQnYc)修订版 4896 的 DeepSeek Harness 插件，在独立命名空间内提供公司全量信息库、日报/周报、内部资料、友商分析与专题调研。开发源码位于 `main`；`release` 分支与 `main` 共享同一条历史，内容为源码目录（不含 `.github`）叠加经 CI 验证的预构建安装产物，安装包仍按 `files` 只包含产品代码、页面、文档和运行期脚本。
 
 0.8.15 更新：开发与安装共用根包清单，版本/依赖变更不再引发固定合并冲突；修复原生会话重试完成后任务仍显示失败的状态同步问题。详见 [发布说明](docs/release-0.8.15.md)。
 
@@ -92,7 +94,7 @@ npm run plugin:pack
 
 ## 安装
 
-当前源码版本为 **0.12.1**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
+当前源码版本为 **0.13.0**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
 Windows、macOS 桌面版以及网页版，均可在 DSH「添加插件」填写：
 
