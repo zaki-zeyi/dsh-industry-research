@@ -1,7 +1,7 @@
 import { saveHostSchedule, removeHostSchedule, scheduleFailure } from './host-schedule.mjs';
 import { z } from 'zod';
 import { topicInput, topicTask, topicScope, assertTopicAvailable } from './topics.mjs';
-import { normalizeTopicPrompt } from './topic-defaults.mjs';
+import { withTopicTotalMerge } from './topic-defaults.mjs';
 import { previousScheduleRun, scheduleTiming } from './briefings.mjs';
 export const topicScheduleInput=z.object({time:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),enabled:z.boolean().default(true),research:topicInput}).strict();
 export class TopicSchedules {
@@ -9,10 +9,10 @@ export class TopicSchedules {
   get schedule(){return typeof this.host?.get==='function'?this.host.get('schedule'):this.host?.schedule;}
   scope(){return topicScope(this.service.feishuSettings(),this.service.binding?.applicationSnapshot?.());}
   all(){return this.service.store.setting('topic-schedules')??{};}
-  get(id){const p=this.all()[this.scope()+':'+id]??{topicId:id,time:'09:00',enabled:false};return {...p,...(p.research?.prompt?{research:{...p.research,prompt:normalizeTopicPrompt(p.research.prompt)}}:{}),...(p.enabled?scheduleTiming({...p,kind:'daily'}):{nextRunAt:null}),available:Boolean(this.schedule)};}
+  get(id){const p=this.all()[this.scope()+':'+id]??{topicId:id,time:'09:00',enabled:false};return {...p,...(p.research?.prompt?{research:{...p.research,prompt:withTopicTotalMerge(p.research.prompt)}}:{}),...(p.enabled?scheduleTiming({...p,kind:'daily'}):{nextRunAt:null}),available:Boolean(this.schedule)};}
   save(id,input){const scope=this.scope(),job=this.chain.then(()=>this.commit(id,input,scope));this.chain=job.catch(()=>{});return job;}
   async commit(id,input,scope){
-    z.string().uuid().parse(id);const v=topicScheduleInput.parse(input);if(v.research.prompt)v.research.prompt=normalizeTopicPrompt(v.research.prompt);
+    z.string().uuid().parse(id);const v=topicScheduleInput.parse(input);if(v.research.prompt)v.research.prompt=withTopicTotalMerge(v.research.prompt);
     assertTopicAvailable(this.service,{topicId:id});
     if(scope!==this.scope())throw Object.assign(new Error('飞书目录或账号已变化，请重新设置'),{status:409});
     if(!this.schedule)throw Object.assign(new Error('当前宿主未启用官方 Schedule 服务'),{status:503});

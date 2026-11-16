@@ -7,3 +7,19 @@ export const libraryMergeRules = `
 禁止在文档末尾新增“增量更新”“本次更新”“同日复述”“调研摘要”等整体章节；禁止把本次调研摘要整体追加到公司文档。
 修改完成后重新读取受影响的章节，核对重复、结构、时间顺序和来源完整性；确认后才更新公司索引的 added/conflicts 并回传。
 `;
+
+export const topicMergeRules = libraryMergeRules
+  .replace('【全量信息库合并规则（强制）】', '【专题总报合并规则（强制）】')
+  .replaceAll('公司文档', '专题总报')
+  .replace('也禁止写入日报/周报正文', '也禁止写入专题日报正文')
+  .replace('禁止把本次调研摘要整体追加到专题总报', '禁止把本次调研摘要或专题日报整体追加到专题总报')
+  .replace('确认后才更新公司索引的 added/conflicts 并回传', '确认后才回传已合并的总报链接 topicTotalUrl');
+
+// Defaults, saved schedules and runtime instructions use the same complete
+// policy. A custom prompt containing only its heading must not bypass it.
+export function withLibraryMergeRules(prompt) {
+  return prompt.includes(libraryMergeRules.trim()) ? prompt : prompt + libraryMergeRules;
+}
+export function withTopicMergeRules(prompt) {
+  return prompt.includes(topicMergeRules.trim()) ? prompt : prompt + topicMergeRules;
+}

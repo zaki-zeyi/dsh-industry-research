@@ -18,7 +18,7 @@ test('FR05 配置校验、可编辑 Prompt、日报完整自然日及互斥任�
  assert.match(topicPrompt(input),/专题调研/);assert.match(topicPrompt(input),/来源链接和日期/);
  assert.throws(()=>createSchema.parse({...t,industry:{companies:['A'],dimensions:['产品'],sources:['官网']}}));
  const p=cloudPrompt({...t,feishuApp:{},publication:{}},{deliveryPath:'/tmp/receipt',deliveryRequestId:id,writeClientPath:'/tmp/lock',writeConfigPath:'/tmp/config'});
- assert.match(p,/保存锁/);assert.match(p,/资料不足/);assert.match(p,/每期日报一个独立文档/);assert.match(p,/每日日报信息去重增量保存到【本专题调研】的总报/);assert.match(p,/禁止整篇替换/);assert.match(p,/两份文档都读回/);assert.equal(t.topic.totalMergeRequired,true);assert.match(p,/不存本地正文/);
+ assert.match(p,/保存锁/);assert.match(p,/资料不足/);assert.match(p,/每期日报一个独立文档/);assert.match(p,/每日日报信息去重增量合并保存到【本专题调研】的总报/);assert.match(p,/禁止整篇替换/);assert.match(p,/两份文档都读回/);assert.equal(t.topic.totalMergeRequired,true);assert.match(p,/不存本地正文/);
 });
 test('FR05 专题交付保护目录和已有文档，保留部分成果',()=>{
  const values=new Map(),service={store:{setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v)}};
@@ -132,7 +132,7 @@ test('PRD497 日报必须确认总报合并，拒绝漏合并、换总报和总�
 test('PRD497 旧版自定义日报提示自动补充增量合并，不重复追加，不改手动总报',()=>{
  const custom='自定义研究要求：关注融资；不覆盖总报或其他日期的日报。';
  const upgraded=withTopicTotalMerge(custom);assert.match(upgraded,/自定义研究要求：关注融资/);assert.doesNotMatch(upgraded,/不覆盖总报/);assert.equal(withTopicTotalMerge(upgraded),upgraded);
- assert.match(topicDailyPrompt(input),/每日日报信息去重增量保存到【本专题调研】的总报/);
+ assert.match(topicDailyPrompt(input),/每日日报信息去重增量合并保存到【本专题调研】的总报/);
  const task=topicTask({...input,prompt:custom},'2026-11-16T01:00:00Z');
  const prompt=cloudPrompt({...task,feishuApp:{},publication:{}},{deliveryPath:'/tmp/receipt',deliveryRequestId:id});
  assert.match(prompt,/自定义研究要求：关注融资/);assert.doesNotMatch(prompt,/不覆盖总报或/);assert.match(prompt,/topicTotalUrl/);
