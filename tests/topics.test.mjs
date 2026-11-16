@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { topicDailyPrompt, withTopicTotalMerge } from '../server/topic-defaults.mjs';
+import { topicDailyPrompt, withTopicTotalMerge, normalizeTopicPrompt } from '../server/topic-defaults.mjs';
 import { topicTask, topicPrompt, rememberTopic, topicScope, topicDocumentKey, topicFolderKey, topicDailyDocumentKey, topicCards } from '../server/topics.mjs';
 import { TopicSchedules } from '../server/topic-schedules.mjs';
 import { cloudPrompt } from '../server/cloud-research.mjs';
@@ -15,7 +15,7 @@ test('FR05 配置校验、可编辑 Prompt、日报完整自然日及互斥任�
  assert.throws(()=>topicTask({...input,question:''}));assert.throws(()=>topicTask({...input,sources:[]}));
  const t=topicTask({...input,topicId:id,prompt:'自定义任务，请特别关注产品性能'},new Date('2026-11-15T01:00:00Z'));
  assert.equal(t.topic.window.start,'2026-11-13T16:00:00.000Z');assert.equal(t.topic.topicId,id);assert.equal(t.prompt,'自定义任务，请特别关注产品性能');
- assert.match(topicPrompt(input),/专题调研/);assert.match(topicPrompt(input),/调研依据/);
+ assert.match(topicPrompt(input),/专题调研/);assert.match(topicPrompt(input),/来源链接和日期/);
  assert.throws(()=>createSchema.parse({...t,industry:{companies:['A'],dimensions:['产品'],sources:['官网']}}));
  const p=cloudPrompt({...t,feishuApp:{},publication:{}},{deliveryPath:'/tmp/receipt',deliveryRequestId:id,writeClientPath:'/tmp/lock',writeConfigPath:'/tmp/config'});
  assert.match(p,/保存锁/);assert.match(p,/资料不足/);assert.match(p,/每期日报一个独立文档/);assert.match(p,/每日日报信息去重增量保存到【本专题调研】的总报/);assert.match(p,/禁止整篇替换/);assert.match(p,/两份文档都读回/);assert.equal(t.topic.totalMergeRequired,true);assert.match(p,/不存本地正文/);
@@ -36,11 +36,11 @@ test('FR05 每专题独立官方日报、幂等、重启补发及目录切换隔
  const service={store:{setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v),request:k=>requests.get(k),runtimeLog(){}},feishuSettings:()=>root,binding:{applicationSnapshot:()=>({appId:'app'}),requireBound:async()=>({})},nativeSessions:{createHostSession:async()=>({sessionId:'session'}),bindSession:async()=>{}},briefingSchedules:{endpointFile:'/tmp/endpoint'},createAuthorized:async(t,key)=>{const task={...t,id:String(created.length)};created.push(task);requests.set(key,{task_id:task.id});return task;},require:id=>created.find(t=>t.id===id)};
  const host={sessionController:{resolveAgent:async()=>({agent:{session:{}}})},permissionPresets:{set(){}},schedule:{create:async(s,v)=>{const r={id:String(records.size),...v};records.set(r.id,r);return r;},delete:async({id})=>records.delete(id)}};
  const schedules=new TopicSchedules(service,host);
- await schedules.save(id,{time:'09:00',enabled:true,research:{...input,prompt:'调研 {{时间范围}} 内的最新进展'}});
+ await schedules.save(id,{time:'09:00',enabled:true,research:{...input,prompt:'调研 {{时间范围}} 内的最新进展。报告按照【调研问题】【调研结论】【调研依据】组织，特别关注算力成本。'}});
  assert.equal([...records.values()][0].daily.time_zone,'Asia/Shanghai');assert.match([...records.values()][0].prompt,/scope/);
  const scope=schedules.scope();const plan=values.get('topic-schedules')[scope+':'+id];plan.activatedAt='2026-11-13T00:00:00Z';
  await schedules.catchUpMissed(Date.parse('2026-11-15T02:00:00Z'));await schedules.catchUpMissed(Date.parse('2026-11-15T02:00:00Z'));
- assert.equal(created.length,1);assert.match(created[0].prompt,/2026-11-14/);assert.equal(created[0].topic.topicId,id);
+ assert.equal(created.length,1);assert.match(created[0].prompt,/2026-11-14/);assert.equal(created[0].topic.topicId,id);assert.doesNotMatch(created[0].prompt,/【调研问题】【调研结论】【调研依据】/);assert.match(created[0].prompt,/特别关注算力成本/);assert.doesNotMatch(schedules.get(id).research.prompt,/【调研问题】【调研结论】【调研依据】/);
  const other='22222222-2222-4222-8222-222222222222';await schedules.save(other,{time:'10:00',enabled:true,research:{...input,question:'另一个专题'}});
  assert.equal(schedules.get(id).time,'09:00');assert.equal(schedules.get(other).time,'10:00');
  root={rootName:'其他目录',folderToken:'Other'};assert.equal(schedules.get(id).enabled,false);await assert.rejects(schedules.trigger(id,{scope}),/切换/);
@@ -141,4 +141,20 @@ test('PRD497 旧版自定义日报提示自动补充增量合并，不重复追�
  delete task.topic.totalMergeRequired;
  const values=new Map(),service={store:{setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v)}};
  assert.doesNotThrow(()=>rememberTopic(service,{...task,feishuRoot:{rootName:'研究',folderToken:'Root'},feishuApp:{}},{status:'published',topicRootFolderToken:'Topics',topicFolderToken:'Topic',topicDailyFolderToken:'Daily',reportFolderToken:'Daily',url:'https://example.feishu.cn/docx/OldDay'}));
+});
+
+test('PRD501 专题不强制固定维度，旧模板在新任务和历史任务重试时自动兼容',()=>{
+ const meta={deliveryPath:'/tmp/receipt',deliveryRequestId:id};
+ for(const heading of ['调研问题','调研方向']){
+  const legacy=`重点研究算力成本。报告按照【${heading}】【调研结论】【调研依据】组织，每条依据紧跟来源链接和日期。自定义章节：市场规模、技术趋势。`;
+  const normalized=normalizeTopicPrompt(legacy);assert.equal(normalizeTopicPrompt(normalized),normalized);assert.doesNotMatch(normalized,/【调研(?:问题|方向)】【调研结论】【调研依据】/);assert.match(normalized,/自定义章节：市场规模、技术趋势/);
+  for(const when of [undefined,'2026-11-16T01:00:00Z']){
+   const task=topicTask({...input,prompt:legacy},when);assert.equal(task.prompt,normalized);assert.equal(task.topic.prompt,normalized);
+   // Retry of a task persisted by an earlier version bypasses topicTask.
+   const prompt=cloudPrompt({...task,prompt:legacy,feishuApp:{},publication:{}},meta);
+   assert.doesNotMatch(prompt,/【调研(?:问题|方向)】【调研结论】【调研依据】/);assert.match(prompt,/实际内容选择报告章节和维度/);assert.match(prompt,/保留原有事实、来源与人工内容/);assert.match(prompt,/重点研究算力成本/);
+  }
+ }
+ for(const prompt of [topicPrompt(input),topicDailyPrompt(input)])assert.doesNotMatch(prompt,/【调研结论】|【调研依据】/);
+ const custom='请按市场规模、竞争格局、技术趋势组织，并列出原始引用。';assert.equal(normalizeTopicPrompt(custom),custom);
 });
