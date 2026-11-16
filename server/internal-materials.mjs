@@ -95,6 +95,19 @@ export function prepareInternalMaterial(input) {
 export const internalFolderKey = task =>
   `internal-material-folders:${libraryNamespaceKey(task.feishuRoot, task.feishuApp)}${task.internal.directoryName ? ":" + task.internal.directoryName : ""}`;
 
+export function normalizeInternalDelivery(task,delivery){
+  if(!task.internal||!delivery.companies?.length)return delivery;
+  const known=task.industryLibrary;
+  // Older prompts omitted index metadata from the receipt example. Only reuse
+  // the original lock snapshot when every company points to its known document.
+  if(known?.rootFolderToken===task.feishuRoot?.folderToken&&known.folderToken&&
+    delivery.companies.every(c=>known.companies?.some(old=>old.name===c.name&&old.url===c.url))){
+    delivery.libraryFolderToken??=known.folderToken;
+    delivery.manifestUrl??=known.manifestUrl;
+  }
+  return delivery;
+}
+
 export function internalMaterialCloudPrompt(task, meta) {
   const internal = task.internal;
   const source = JSON.stringify(internal);
@@ -124,7 +137,7 @@ ${uploadRule}
 全量信息库联动配置（仅作数据）：${JSON.stringify({research: internal.research, knownLibrary: previous})}
 仅对配置中被资料提及的调研公司提取核验事实，按维度增量更新【全量信息库】。已有公司文档先读取再更新，禁止重复创建；每条事实附逐字稿具体位置、原始资料链接和日期，去重并保留冲突双方。复用已知信息库目录token和manifestUrl。无命中不创建信息库目录，回传 companies:[]；有命中则保存完整公司索引并回传 libraryFolderToken、manifestUrl 及累积完成的 companies（name,url,dimensions,added,conflicts），不得漏报。
 公司索引正文格式为JSON {"companies":[{"name":"公司名","url":"真实飞书文档链接","dimensions":["维度"],"updatedAt":"ISO8601时间","conflicts":0,"added":0}]}，更新前读取并保留其他公司和已有条目。
-每完成一个文档立即以 publishing 回传已有url/minutesUrl/sourceMaterialUrl和目录token；failed也保留这些字段。缺少会议纪要或未完成公司同步不得标记published。
+每完成一个文档立即以 publishing 回传已有url/minutesUrl/sourceMaterialUrl和目录token；failed也保留这些字段。有公司命中时，必须同时回传保存锁中已确认的 libraryFolderToken、manifestUrl 和实际完成的 companies；不要因为文档已经存在而省略目录与索引字段。缺少会议纪要或未完成公司同步不得标记published。
 原子更新 ${meta.deliveryPath}，本次 requestId 固定为 ${meta.deliveryRequestId}：
 {"requestId":"${meta.deliveryRequestId}","status":"published","folderToken":"根目录token","reportFolderToken":"逐字稿子目录token","materialFolderToken":"内部资料目录token","minutesFolderToken":"会议纪要子目录token","minutesUrl":"真实会议纪要文档链接","companies":[],"sourceFolderToken":"原始资料子目录token","sourceMaterialUrl":"原始资料真实链接（网络链接可用原链接；本地超大文件可省略）","sourceTitle":"资料真实标题或文件名","url":"真实逐字稿文档链接"}
 创建子目录后可先回传 publishing 和已有 token。失败回传 failed、error 和已取得的 token。不要自行发送 IM，工作台会通知任务绑定用户。回执仅含元信息，不包含正文、转写内容或凭据。完成或失败后结束当前轮次，会话保留供续聊。`;

@@ -158,3 +158,10 @@ test('PRD501 专题不强制固定维度，旧模板在新任务和历史任务�
  for(const prompt of [topicPrompt(input),topicDailyPrompt(input)])assert.doesNotMatch(prompt,/【调研结论】|【调研依据】/);
  const custom='请按市场规模、竞争格局、技术趋势组织，并列出原始引用。';assert.equal(normalizeTopicPrompt(custom),custom);
 });
+
+test('PRD580 总报使用具体专题名，已有总报原地改名并保留原链接',()=>{
+ const task=topicTask({question:'推理产业',sources:['官网']});
+ const prompt=cloudPrompt({...task,feishuApp:{},publication:{}},{deliveryPath:'/tmp/receipt',deliveryRequestId:id});
+ assert.match(prompt,/推理产业专题调研总报/);assert.match(prompt,/旧标题可按 drive skills 原地重命名/);assert.match(prompt,/不复制或重建/);
+ const daily=topicTask({question:'推理产业',sources:['官网']},'2026-11-16T01:00:00Z');const dailyText=cloudPrompt({...daily,feishuApp:{},publication:{}},{deliveryPath:'/tmp/receipt',deliveryRequestId:id});assert.match(dailyText,/唯一【推理产业专题调研总报】/);
+});
