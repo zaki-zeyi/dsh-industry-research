@@ -35,5 +35,5 @@ test('PRD4549 云端读取失败保留卡片并显示同步错误',async({page})
  await page.route('**/api/briefings?*',route=>route.fulfill({json:{items:[{id:'cloud-cache',remoteOnly:true,direction:'缓存周报',status:'ready',briefing:{kind:'weekly',window:{display:'缓存数据'}},publication:{status:'published',url:'https://example.feishu.cn/docx/Cached'}}],syncError:'飞书连接暂时不可用，缓存已保留'}}));
  await page.goto('/');await page.getByRole('button',{name:'周报',exact:true}).click();
  await expect(page.getByRole('heading',{name:'缓存周报'})).toBeVisible();
- await expect(page.getByRole('alert').filter({hasText:'缓存已保留'})).toBeVisible();
+ await expect(page.locator('.industry-content').getByRole('alert').filter({hasText:'缓存已保留'})).toBeVisible();
 });

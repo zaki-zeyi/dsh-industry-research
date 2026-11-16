@@ -1,3 +1,4 @@
+import { StorageOverview } from './StorageOverview.jsx';
 import { NotificationRetry } from './NotificationRetry.jsx';
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, ArrowUpRight, FileText, LoaderCircle, RefreshCw } from 'lucide-react';
@@ -18,7 +19,7 @@ const statusLabel = task => task.stage === 'waiting_save'
   ? '等待保存（其他任务正在写入）'
   : ({ ready: '已完成', failed: '失败', interrupted: '已中断', running: '解析中', queued: '排队中' })[task.status] ?? task.status;
 
-const syncedAtLabel = value => value ? new Intl.DateTimeFormat('zh-CN', { timeStyle: 'short', timeZone: 'Asia/Shanghai' }).format(new Date(value)) : '';
+
 
 function sourceDisplay(task) {
   const deliveredTitle = task.publication?.sourceTitle?.trim();
@@ -81,16 +82,13 @@ export function InternalMaterials({ config, onConfigChanged, onCreate, onOpen, o
       <div><h1>内部资料</h1><p>生成可核验逐字稿和会议纪要，自动更新公司信息库。</p></div>
       <button className="primary" onClick={onCreate}><FileText size={17}/>解析内部资料</button>
     </div>
-    <div className="industry-overview briefing-overview"><div className="industry-storage briefing-storage">
-      <span>存储位置 <button className="secondary" onClick={() => { setDirectoryName(config?.internalDirectoryName ?? '内部资料'); setEditingDirectory(true); }}>设置目录</button></span>
-      <strong>飞书云盘 / {config?.feishuRoot?.rootName ?? '行研工作台'} / {config?.internalDirectoryName ?? '内部资料'}</strong>
-      <small>下设原始资料、逐字稿和会议纪要 · 本地文件上传上限 100 MB{state.syncedAt ? <> · 上次同步 {syncedAtLabel(state.syncedAt)}</> : null}</small>
+    <StorageOverview path={'飞书云盘 / '+(config?.feishuRoot?.rootName??'行研工作台')+' / '+(config?.internalDirectoryName??'内部资料')} description="下设原始资料、逐字稿和会议纪要 · 本地文件上传上限 100 MB" syncedAt={state.syncedAt} action={<button className="secondary" onClick={()=>{setDirectoryName(config?.internalDirectoryName??'内部资料');setEditingDirectory(true);}}>设置目录</button>}>
       {editingDirectory && <form className="material-directory-settings" onSubmit={saveDirectory}>
         <label>内部资料目录名称<input required maxLength={120} value={directoryName} onChange={event => setDirectoryName(event.target.value)} disabled={savingDirectory}/></label>
         <small>新任务使用此目录；历史任务保留原目录和文档。</small>
         <div><button className="primary" disabled={savingDirectory}>{savingDirectory ? '保存中…' : '保存目录'}</button> <button type="button" className="secondary" disabled={savingDirectory} onClick={() => setEditingDirectory(false)}>取消</button></div>
       </form>}
-    </div></div>
+    </StorageOverview>
     <div className="industry-toolbar">
       <label className="industry-search"><input aria-label="搜索内部资料" placeholder="搜索内部资料" value={query} onChange={event => setQuery(event.target.value)}/></label>
       <button className="secondary" onClick={refresh} disabled={Boolean(state.syncing)} aria-busy={Boolean(state.syncing)}><RefreshCw size={15} className={state.syncing ? 'spin' : ''}/>刷新</button>

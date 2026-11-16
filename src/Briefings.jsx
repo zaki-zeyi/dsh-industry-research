@@ -1,3 +1,4 @@
+import { StorageOverview } from './StorageOverview.jsx';
 import { NotificationRetry } from './NotificationRetry.jsx';
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, ArrowUpRight, CalendarDays, LoaderCircle, RefreshCw } from 'lucide-react';
@@ -6,7 +7,7 @@ import { useTabEntry, useTabPolling } from './use-tab-store.js';
 
 async function api(path, options = {}) { const r = await fetch('/api/briefings' + path, { ...options, headers: { 'Content-Type': 'application/json' } }); const v = await r.json(); if (!r.ok) throw new Error(v.error); return v; }
 const statusLabel = task => task.stage === 'waiting_save' ? '等待保存（其他任务正在写入）' : ({ ready: '已完成', failed: '失败', interrupted: '已中断', queued: '排队中', running: '调研中' })[task.status] ?? task.status;
-const syncedAtLabel = value => value ? new Intl.DateTimeFormat('zh-CN', { timeStyle: 'short', timeZone: 'Asia/Shanghai' }).format(new Date(value)) : '';
+
 
 // One shared store: switching 日报 ↔ 周报 shows the target tab's own cache
 // instead of the previous tab's cards, and returning to a tab reuses it.
@@ -34,7 +35,7 @@ export function Briefings({ kind, config, onGenerate, onSchedule, onOpen, onRetr
   const pending = !items.length && (state.status !== 'ready' || Boolean(state.syncing));
   const error = state.syncError || state.error;
   const refresh = () => briefingsStore.refresh(key, loaders);
-  return <section className="industry-content"><p className="industry-eyebrow">INDUSTRY INTELLIGENCE / 02</p><div className="industry-heading"><div><h1>{name}</h1><p>按公司和维度掌握动态，随时回到原生会话继续研究。</p></div><div><button className="secondary" onClick={onSchedule}>定时生成{name}</button> <button className="primary" onClick={onGenerate}>手动生成{name}</button></div></div><div className="industry-overview briefing-overview"><div className="industry-storage briefing-storage"><span>存储位置</span><strong>飞书云盘 / {config?.feishuRoot?.rootName ?? '行研工作台'} / {name}</strong><small>北京时间 · {kind === 'daily' ? '前一个完整自然日' : '前七个完整自然日'} · 按披露日归档{state.syncedAt ? <> · 上次同步 {syncedAtLabel(state.syncedAt)}</> : null}</small></div></div><div className="industry-toolbar"><label className="industry-search"><input aria-label="搜索报告" placeholder="搜索报告" value={query} onChange={e => setQuery(e.target.value)}/></label><button onClick={refresh} disabled={Boolean(state.syncing)} aria-busy={Boolean(state.syncing)}><RefreshCw size={15} className={state.syncing ? 'spin' : ''}/>刷新</button></div>{error && <div className="industry-error" role="alert"><AlertCircle size={17}/>{error}<button onClick={refresh}>重试同步</button></div>}
+  return <section className="industry-content"><p className="industry-eyebrow">INDUSTRY INTELLIGENCE / 02</p><div className="industry-heading"><div><h1>{name}</h1><p>按公司和维度掌握动态，随时回到原生会话继续研究。</p></div><div><button className="secondary" onClick={onSchedule}>定时生成{name}</button> <button className="primary" onClick={onGenerate}>手动生成{name}</button></div></div><StorageOverview path={'飞书云盘 / '+(config?.feishuRoot?.rootName??'行研工作台')+' / '+name} description={'北京时间 · '+(kind==='daily'?'前一个完整自然日':'前七个完整自然日')+' · 按披露日归档'} syncedAt={state.syncedAt}/><div className="industry-toolbar"><label className="industry-search"><input aria-label="搜索报告" placeholder="搜索报告" value={query} onChange={e => setQuery(e.target.value)}/></label><button onClick={refresh} disabled={Boolean(state.syncing)} aria-busy={Boolean(state.syncing)}><RefreshCw size={15} className={state.syncing ? 'spin' : ''}/>刷新</button></div>{error && <div className="industry-error" role="alert"><AlertCircle size={17}/>{error}<button onClick={refresh}>重试同步</button></div>}
   {pending ? <div className="industry-empty"><LoaderCircle className="spin"/>正在读取{name}…</div> : <div className="industry-cards">{items.filter(t => t.direction.includes(query)).map(t => <article key={t.id} id={'task-card-' + t.id} tabIndex={-1} className="industry-company briefing-card">
   <div className="company-top"><span className="company-monogram"><CalendarDays size={18}/></span><span className={'task-status ' + t.status}>{statusLabel(t)}</span></div>
   <h2 title={t.direction}>{t.direction}</h2>
