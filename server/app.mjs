@@ -1,4 +1,5 @@
-import { topicTask, topicScope, topicDocumentKey, topicCards, topicInput } from './topics.mjs';
+import { topicDeletionInput } from './topic-deletions.mjs';
+import { topicTask, topicScope, topicDocumentKey, topicCards, topicInput, assertTopicAvailable } from './topics.mjs';
 import { cloudPublications, mergePublicationCards, publicationCacheKey } from './cloud-publications.mjs';
 import { createScopedSync } from './sync-once.mjs';
 import { briefingTask } from './briefings.mjs';
@@ -78,10 +79,19 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     const existing=topicCards(service,(await cloudPublications(service,'topic')).items).find(t=>t.topic.question===input.question);
     res.status(202).json(await service.createAuthorized(topicTask({...input,topicId:input.topicId??existing?.topic.topicId}),key));
   }catch(e){next(e);}});
+  app.get('/api/topics/:id/deletion',async(req,res,next)=>{try{
+    res.setHeader('Cache-Control','no-store');
+    const plan=await service.topicDeletions.preview(req.params.id,z.string().min(1).parse(req.query.scope));
+    res.json({...plan,targets:undefined});
+  }catch(e){next(e);}});
+  app.delete('/api/topics/:id',async(req,res,next)=>{try{
+    const result=await service.topicDeletions.remove(req.params.id,topicDeletionInput.parse(req.body));
+    res.status(result.status==='pending'?202:200).json(result);
+  }catch(e){next(e);}});
   app.get('/api/topics/:id/schedule',(req,res,next)=>{try{z.string().uuid().parse(req.params.id);res.json(service.topicSchedules.get(req.params.id));}catch(e){next(e);}});
   app.put('/api/topics/:id/schedule',async(req,res,next)=>{try{res.json(await service.topicSchedules.save(req.params.id,req.body));}catch(e){next(e);}});
   app.post('/api/topics/trigger/:id',async(req,res,next)=>{try{z.string().uuid().parse(req.params.id);const body=z.object({scope:z.string().min(1)}).strict().parse(req.body);res.status(202).json(await service.topicSchedules.trigger(req.params.id,body));}catch(e){next(e);}});
-  app.post('/api/topics/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);if(!t.topic?.window||t.status!=='ready')throw new ServiceError(409,'专题日报尚未完成');await service.notifications.send(t.id,{currentUser:true});res.json(service.require(t.id));}catch(e){next(e);}});
+  app.post('/api/topics/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);assertTopicAvailable(service,t.topic,t.feishuRoot,t.feishuApp);if(!t.topic?.window||t.status!=='ready')throw new ServiceError(409,'专题日报尚未完成');await service.notifications.send(t.id,{currentUser:true});res.json(service.require(t.id));}catch(e){next(e);}});
   app.get('/api/briefings', async (req,res,next) => { try { const kind = z.enum(['daily','weekly']).optional().parse(req.query.kind); const kinds = kind ? [kind] : ['daily','weekly']; const results=await Promise.all(kinds.map(k => readPublications(k,{refresh:req.query.refresh === 'true',force:req.query.force === 'true'}))); const remote=results.flatMap(v=>v.items); const local=service.store.list().filter(t => t.briefing && (!kind || t.briefing.kind === kind)).map(t => ({id:t.id,direction:t.direction,status:t.status,createdAt:t.createdAt,briefing:t.briefing,stage:t.stage,publication:t.publication,notification:t.notification})); res.json({items:mergePublicationCards(local,remote),syncError:results.find(v=>v.syncError)?.syncError,syncedAt:results.map(v=>v.syncedAt).filter(Boolean).sort().at(-1) ?? null}); } catch(error) { next(libraryReadError(error)); } });
   app.post('/api/briefings', async(req,res,next)=>{try {res.status(202).json(await service.createAuthorized(briefingTask(req.body),req.headers['idempotency-key']));}catch(e){next(e);}});
   app.post('/api/briefings/:id/notify',async(req,res,next)=>{try{const t=service.require(req.params.id);if(!t.briefing||t.status!=='ready')throw new ServiceError(409,'报告尚未完成');await service.notifications.send(t.id,{currentUser:true});res.json(service.require(t.id));}catch(e){next(e);}});

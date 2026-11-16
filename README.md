@@ -1,5 +1,7 @@
 # dsh-industry-research · 行研工作台
 
+0.11.0：专题卡片支持删除并确认范围；停止该专题日报后，将专题目录、总报及日报移入飞书回收站。异步删除可续查，删除后刷新不重新显示。
+
 0.10.3：专题报告按调研内容组织章节，移除旧版固定三段结构；已有日报配置及历史任务重试自动兼容，并保留自定义研究要求。
 
 0.10.2：专题存储信息栏与整卡点击体验优化；按 PRD497 将每日日报的新信息去重增量合并到本专题原总报，同时保留每期独立日报。已有日报定时配置自动兼容。
@@ -84,7 +86,7 @@ npm run plugin:pack
 
 ## 安装
 
-当前源码版本为 **0.10.3**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
+当前源码版本为 **0.11.0**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
 Windows、macOS 桌面版以及网页版，均可在 DSH「添加插件」填写：
 

@@ -76,3 +76,47 @@ test('PRD468 专题列表进入详情，分别展示总报与全部日期日报�
  await page.screenshot({path:'artifacts/prd497-topic-mobile.png',fullPage:true});
  await card.focus();await page.keyboard.press('Space');await expect(page.getByRole('heading',{name:question,exact:true})).toBeVisible();
 });
+
+for(const asynchronous of [false,true])test(`PRD519 删除专题确认、取消、整卡点击隔离与${asynchronous?'异步续查':'刷新竞态'}`,async({page})=>{
+ const topicId='33333333-3333-4333-8333-333333333333',question='删除流程验收专题';
+ const total={id:'delete-total',direction:'专题总报 · '+question,status:'ready',createdAt:'2026-11-16T01:00:00Z',topic:{topicId,question,workflowVersion:468},publication:{status:'published',url:'https://example.feishu.cn/docx/DeleteTotal'}};
+ const card={...total,totalReport:total,dailyReports:[],schedule:{enabled:true,time:'10:10'}};
+ let deleted=false,attempts=0,delayNext=false,waiting=false,release;
+ const gate=new Promise(resolve=>{release=resolve;});
+ const scope=(await(await page.request.get('/api/config')).json()).topicScope;
+ await page.route(/\/api\/topics(?:\?.*)?$/,async route=>{
+  const snapshot=deleted?[]:[card];if(delayNext){delayNext=false;waiting=true;await gate;}
+  await route.fulfill({json:{items:snapshot,syncedAt:new Date().toISOString()}});
+ });
+ await page.route('**/api/topics/'+topicId+'/deletion?*',route=>route.fulfill({json:{topicId,question,scope,confirmation:'a'.repeat(64),totalCount:1,dailyCount:2,status:'ready'}}));
+ await page.route('**/api/topics/'+topicId,async route=>{
+  expect(route.request().method()).toBe('DELETE');expect(route.request().postDataJSON()).toEqual({scope,confirmation:'a'.repeat(64),confirmed:true});attempts++;
+  if(asynchronous&&attempts===1)return route.fulfill({status:202,json:{status:'pending',message:'飞书正在处理删除，请稍后继续核对。'}});
+  deleted=true;await route.fulfill({json:{status:'deleted',topicId}});
+ });
+ await page.goto('/');await page.getByRole('button',{name:'专题调研',exact:true}).click();await expect(page.locator('.topic-card')).toHaveCount(1);
+ await page.getByRole('button',{name:'删除专题：'+question,exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'删除专题？'});await expect(dialog).toBeVisible();await expect(page.getByRole('heading',{level:1,name:question,exact:true})).toHaveCount(0);
+ await expect(dialog).toContainText('总报 1 份 · 日报 2 份');await expect(dialog).toContainText('飞书回收站');
+ await dialog.getByRole('button',{name:'取消',exact:true}).click();await expect(dialog).toHaveCount(0);expect(attempts).toBe(0);
+ if(!asynchronous){delayNext=true;await page.getByRole('button',{name:'刷新',exact:true}).click();await expect.poll(()=>waiting).toBe(true);}
+ await page.getByRole('button',{name:'删除专题：'+question,exact:true}).click();await expect(dialog.getByRole('button',{name:'确认删除',exact:true})).toBeEnabled();
+ await page.screenshot({path:'artifacts/prd519-topic-delete-confirm.png',fullPage:true});
+ await dialog.getByRole('button',{name:'确认删除',exact:true}).click();
+ if(asynchronous){await expect(dialog.getByRole('status')).toHaveText('飞书正在处理删除，请稍后继续核对。');await expect(page.locator('.topic-card')).toHaveCount(1);await dialog.getByRole('button',{name:'继续核对',exact:true}).click();}
+ await expect(dialog).toHaveCount(0);await expect(page.locator('.topic-card')).toHaveCount(0);release();
+ await page.getByRole('button',{name:'刷新',exact:true}).click();await expect(page.locator('.topic-card')).toHaveCount(0);
+ expect(attempts).toBe(asynchronous?2:1);
+ await page.screenshot({path:'artifacts/prd519-topic-deleted.png',fullPage:true});
+});
+
+test('PRD519 删除范围核对失败不能提交，可取消且不影响其他专题',async({page})=>{
+ const question='运行中的专题',topicId='44444444-4444-4444-8444-444444444444';let deletes=0;
+ await page.route(/\/api\/topics(?:\?.*)?$/,route=>route.fulfill({json:{items:[{id:'busy-topic',status:'running',topic:{topicId,question},totalReport:null,dailyReports:[]}],syncedAt:new Date().toISOString()}}));
+ await page.route('**/api/topics/'+topicId+'/deletion?*',route=>route.fulfill({status:409,json:{error:'该专题有调研正在执行，请完成后再删除'}}));
+ await page.route('**/api/topics/'+topicId,route=>{deletes++;return route.fulfill({json:{status:'deleted'}});});
+ await page.goto('/');await page.getByRole('button',{name:'专题调研',exact:true}).click();
+ await page.getByRole('button',{name:'删除专题：'+question,exact:true}).click();const dialog=page.getByRole('dialog');
+ await expect(dialog.getByRole('alert')).toContainText('调研正在执行');await expect(dialog.getByRole('button',{name:'确认删除',exact:true})).toBeDisabled();
+ await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);await expect(page.locator('.topic-card')).toHaveCount(1);expect(deletes).toBe(0);
+});

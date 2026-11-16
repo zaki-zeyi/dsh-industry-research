@@ -114,3 +114,12 @@ test('同步抛错时不清空缓存，也不在退避期内自动重试', async
   await store.open('daily', readers);
   assert.equal(calls, 2);
 });
+
+test('删除卡片使先前缓存读取和远端刷新失效，迟到响应不会恢复卡片',async()=>{
+ const store=createTabStore(),gate=deferred(),ready={items:[card('remove'),card('keep')],syncedAt:new Date().toISOString()};
+ await store.open('topics',{cached:async()=>ready,sync:async()=>ready});
+ const syncing=store.refresh('topics',{sync:()=>gate.promise});await tick();
+ store.removeItem('topics','remove');assert.deepEqual(ids(store.get('topics')),['keep']);
+ await store.reload('topics',{cached:async()=>({items:[card('keep')],syncedAt:ready.syncedAt})});
+ gate.resolve(ready);await syncing;assert.deepEqual(ids(store.get('topics')),['keep']);
+});

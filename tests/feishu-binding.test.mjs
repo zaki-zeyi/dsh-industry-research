@@ -167,3 +167,12 @@ test('未绑定时遗留扫码窗口给出明确的取消提示', async () => {
   try { await assert.rejects(binding.requireBound(), e => e.status === 428 && /二维码仍在等待扫码/.test(e.message)); }
   finally { binding.close(); }
 });
+
+test('PRD519 删除权限为可选能力，旧绑定仍可调研，已有授权时标记可删除',async()=>{
+ assert.ok(requiredScopes.includes('space:document:delete'));assert.ok(optionalScopes.includes('space:document:delete'));
+ const without=requiredScopes.filter(s=>s!=='space:document:delete').join(' ');
+ for(const [scope,expected] of [[without,false],[requiredScopes.join(' '),true]]){
+  const binding=new FeishuBinding({run:async()=>status(true,scope)});
+  try{const state=await binding.requireBound();assert.equal(state.bound,true);assert.equal(state.deletionReady,expected);}finally{binding.close();}
+ }
+});

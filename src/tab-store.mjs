@@ -139,11 +139,13 @@ export function createTabStore({ freshMs = FRESH_MS, retryMs = RETRY_MS, now = (
     if (!value?.id) return;
     write(key, { items: current.items.map(item => item.id === id ? { ...item, ...value } : item) });
   }
+  // Invalidate in-flight reads so an earlier refresh cannot resurrect a deleted card.
+  function removeItem(key,id){const current=read(key);write(key,{epoch:current.epoch+1,items:current.items.filter(item=>item.id!==id),opening:null,syncing:null});}
 
   function get(key) { return read(key); }
   function subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); }
   function isFresh(key, at = now()) { return !isStale(read(key), at); }
   function reset() { entries.clear(); for (const listener of [...listeners]) listener(''); }
 
-  return { get, subscribe, open, reload, refresh: (key, loaders) => sync(key, loaders, { force: true }), replaceItem, isFresh, reset };
+  return { get, subscribe, open, reload, refresh: (key, loaders) => sync(key, loaders, { force: true }), replaceItem, removeItem, isFresh, reset };
 }
