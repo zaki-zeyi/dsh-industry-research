@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { topicDailyPrompt, withTopicTotalMerge } from '../server/topic-defaults.mjs';
 import { topicTask, topicPrompt, rememberTopic, topicScope, topicDocumentKey, topicFolderKey, topicDailyDocumentKey, topicCards } from '../server/topics.mjs';
 import { TopicSchedules } from '../server/topic-schedules.mjs';
 import { cloudPrompt } from '../server/cloud-research.mjs';
@@ -17,7 +18,7 @@ test('FR05 配置校验、可编辑 Prompt、日报完整自然日及互斥任�
  assert.match(topicPrompt(input),/专题调研/);assert.match(topicPrompt(input),/调研依据/);
  assert.throws(()=>createSchema.parse({...t,industry:{companies:['A'],dimensions:['产品'],sources:['官网']}}));
  const p=cloudPrompt({...t,feishuApp:{},publication:{}},{deliveryPath:'/tmp/receipt',deliveryRequestId:id,writeClientPath:'/tmp/lock',writeConfigPath:'/tmp/config'});
- assert.match(p,/保存锁/);assert.match(p,/资料不足/);assert.match(p,/每期日报一个独立文档/);assert.match(p,/不存本地正文/);
+ assert.match(p,/保存锁/);assert.match(p,/资料不足/);assert.match(p,/每期日报一个独立文档/);assert.match(p,/每日日报信息去重增量保存到【本专题调研】的总报/);assert.match(p,/禁止整篇替换/);assert.match(p,/两份文档都读回/);assert.equal(t.topic.totalMergeRequired,true);assert.match(p,/不存本地正文/);
 });
 test('FR05 专题交付保护目录和已有文档，保留部分成果',()=>{
  const values=new Map(),service={store:{setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v)}};
@@ -65,7 +66,7 @@ test('FR05 专题日报消息包含问题，通知幂等且失败保留报告',a
 });
 test('PRD468 总报与两期日报分别保存，重试复用本期且拒绝覆盖',()=>{
  const values=new Map(),tasks=[],service={store:{setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v),list:()=>tasks}};
- const base={feishuRoot:{rootName:'研究',folderToken:'Root'},feishuApp:{appId:'App'}},receipt={status:'published',folderToken:'Root',topicRootFolderToken:'Topics',topicFolderToken:'Topic',topicDailyFolderToken:'Daily'};
+ const base={feishuRoot:{rootName:'研究',folderToken:'Root'},feishuApp:{appId:'App'}},receipt={status:'published',folderToken:'Root',topicRootFolderToken:'Topics',topicFolderToken:'Topic',topicDailyFolderToken:'Daily',topicTotalUrl:'https://example.feishu.cn/docx/Total'};
  const total={...topicTask({...input,topicId:id}),...base,id:'total',publication:{url:'https://example.feishu.cn/docx/Total'}};
  rememberTopic(service,total,{...receipt,reportFolderToken:'Topic',url:total.publication.url});tasks.push(total);
  const day1={...topicTask({...input,topicId:id},new Date('2026-11-15T01:00:00Z')),...base,id:'day1',publication:{url:'https://example.feishu.cn/docx/Day1'}};
@@ -108,4 +109,36 @@ test('专题日报使用新版官方 Schedule 请求，更新失败保留原任�
  rejectSave=true;await assert.rejects(plans.save(id,{time:'11:00',research:input}),e=>e.status===503&&!e.message.includes('private'));
  assert.equal(plans.get(id).time,'10:10');assert.equal(plans.get(id).enabled,true);assert.equal(plans.get(id).record.id,'official-task');
  rejectSave=false;await plans.save(id,{time:'11:00',research:input});assert.deepEqual(calls,['create','update','update']);assert.equal(plans.get(id).time,'11:00');assert.equal(records.size,1);
+});
+
+test('PRD497 日报必须确认总报合并，拒绝漏合并、换总报和总报日报同链，失败保留链接',()=>{
+ const values=new Map(),tasks=[],service={store:{list:()=>tasks,setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v)},feishuSettings:()=>({rootName:'研究',folderToken:'Root'}),binding:{applicationSnapshot:()=>({})}};
+ const task={...topicTask({...input,topicId:id},'2026-11-16T01:00:00Z'),id:'daily-first',createdAt:'2026-11-16T01:00:00Z',status:'ready',nativeSessionId:'session-daily',feishuRoot:service.feishuSettings(),feishuApp:{}};
+ const receipt={status:'published',topicRootFolderToken:'Topics',topicFolderToken:'Topic',topicDailyFolderToken:'Daily',reportFolderToken:'Daily',url:'https://example.feishu.cn/docx/Day'};
+ assert.throws(()=>rememberTopic(service,task,receipt),/尚未确认/);assert.equal(values.has(topicDailyDocumentKey(task)),false);
+ assert.throws(()=>rememberTopic(service,task,{...receipt,topicTotalUrl:receipt.url}),/分别保存/);
+ const totalUrl='https://example.feishu.cn/docx/Total';
+ rememberTopic(service,task,{...receipt,status:'publishing',topicTotalUrl:totalUrl});
+ assert.equal(values.get(topicDocumentKey(task)).url,totalUrl);assert.equal(values.get(topicDailyDocumentKey(task)).url,receipt.url);
+ rememberTopic(service,task,{...receipt,status:'failed',topicTotalUrl:totalUrl,error:'总报读回失败'});
+ assert.equal(values.get(topicDocumentKey(task)).url,totalUrl);
+ assert.throws(()=>rememberTopic(service,task,{...receipt,topicTotalUrl:'https://example.feishu.cn/docx/NewTotal'}),/复用已有/);
+ assert.equal(values.get(topicDocumentKey(task)).url,totalUrl);
+ rememberTopic(service,task,{...receipt,topicTotalUrl:totalUrl});task.publication={...receipt,topicTotalUrl:totalUrl};tasks.push(task);
+ const card=topicCards(service,[])[0];assert.equal(card.totalReport.publication.url,totalUrl);assert.equal(card.totalReport.nativeSessionId,'session-daily');assert.equal(card.totalReport.topic.window,undefined);assert.equal(card.dailyReports.length,1);assert.notEqual(card.dailyReports[0].publication.url,card.totalReport.publication.url);
+ const next={...task,...topicTask({...input,topicId:id},'2026-11-17T01:00:00Z'),id:'daily-next'};
+ assert.throws(()=>rememberTopic(service,next,{...receipt,url:totalUrl,topicTotalUrl:totalUrl}),/分别保存/);
+});
+test('PRD497 旧版自定义日报提示自动补充增量合并，不重复追加，不改手动总报',()=>{
+ const custom='自定义研究要求：关注融资；不覆盖总报或其他日期的日报。';
+ const upgraded=withTopicTotalMerge(custom);assert.match(upgraded,/自定义研究要求：关注融资/);assert.doesNotMatch(upgraded,/不覆盖总报/);assert.equal(withTopicTotalMerge(upgraded),upgraded);
+ assert.match(topicDailyPrompt(input),/每日日报信息去重增量保存到【本专题调研】的总报/);
+ const task=topicTask({...input,prompt:custom},'2026-11-16T01:00:00Z');
+ const prompt=cloudPrompt({...task,feishuApp:{},publication:{}},{deliveryPath:'/tmp/receipt',deliveryRequestId:id});
+ assert.match(prompt,/自定义研究要求：关注融资/);assert.doesNotMatch(prompt,/不覆盖总报或/);assert.match(prompt,/topicTotalUrl/);
+ const manual=topicTask({...input,prompt:custom});assert.equal(manual.prompt,custom);assert.equal(manual.topic.totalMergeRequired,undefined);
+ // Runs created before this update keep their original receipt contract on restart.
+ delete task.topic.totalMergeRequired;
+ const values=new Map(),service={store:{setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v)}};
+ assert.doesNotThrow(()=>rememberTopic(service,{...task,feishuRoot:{rootName:'研究',folderToken:'Root'},feishuApp:{}},{status:'published',topicRootFolderToken:'Topics',topicFolderToken:'Topic',topicDailyFolderToken:'Daily',reportFolderToken:'Daily',url:'https://example.feishu.cn/docx/OldDay'}));
 });

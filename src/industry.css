@@ -400,4 +400,21 @@
 /* Topic report cards. */
 .topic-card h2{font-size:17px;line-height:1.5;overflow-wrap:anywhere}.topic-card footer{flex-wrap:wrap;gap:10px}
 .topic-open{background:none;border:0;padding:0;text-align:left;color:#294f3c;font-weight:600;line-height:1.6;overflow-wrap:anywhere}.topic-section-heading{margin:26px 0 18px}.topic-section-heading small{font-size:12px;color:#819077}.topic-report-card h3{line-height:1.7;font-size:17px;overflow-wrap:anywhere}
-.industry-overview.topic-overview{display:block}.topic-overview .industry-storage{width:100%;padding:0}.topic-overview .industry-storage strong{max-width:100%}
+.topic-storage{display:flex;align-items:center;gap:16px;padding:22px 24px;margin-bottom:28px;border:1px solid #e2e7dd;border-radius:10px;background:#fff}
+.topic-storage-icon{display:grid;place-items:center;flex-shrink:0;width:44px;height:44px;border-radius:10px;background:#eef3eb;color:#66825c}
+.topic-storage-location{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
+.topic-storage-location>span,.topic-storage-sync>span{font-size:11px;color:#84917e;line-height:1.5}
+.topic-storage-location strong{font-size:13px;font-weight:600;line-height:1.7;overflow-wrap:anywhere;color:#334a3b}
+.topic-storage-location small{font-size:11px;line-height:1.6;color:#8a9683}
+.topic-storage-sync{display:flex;flex-direction:column;gap:6px;flex-shrink:0;padding-left:24px;border-left:1px solid #edf0e7}
+.topic-storage-sync time{font-size:11px;line-height:1.6;color:#7c8975}
+.industry-shell .topic-card{display:flex;flex-direction:column;align-items:stretch;text-align:left;color:inherit;font:inherit;cursor:pointer;transition:border-color .2s,box-shadow .2s,transform .2s}
+.topic-card:hover{transform:translateY(-2px)}
+.topic-card-title{font-size:17px;font-weight:600;line-height:1.6;color:#294f3c;overflow-wrap:anywhere;margin-bottom:10px}
+.topic-card-meta{display:block;font-size:11px;line-height:1.8;color:#839078;margin-bottom:7px}
+.topic-card-footer{display:flex;align-items:center;gap:7px;margin:16px -22px 0;padding:14px 22px;border-top:1px solid #edf0e7;color:#66825a;font-size:11px}
+.topic-card .company-top{margin-bottom:18px}
+.topic-card .topic-card-footer{margin-top:auto}
+.topic-card-meta:has(+.topic-card-footer){margin-bottom:18px}
+@media(max-width:850px){.topic-storage{flex-wrap:wrap;align-items:flex-start;padding:18px;gap:12px}.topic-storage-location{flex-basis:calc(100% - 60px)}.topic-storage-sync{flex-basis:100%;flex-direction:row;flex-wrap:wrap;gap:8px;border-left:0;border-top:1px solid #edf0e7;padding:12px 0 0;margin-top:2px}}
+@media(prefers-reduced-motion:reduce){.industry-shell .topic-card{transition:none}.topic-card:hover{transform:none}}

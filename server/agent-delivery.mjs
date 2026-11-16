@@ -24,6 +24,7 @@ const industryReceipt = {
   topicRootFolderToken: folderTokenSchema.optional(),
   topicFolderToken: folderTokenSchema.optional(),
   topicDailyFolderToken: folderTokenSchema.optional(),
+  topicTotalUrl: z.string().max(2000).refine(v => feishuUrl(v), '必须是飞书专题总报链接').optional(),
   materialFolderToken: folderTokenSchema.optional(),
   minutesFolderToken: folderTokenSchema.optional(),
   minutesUrl: z.string().max(2000).refine(v => feishuUrl(v), '必须是飞书会议纪要链接').optional(),
