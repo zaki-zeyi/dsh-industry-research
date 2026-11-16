@@ -1,4 +1,4 @@
-import { TOPIC_FOLDER, topicDocumentKey, topicDailyDocumentKey, topicFolderKey } from './topics.mjs';
+import { TOPIC_FOLDER, topicDocumentKey, topicDailyDocumentKey, topicFolderKey, topicDeletionState } from './topics.mjs';
 import { createHash } from 'node:crypto';
 import { libraryKey, listDriveFolder } from './industry.mjs';
 import { LibraryRefreshError } from './library-errors.mjs';
@@ -100,6 +100,7 @@ async function readTopicPublications(service,{root,app,key,list,children}){
   }
   if(publicationCacheKey(service.feishuSettings(),service.binding?.applicationSnapshot?.(),'topic')!==key)throw new LibraryRefreshError('LIBRARY_CHANGED','同步期间专题目录或账号已变化，请刷新重试',409);
   for(const item of items){
+    if(topicDeletionState(service.store,root,app,item.topic.topicId,item.topicFolderToken,item.publication?.url))continue;
     const task={...item,feishuRoot:root,feishuApp:app};
     if(!item.topic.window&&item.publication.url)service.store.saveSetting(topicDocumentKey(task),{url:item.publication.url});
     if(item.topicFolderToken){

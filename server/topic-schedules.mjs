@@ -1,6 +1,6 @@
 import { saveHostSchedule, removeHostSchedule, scheduleFailure } from './host-schedule.mjs';
 import { z } from 'zod';
-import { topicInput, topicTask, topicScope } from './topics.mjs';
+import { topicInput, topicTask, topicScope, assertTopicAvailable } from './topics.mjs';
 import { normalizeTopicPrompt } from './topic-defaults.mjs';
 import { previousScheduleRun, scheduleTiming } from './briefings.mjs';
 export const topicScheduleInput=z.object({time:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),enabled:z.boolean().default(true),research:topicInput}).strict();
@@ -13,6 +13,7 @@ export class TopicSchedules {
   save(id,input){const scope=this.scope(),job=this.chain.then(()=>this.commit(id,input,scope));this.chain=job.catch(()=>{});return job;}
   async commit(id,input,scope){
     z.string().uuid().parse(id);const v=topicScheduleInput.parse(input);if(v.research.prompt)v.research.prompt=normalizeTopicPrompt(v.research.prompt);
+    assertTopicAvailable(this.service,{topicId:id});
     if(scope!==this.scope())throw Object.assign(new Error('飞书目录或账号已变化，请重新设置'),{status:409});
     if(!this.schedule)throw Object.assign(new Error('当前宿主未启用官方 Schedule 服务'),{status:503});
     if(v.enabled)await this.service.binding.requireBound();
@@ -21,6 +22,7 @@ export class TopicSchedules {
     let sessionId=old.sessionId;
     if(v.enabled&&!sessionId){sessionId=(await this.service.nativeSessions.createHostSession()).sessionId;const r=await this.host.sessionController.resolveAgent(sessionId);this.host.permissionPresets.set(r.agent.session,'danger-full-access');}
     if(v.enabled)await this.service.nativeSessions.bindSession(sessionId);
+    assertTopicAvailable(this.service,{topicId:id});
 
     const plan={...v,topicId:id,scope,sessionId,enabled:false};
     const persist=()=>this.service.store.saveSetting('topic-schedules',{...this.all(),[key]:plan});
@@ -35,12 +37,24 @@ export class TopicSchedules {
   }
   async trigger(id,{scope=this.scope(),scheduledFor=Date.now()}={}){
     if(scope!==this.scope())throw Object.assign(new Error('专题日报绑定的账号或目录已切换'),{status:409});
+    assertTopicAvailable(this.service,{topicId:id});
     const p=this.get(id);if(!p.enabled)throw Object.assign(new Error('专题日报未启用'),{status:409});
     const date=new Date(scheduledFor),key='topic:'+scope+':'+id+':'+new Date(date.getTime()+28800000).toISOString().slice(0,10);
     const old=this.service.store.request(key);if(old)return this.service.require(old.task_id);
     const input=topicTask({...p.research,topicId:id},date);
     if(p.research.prompt)input.prompt=p.research.prompt.replaceAll('{{时间范围}}',input.topic.window.display);
     return this.service.createAuthorized(input,key,{scheduled:{kind:'topic',scheduledFor:date.toISOString()}});
+  }
+  removeTopic(id,scope){
+    const job=this.chain.then(async()=>{
+      if(scope!==this.scope())throw Object.assign(new Error('飞书目录或账号已变化，请重新核对专题'),{status:409});
+      const key=scope+':'+id,old=this.all()[key];if(!old)return;
+      if(old.record){
+        if(!this.schedule)throw Object.assign(new Error('无法停止专题日报，请检查宿主自动化服务后重试'),{status:503});
+        try{await removeHostSchedule(this.schedule,old.sessionId,old.record.id);}catch{throw Object.assign(new Error('停止专题日报失败，尚未删除飞书文件，请重试'),{status:503});}
+      }
+      this.service.store.saveSetting('topic-schedules',{...this.all(),[key]:{...old,enabled:false,record:undefined,nextRunAt:null}});
+    });this.chain=job.catch(()=>{});return job;
   }
   async catchUpMissed(now=Date.now()){
     for(const p of Object.values(this.all())){if(!p.enabled||p.scope!==this.scope())continue;

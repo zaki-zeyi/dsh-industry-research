@@ -18,6 +18,7 @@ const keyFor = (parent, name, app) => 'feishu-directory:' + createHash('sha256')
   // application, display name, or the machine's old profile cache.
   parent || [app?.profile, app?.appId, app?.ownerOpenId], name,
 ])).digest('hex');
+export function forgetTopicDirectory(store,parent,name,token){if(parent&&name)store.deleteSetting(keyFor(parent,name,{}));if(token)store.deleteDirectoryToken(token);}
 
 export function uniqueFolder(files, name, knownToken) {
   return preferredFolder(files, name, knownToken);

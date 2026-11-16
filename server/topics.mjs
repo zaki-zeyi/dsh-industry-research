@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { libraryNamespaceKey } from './industry.mjs';
 import { cliFor } from './feishu-application.mjs';
 import { reportWindow } from './briefing-prompt.mjs';
+import { ServiceError } from './service-error.mjs';
 export const TOPIC_FOLDER = '专题调研';
 export const topicInput = z.object({
   question: z.string().trim().min(2).max(200).refine(v=>!/[\x00-\x1f\x7f]/.test(v),'调研方向不能包含控制字符'),
@@ -15,6 +16,22 @@ export const topicInput = z.object({
 }).strict();
 export const topicMetadata = topicInput.extend({ topicId: z.string().uuid(), workflowVersion:z.literal(468).optional(), totalMergeRequired:z.boolean().optional(), window: z.object({start:z.string(),end:z.string(),display:z.string()}).optional() });
 export const topicScope = (root, app) => libraryNamespaceKey(root, app) + ':' + (root.folderToken ?? root.folderUrl ?? '') + ':' + (app?.ownerOpenId ?? '');
+export const topicDeletionKey = (root,app,id) => 'topic-deletion:'+topicScope(root,app)+':'+id;
+export const topicDeletionResourceKey=(scope,resource)=>'topic-deletion-resource:'+scope+':'+resource;
+export function topicDeletionState(store,root,app,id,folder,url){
+  const direct=store.setting(topicDeletionKey(root,app,id));if(direct)return direct;
+  const scope=topicScope(root,app);
+  for(const resource of [folder,url].filter(Boolean)){
+    const key=store.setting(topicDeletionResourceKey(scope,resource));if(key){const value=store.setting(key);if(value)return value;}
+  }
+}
+export function assertTopicAvailable(service,topic,root,app){
+  if(!topic)return;
+  root??=service.feishuSettings();app??=service.binding?.applicationSnapshot?.();
+  const task={topic,feishuRoot:root,feishuApp:app};
+  const state=topicDeletionState(service.store,root,app,topic.topicId,service.store.setting(topicFolderKey(task))?.folderToken,service.store.setting(topicDocumentKey(task))?.url);
+  if(state)throw new ServiceError(409,state.status==='deleted'?'该专题已删除，请返回专题列表':'该专题正在删除或等待核对，请先完成删除');
+}
 export const topicRootKey = task => 'topic-root:' + topicScope(task.feishuRoot,task.feishuApp);
 export const legacyTopicFolderKey = task => 'topic-folder:' + topicScope(task.feishuRoot,task.feishuApp);
 export const topicFolderKey = task => 'topic-folder-v2:' + topicScope(task.feishuRoot,task.feishuApp)+':'+task.topic.topicId;
@@ -26,6 +43,7 @@ export function topicTask(input, now) {
 }
 export function rememberTopic(service,task,delivery) {
   if(!task.topic)return;
+  assertTopicAvailable(service,task.topic,task.feishuRoot,task.feishuApp);
   const modern=task.topic.workflowVersion===468;
   const key=modern?topicFolderKey(task):legacyTopicFolderKey(task),current=service.store.setting(key)??{};
   const expected=task.topic.window&&modern?current.dailyFolderToken:current.folderToken;
@@ -94,6 +112,7 @@ export function topicCards(service,remote){
     const folder=t.topicFolderToken??service.store.setting(topicFolderKey(t.feishuRoot?t:{...t,feishuRoot:service.feishuSettings(),feishuApp:service.binding?.applicationSnapshot?.()}))?.folderToken;
     let group=[...groups.values()].find(g=>g.topic.topicId===t.topic.topicId||(folder&&g.topicFolderToken===folder)||(!t.topic.window&&t.publication?.url&&g.totalReport?.publication?.url===t.publication.url));
     if(!group){group={...t,topicFolderToken:folder,totalReport:null,dailyReports:[],schedule:service.topicSchedules?.get(t.topic.topicId)};groups.set(t.topic.topicId,group);}
+    if(!group.topicFolderToken&&folder)group.topicFolderToken=folder;
     if(t.topic.workflowVersion===468&&t.topic.window){if(!group.dailyReports.some(d=>d.id===t.id||t.topic.window?.start&&d.topic.window?.start===t.topic.window.start||d.publication?.url&&d.publication.url===t.publication?.url))group.dailyReports.push(t);}
     else if(!group.totalReport&&(!t.remoteOnly||t.publication?.url))group.totalReport=t;
     else if(t.publication?.url===group.totalReport?.publication?.url&&group.totalReport?.remoteOnly&&!t.remoteOnly)group.totalReport=t;
@@ -108,5 +127,6 @@ export function topicCards(service,remote){
     g.totalReport={...g,...source,topic,direction:'专题总报 · '+topic.question,publication:{target:'feishu',status:total.status??'published',url:total.url},notification:undefined,remoteOnly:!source,nativeSessionId:source?.nativeSessionId};
     delete g.totalReport.totalReport;delete g.totalReport.dailyReports;delete g.totalReport.schedule;
   }
-  return [...groups.values()].map(g=>({...g,topic:{...g.topic,question:g.totalReport?.topic.question??g.topic.question},dailyReports:g.dailyReports.sort((a,b)=>String(b.topic.window?.start??b.createdAt??'').localeCompare(String(a.topic.window?.start??a.createdAt??'')))}));
+  const deletion=g=>topicDeletionState(service.store,service.feishuSettings(),service.binding?.applicationSnapshot?.(),g.topic.topicId,g.topicFolderToken,g.totalReport?.publication?.url);
+  return [...groups.values()].filter(g=>deletion(g)?.status!=='deleted').map(g=>({...g,deletion:deletion(g)?{status:'pending'}:undefined,topic:{...g.topic,question:g.totalReport?.topic.question??g.topic.question},dailyReports:g.dailyReports.sort((a,b)=>String(b.topic.window?.start??b.createdAt??'').localeCompare(String(a.topic.window?.start??a.createdAt??'')))}));
 }

@@ -1,3 +1,4 @@
+import { TopicDeletions } from './topic-deletions.mjs';
 import { TopicSchedules } from './topic-schedules.mjs';
 import {BriefingNotifications} from './briefing-notifications.mjs';
 import { InternalMaterialNotifications } from './internal-notifications.mjs';
@@ -61,6 +62,7 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     if (nativeSessions) { nativeSessions.onDelivery = (id, binding, receipt) => service.recordAgentDelivery(id, binding, receipt); nativeSessions.onActivity = id => { if(!service.active.has(id))service.cloudWrites.release(id); if (store.get(id)) service.event(id, 'session-state', { sessionId: service.require(id).nativeSessionId }); }; }
     service.briefingSchedules = new BriefingSchedules(service, host, `http://127.0.0.1:${server.address().port}`);
     service.topicSchedules = new TopicSchedules(service,host);
+    service.topicDeletions = new TopicDeletions(service,{publicationRun});
     service.notifications = new BriefingNotifications(service);
     service.internalNotifications = new InternalMaterialNotifications(service);
     if (nativeSessions) await nativeSessions.reconcileWorkspace();

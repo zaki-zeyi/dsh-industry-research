@@ -1,4 +1,4 @@
-import { topicMetadata, rememberTopic } from './topics.mjs';
+import { topicMetadata, rememberTopic, assertTopicAvailable } from './topics.mjs';
 import {CloudWrites} from './cloud-writes.mjs';
 import { briefingInput, briefingKey } from './briefings.mjs';
 import { RESEARCH_TIMEOUT_MS } from './cloud-research.mjs';
@@ -63,6 +63,7 @@ export class ResearchService {
   create(input, key, permit, metadata = {}) {
     if (this.cloudOnly && permit !== creationPermit) throw new ServiceError(428, '请先绑定飞书再启动调研');
     const data = createSchema.parse(input); const serialized = JSON.stringify(data);
+    assertTopicAvailable(this,data.topic);
     if (key) { const prior = this.store.request(key); if (prior) { if (prior.input !== serialized) throw new ServiceError(409, '该请求标识已用于不同的任务'); return this.require(prior.task_id); } }
     if (data.internal?.workflowVersion === 1534) data.internal.research = { companies: [...new Set([...DEFAULT_COMPANIES, ...library(this.store, this.feishuSettings(), this.binding?.applicationSnapshot?.()).companies.map(c => c.name)])], dimensions: preferences(this.store).dimensions };
     const id = newId(); const now = new Date().toISOString(); const application = this.binding?.applicationSnapshot?.() ?? { mode: 'default' }; const root = this.feishuSettings(application);
@@ -163,6 +164,7 @@ export class ResearchService {
   }
   retry(id, stage) {
     const t = this.require(id);
+    assertTopicAvailable(this,t.topic,t.feishuRoot,t.feishuApp);
     if (t.nativeSession && !this.nativeSessions) throw new ServiceError(503, '请在宿主 DSH 插件中重试此原生会话');
     if (this.active.has(id) || this.queue.some(x => x.id === id)) throw new ServiceError(409, '任务正在执行，请勿重复重试');
     if (stage === 'publish') {
@@ -328,6 +330,7 @@ export class ResearchService {
   recover() {
     const notificationsToRetry = [];
     for (const t of this.store.list()) {
+      if(t.topic){try{assertTopicAvailable(this,t.topic,t.feishuRoot,t.feishuApp);}catch{continue;}}
       if((t.briefing||t.internal||t.topic?.window)&&t.notification?.status==='sending'){t.notification={...t.notification,status:'failed',error:'服务重启，通知结果待核对；报告已保留，可重试通知。'};this.store.save(t);}
       if (t.status === 'queued') this.enqueue(t.id, 'research');
       else if (t.status === 'running') { t.status = 'interrupted'; t.error = t.cloudOnly ? '服务重启导致调研中断，任务与会话已保留，请先核对飞书文档后重试' : '服务重启导致调研中断，已保留草稿与会话，请重试'; const run = t.runs.at(-1); if (run) run.status = 'interrupted'; this.save(t); this.event(t.id, 'system', t.error); }
@@ -338,5 +341,5 @@ export class ResearchService {
     }
     for (const id of notificationsToRetry) void this.notifications?.send(id).catch(() => {});
   }
-  async close() { this.closed = true; const jobs = [...this.active.values()]; for (const j of jobs) j.controller.abort(); await Promise.allSettled(jobs.map(j => j.promise)); await this.notifications?.close(); await this.internalNotifications?.close(); this.bus.removeAllListeners(); }
+  async close() { this.closed = true; const jobs = [...this.active.values()]; for (const j of jobs) j.controller.abort(); await Promise.allSettled(jobs.map(j => j.promise)); await this.notifications?.close(); await this.internalNotifications?.close(); await this.topicDeletions?.close(); this.bus.removeAllListeners(); }
 }

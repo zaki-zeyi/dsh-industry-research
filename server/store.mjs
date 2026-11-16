@@ -49,6 +49,7 @@ export class Store {
   }
   saveSetting(key, value) { this.db.prepare('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body').run(key, JSON.stringify(value)); return value; }
   deleteSetting(key) { this.db.prepare('DELETE FROM settings WHERE key=?').run(key); }
+  deleteDirectoryToken(token){this.db.prepare("DELETE FROM settings WHERE key LIKE 'feishu-directory:%' AND json_extract(body,'$.token') = ?").run(token);}
   close() { this.db.close(); }
   saveTerminal(meta) { this.db.prepare('INSERT INTO terminals VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(meta.id, meta.taskId, JSON.stringify(meta)); }
   terminal(id) { const row = this.db.prepare('SELECT body FROM terminals WHERE id=?').get(id); return row ? JSON.parse(row.body) : null; }

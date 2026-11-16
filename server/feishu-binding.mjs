@@ -11,8 +11,8 @@ import { randomUUID } from 'node:crypto';
 import { agentDeliverySchema } from './agent-delivery.mjs';
 import { ServiceError } from './service.mjs';
 import { applicationSchema, cliFor } from './feishu-application.mjs';
-export const requiredScopes = ['auth:user.id:read', 'contact:user.basic_profile:readonly', 'docx:document:create', 'docx:document:write_only', 'docx:document:readonly', 'docs:document:import', 'docs:document.media:upload', 'docs:document.media:download', 'drive:drive.metadata:readonly', 'space:document:retrieve', 'drive:file:upload', 'drive:file:download', 'space:folder:create', 'offline_access'];
-export const optionalScopes = ['space:document:retrieve'];
+export const requiredScopes = ['auth:user.id:read', 'contact:user.basic_profile:readonly', 'docx:document:create', 'docx:document:write_only', 'docx:document:readonly', 'docs:document:import', 'docs:document.media:upload', 'docs:document.media:download', 'drive:drive.metadata:readonly', 'space:document:retrieve', 'space:document:delete', 'drive:file:upload', 'drive:file:download', 'space:folder:create', 'offline_access'];
+export const optionalScopes = ['space:document:retrieve','space:document:delete'];
 export const requiredTenantScopes = ['im:message:send_as_bot'];
 export class FeishuBinding {
   constructor({ command, run, store, registerApp } = {}) {
@@ -59,7 +59,7 @@ export class FeishuBinding {
       const accountMismatch = authenticated && application.ownerOpenId && user.openId !== application.ownerOpenId;
       if (accountMismatch) return { ...metadata, bound: false, available: true, error: '个人授权账号与扫码绑定应用的账号不一致，请使用同一账号授权，或重新扫码登录并绑定新账号的应用' };
       const bound = authenticated && missingScopes.length === 0;
-      return { ...metadata, bound, authenticated, importReady:scopes.has('space:document:retrieve'), available: true, ...(bound ? { ...(/^ou_[A-Za-z0-9]+$/.test(user.openId ?? '') ? {openId:user.openId} : {}), userName: String(user.userName ?? '飞书用户').slice(0, 100) } : { missingScopes, error: authenticated ? '飞书已登录，但文档与云盘权限不完整，请补充授权后开始调研' : '请绑定飞书并授权文档与云盘访问权限后开始调研' }) };
+      return { ...metadata, bound, authenticated, importReady:scopes.has('space:document:retrieve'),deletionReady:scopes.has('space:document:delete'), available: true, ...(bound ? { ...(/^ou_[A-Za-z0-9]+$/.test(user.openId ?? '') ? {openId:user.openId} : {}), userName: String(user.userName ?? '飞书用户').slice(0, 100) } : { missingScopes, error: authenticated ? '飞书已登录，但文档与云盘权限不完整，请补充授权后开始调研' : '请绑定飞书并授权文档与云盘访问权限后开始调研' }) };
     } catch (error) {
       const code = error.code === 'ENOENT' ? 'LARK_CLI_NOT_FOUND' : classifyFeishuError(error);
       return { bound: false, available: false, code, error: code === 'LARK_CLI_NOT_FOUND' ? '未找到飞书 CLI，请先检查飞书环境并安装或修复 CLI' : '无法检查飞书授权，请查看连接日志后重试；不要将此错误直接当作未安装 CLI' };
