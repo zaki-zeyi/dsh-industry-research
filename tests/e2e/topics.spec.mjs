@@ -24,6 +24,7 @@ test('FR05 专题调研创建、可编辑提示、续聊、独立日报与页签
  await expect(dialog.getByLabel('调研方向',{exact:true})).toHaveValue('国产推理芯片的软件生态如何发展？');
  await expect(dialog.getByRole('group',{name:/^数据源/})).toHaveClass('industry-choices');
  await expect(dialog.getByLabel('发送时间（北京时间）')).toHaveValue('09:00');
+ await expect(dialog.getByLabel('任务 Prompt',{exact:false})).toHaveValue(/每日日报信息去重增量保存到【本专题调研】的总报/);
  await dialog.getByLabel('发送时间（北京时间）').fill('10:30');await expect(dialog.getByLabel('启用此定时任务')).toHaveCount(0);
  await dialog.getByRole('button',{name:'完成',exact:true}).click();await expect(dialog).toHaveCount(0);
  await expect(page.getByText('专题日报 · 每天 10:30（北京时间）')).toBeVisible();
@@ -31,7 +32,7 @@ test('FR05 专题调研创建、可编辑提示、续聊、独立日报与页签
  await page.getByRole('button',{name:'日报',exact:true}).click();await expect(page.locator('.topic-card')).toHaveCount(0);
  await page.getByRole('button',{name:'专题调研',exact:true}).click();await expect(page.locator('.topic-report-card')).toHaveCount(1);
  await page.getByRole('button',{name:'← 返回专题列表'}).click();await expect(page.locator('.topic-card')).toHaveCount(1);
- await page.getByRole('button',{name:'进入专题',exact:false}).click();await expect(page.getByRole('heading',{name:'专题总报',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:/^查看专题：/}).click();await expect(page.getByRole('heading',{name:'专题总报',exact:true})).toBeVisible();
  await page.screenshot({path:'artifacts/fr05-topic-library.png',fullPage:true});
  await page.getByRole('button',{name:'AI 会话详情',exact:false}).click();await expect(page.getByRole('button',{name:'← 返回工作台'})).toBeVisible();
 });
@@ -44,11 +45,23 @@ test('PRD468 专题列表进入详情，分别展示总报与全部日期日报�
  let reads=0;await page.route(/\/api\/topics(?:\?.*)?$/,route=>{reads++;return route.fulfill({json:{items:[{...total,totalReport:total,dailyReports:[daily2,daily1],schedule:{enabled:false}}],syncedAt:new Date().toISOString()}});});
  await page.goto('/');await page.getByRole('button',{name:'专题调研',exact:true}).click();
  await expect(page.locator('.topic-card')).toHaveCount(1);await expect(page.getByRole('link',{name:'打开总报',exact:false})).toHaveCount(0);
- await page.getByRole('button',{name:question,exact:true}).click();await expect(page.getByRole('heading',{name:question,exact:true})).toBeVisible();
+ const storage=await page.locator('.topic-storage').boundingBox(),location=await page.locator('.topic-storage-location').boundingBox();
+ expect(location.x-storage.x).toBeGreaterThan(20);expect(storage.height).toBeLessThan(130);
+ await page.screenshot({path:'artifacts/prd497-topic-list.png',fullPage:true});
+ // Click the card padding, away from its title and footer.
+ await page.getByRole('button',{name:'查看专题：'+question,exact:true}).click({position:{x:8,y:8}});await expect(page.getByRole('heading',{name:question,exact:true})).toBeVisible();
  await expect(page.getByRole('link',{name:'打开总报',exact:false})).toHaveAttribute('href',total.publication.url);
  await expect(page.getByRole('link',{name:'打开专题日报',exact:false})).toHaveCount(2);await expect(page.locator('.topic-report-card')).toHaveCount(3);
  await expect(page.getByText('2026-11-13',{exact:true})).toBeVisible();await expect(page.getByText('2026-11-14',{exact:true})).toBeVisible();
  const before=reads;await page.getByRole('button',{name:'刷新',exact:true}).click();await expect.poll(()=>reads).toBeGreaterThan(before);await expect(page.getByRole('heading',{name:question,exact:true})).toBeVisible();
  await page.screenshot({path:'artifacts/prd468-topic-detail.png',fullPage:true});
  await page.getByRole('button',{name:'← 返回专题列表'}).click();await expect(page.locator('.topic-card')).toHaveCount(1);
+ const card=page.getByRole('button',{name:'查看专题：'+question,exact:true});await card.focus();await page.keyboard.press('Enter');await expect(page.getByRole('heading',{name:question,exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'← 返回专题列表'}).click();
+ await page.setViewportSize({width:390,height:844});
+ await expect(page.locator('.topic-storage')).toBeVisible();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+ const mobileStorage=await page.locator('.topic-storage').boundingBox(),mobileText=await page.locator('.topic-storage-location').boundingBox();expect(mobileText.x-mobileStorage.x).toBeGreaterThan(18);
+ await page.screenshot({path:'artifacts/prd497-topic-mobile.png',fullPage:true});
+ await card.focus();await page.keyboard.press('Space');await expect(page.getByRole('heading',{name:question,exact:true})).toBeVisible();
 });

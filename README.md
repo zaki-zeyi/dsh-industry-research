@@ -1,5 +1,7 @@
 # dsh-industry-research · 行研工作台
 
+0.10.2：专题存储信息栏与整卡点击体验优化；按 PRD497 将每日日报的新信息去重增量合并到本专题原总报，同时保留每期独立日报。已有日报定时配置自动兼容。
+
 0.10.1：专题日报设置点击“完成”直接保存启用；修复新版宿主定时服务接口变化导致的保存失败，更新失败保留原有定时配置。
 
 0.10.0：专题列表进入独立详情页，分别展示专题总报和全部专题日报。目录统一为「专题调研 / 具体专题」，日报每期独立保存在其「日报」子目录。详见 [专题总报与日报](docs/topics-0.10.0.md)。
@@ -80,7 +82,7 @@ npm run plugin:pack
 
 ## 安装
 
-当前源码版本为 **0.10.1**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
+当前源码版本为 **0.10.2**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
 Windows、macOS 桌面版以及网页版，均可在 DSH「添加插件」填写：
 
