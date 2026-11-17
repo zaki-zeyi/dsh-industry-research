@@ -1,6 +1,6 @@
 {
   "name": "dsh-industry-research",
-  "version": "0.13.2-dev.2",
+  "version": "0.13.2-dev.3",
   "private": true,
   "type": "module",
   "engines": {
@@ -19,6 +19,7 @@
     "plugin:install": "node scripts/install-dsh-plugin.mjs",
     "accept:update": "node scripts/accept-and-update.mjs",
     "test:native-host": "node scripts/native-host-acceptance.mjs --browser",
+    "test:model-failures": "node scripts/model-failure-host-acceptance.mjs",
     "test:feishu-qr": "node scripts/feishu-registration-smoke.mjs",
     "plugin:check-pack": "node scripts/check-plugin-pack.mjs",
     "bundle:windows": "node scripts/build-windows-bundle.mjs",
