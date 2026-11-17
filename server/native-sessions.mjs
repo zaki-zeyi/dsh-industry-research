@@ -141,7 +141,14 @@ export class NativeSessions {
     for (const id of this.bySession.values()) {
       const meta = this.get(id); if (!meta.deliveryRequestId || !meta.deliveryPath) continue;
       let receipt; try { const text = readFileSync(meta.deliveryPath, 'utf8'); if (text.length > 524288) continue; receipt = agentDeliverySchema.parse(JSON.parse(text)); } catch { continue; }
-      if (receipt.requestId !== meta.deliveryRequestId || JSON.stringify(receipt) === meta.deliveryKey && id !== completedId) continue;
+      // A completed host retry can publish while the previous service run is
+      // still unwinding. Its first callback cannot reconcile an active task;
+      // replay the valid receipt after that run exits instead of losing it.
+      const task = this.store.get(meta.taskId);
+      const retryNeedsReconciliation = task?.nativeSession && task.status === 'failed'
+        && task.terminalId === id && receipt.status === 'published'
+        && meta.activity === 'waiting_input' && meta.lastTurnReason === 'completed';
+      if (receipt.requestId !== meta.deliveryRequestId || JSON.stringify(receipt) === meta.deliveryKey && id !== completedId && !retryNeedsReconciliation) continue;
       meta.deliveryKey = JSON.stringify(receipt); meta.delivery = receipt; this.store.saveTerminal(meta); this.onDelivery?.(meta.taskId, id, receipt);
     }
   }

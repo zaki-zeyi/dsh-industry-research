@@ -131,3 +131,25 @@ for (const boundary of ['no-new-turn', 'old-receipt', 'wrong-request', 'wrong-fo
     } finally { await f.close(); }
   });
 }
+
+
+test('成功回执在旧执行退出前已被消费，退出后的轮询仍恢复完成状态', async () => {
+  const f = await failedBriefing();
+  try {
+    f.service.active.set(f.task.id, new AbortController());
+    f.host.emit(f.meta.sessionId, 'turn/start');
+    f.write(f.receipt);
+    f.host.emit(f.meta.sessionId, 'turn/end', { kind: 'completed' });
+    assert.equal(f.service.require(f.task.id).status, 'failed');
+    assert.deepEqual(JSON.parse(f.service.nativeSessions.get(f.meta.id).deliveryKey), f.receipt);
+    f.service.active.delete(f.task.id);
+    f.service.nativeSessions.observeDeliveries();
+    const done = f.service.require(f.task.id);
+    assert.equal(done.status, 'ready');
+    assert.equal(done.stage, 'done');
+    assert.equal(done.error, null);
+    assert.equal(done.runs.length, 2);
+    f.service.nativeSessions.observeDeliveries();
+    assert.equal(f.service.require(f.task.id).runs.length, 2);
+  } finally { f.service.active.delete(f.task.id); await f.close(); }
+});
