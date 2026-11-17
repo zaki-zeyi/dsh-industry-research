@@ -6,7 +6,7 @@ import { analysisCloudPrompt } from './analysis-prompt.mjs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readFileSync } from 'node:fs';
 import { cliFor } from './feishu-application.mjs';
-import { agentDeliverySchema } from './agent-delivery.mjs';
+import { parseAgentDelivery } from './agent-delivery.mjs';
 export function cloudPrompt(task, meta) {
   return writeGuard(meta)+cloudContent(task,meta);
 }
@@ -40,7 +40,7 @@ export async function waitCloudDelivery(sessions, meta, { signal, timeoutMs = RE
     let receipt;
     try {
       const text = readFileSync(meta.deliveryPath, 'utf8');
-      if (text.length <= 524288) receipt = agentDeliverySchema.parse(JSON.parse(text));
+      if (text.length <= 524288) receipt = parseAgentDelivery(text);
     } catch {}
     if (receipt?.requestId === meta.deliveryRequestId) {
       if (receipt.folderToken && meta.targetFolderToken && receipt.folderToken !== meta.targetFolderToken) throw new Error('交付目录与指定文件夹不一致，请在原会话核对');
