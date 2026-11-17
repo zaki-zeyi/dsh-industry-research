@@ -1,6 +1,6 @@
 import { assertDocumentAvailable } from './document-deletion-state.mjs';
 import { readFileSync } from 'node:fs';
-import { agentDeliverySchema, agentPublication } from './agent-delivery.mjs';
+import { agentPublication, parseAgentDelivery } from './agent-delivery.mjs';
 import { normalizeInternalDelivery } from './internal-materials.mjs';
 import { libraryKey, mergeCompanyDelivery } from './industry.mjs';
 import { ServiceError } from './service-error.mjs';
@@ -25,7 +25,7 @@ export class InternalReconciliation {
     if(!canReconcileInternal(t))throw new ServiceError(409,'当前任务不属于回执元信息缺失，不能直接恢复完成状态');
     const meta=t.terminalId&&s.store.terminal(t.terminalId);
     if(s.active.has(id)||s.queue.some(j=>j.id===id)||meta?.activity==='working')throw new ServiceError(409,'原会话仍在执行，请结束当前轮次后再核对');
-    let receipt;try{receipt=agentDeliverySchema.parse(JSON.parse(readFileSync(meta.deliveryPath,'utf8')));}catch{throw new ServiceError(409,'原任务交付回执不可验证，请在原会话核对');}
+    let receipt;try{receipt=parseAgentDelivery(readFileSync(meta.deliveryPath,'utf8'));}catch{throw new ServiceError(409,'原任务交付回执不可验证，请在原会话核对');}
     if(receipt.status!=='published'||!meta?.deliveryRequestId||receipt.requestId!==meta.deliveryRequestId||meta.taskId!==id||meta.agent!=='dsh-native'||!t.runs?.some(r=>r.terminalId===meta.id&&r.sessionId===meta.sessionId)||receipt.folderToken!==t.feishuRoot.folderToken||receipt.url!==t.publication?.url||receipt.minutesUrl!==t.publication?.minutesUrl)throw new ServiceError(409,'回执轮次、文档或存储位置不一致，未修改任务状态');
     normalizeInternalDelivery(t,receipt);
     if(!receipt.libraryFolderToken||!receipt.manifestUrl||!receipt.companies?.length)throw new ServiceError(409,'没有可验证的信息库同步结果，请在原会话补齐');

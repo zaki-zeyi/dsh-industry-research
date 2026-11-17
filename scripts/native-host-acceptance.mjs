@@ -5,7 +5,7 @@ import { chromium } from '@playwright/test';
 import { DatabaseSync } from 'node:sqlite';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, rmSync, chmodSync, readdirSync } from 'node:fs';
+import { mkdtempSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, rmSync, chmodSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ const root = fileURLToPath(new URL('..', import.meta.url)), dir = mkdtempSync(re
 mkdirSync(resolve(profile, 'node_modules'), { recursive: true }); symlinkSync(process.argv.includes('--package-root') ? resolve(process.argv[process.argv.indexOf('--package-root') + 1]) : root, resolve(profile, 'node_modules/dsh-industry-research'), 'junction');
 writeFileSync(resolve(profile, 'package.json'), JSON.stringify({ name: 'native-host-test', private: true, dependencies: { 'dsh-industry-research': `link:${root}` }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-industry-research'] } } }));
 const report = { title: '真实宿主原生会话验收报告', summary: '本报告由隔离的真实 DSH 宿主与本机模拟模型接口协作生成。', markdown: '本验收通过真实宿主的 Session Controller 创建会话、设定完整权限、提交任务并接收原生轮次事件。报告文件由本机模型测试夹具交付，验证工作台正确读取结构化结果并保留会话绑定。[S1]', sources: [{ id: 'S1', title: '本机模拟证据', url: 'https://example.com/native-host', excerpt: '本来源为验收夹具，用于验证本机真实宿主的会话与报告协议。' }] };
+let retryAttempts = 0;
 let modelCalls = 0, browser, page, followUpObserved = false, parallelGate=null,releaseParallel;const parallelSeen=new Set();
 const fakeLark = resolve(dir, 'fake-lark.cjs');
 writeFileSync(fakeLark, `#!/usr/bin/env node
@@ -42,7 +43,10 @@ const model = createServer(async (req, res) => {
     if(prompt.includes('并行调研与保存锁'))await promisify(execFile)(process.execPath,[resolve(match[1],'..','cloud-write-client.mjs'),resolve(match[1],'..','cloud-write-config.json')]);
     if (prompt.includes('本次报告仅存储在飞书云文档')) {
       const receiptPath = /原子更新 (.+)，本次 requestId/.exec(prompt)[1], requestId = /本次 requestId 固定为 ([a-f0-9-]+)/.exec(prompt)[1];
-      writeFileSync(receiptPath, JSON.stringify({ requestId, status: 'published', folderToken: /目标文件夹 ID：([A-Za-z0-9_-]+)/.exec(prompt)?.[1] ?? 'autoFolder123', url: 'https://example.feishu.cn/docx/embeddedNativeReport', ...(prompt.includes('reportFolderToken') ? {reportFolderToken:'nativeDailyFolder',noUpdates:false,partial:false}:{}), ...(prompt.includes('knownLibrary') || prompt.includes('reportFolderToken') ? { libraryFolderToken: 'industryNativeFolder', manifestUrl: 'https://example.feishu.cn/docx/industryNativeManifest', companies: [{ name: '后摩智能', url: 'https://example.feishu.cn/docx/embeddedNativeReport', dimensions: ['技术路线'], added: 1, conflicts: 0 }] } : {}) }));
+      const retryProbe = prompt.includes('PLATFORM_RETRY_ACCEPTANCE');
+      if (retryProbe) retryAttempts++;
+      const receipt = { requestId, status: 'published', folderToken: /目标文件夹 ID：([A-Za-z0-9_-]+)/.exec(prompt)?.[1] ?? 'autoFolder123', url: 'https://example.feishu.cn/docx/embeddedNativeReport', ...(prompt.includes('reportFolderToken') ? {reportFolderToken:'nativeDailyFolder',noUpdates:false,partial:false}:{}), ...(prompt.includes('knownLibrary') || prompt.includes('reportFolderToken') ? { libraryFolderToken: 'industryNativeFolder', manifestUrl: 'https://example.feishu.cn/docx/industryNativeManifest', companies: [{ name: '后摩智能', url: 'https://example.feishu.cn/docx/embeddedNativeReport', dimensions: ['技术路线'], added: 1, conflicts: 0 }] } : {}) };
+      writeFileSync(receiptPath, (retryProbe ? '\uFEFF' : '') + JSON.stringify(retryProbe && retryAttempts === 1 ? { requestId, status: 'failed', error: 'PLATFORM_RETRY_ACCEPTANCE: first attempt intentionally fails' } : receipt));
     }
   }
   res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -83,6 +87,31 @@ try {
   const research={companies:['后摩智能'],dimensions:['技术路线'],sources:['芯东西'],requirements:''};
   const daily=await (await fetch(status.url+'/api/briefings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...research,kind:'daily'})})).json();
   await until(async()=>{const t=(await(await fetch(status.url+'/api/tasks/'+daily.id)).json()).task;if(t.status==='failed')throw new Error(t.error);if(t.notification?.status==='failed')throw new Error(t.notification.error);return t.status==='ready'&&t.notification?.status==='sent';});
+  // Exercise the same retry endpoint as the workbench button, with a real
+  // host session and BOM receipts. Only model/Feishu I/O are deterministic fixtures.
+  const retryTask = await (await fetch(status.url+'/api/briefings', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...research,kind:'daily',requirements:'PLATFORM_RETRY_ACCEPTANCE'}) })).json();
+  const failed = await until(async()=>{const t=(await(await fetch(status.url+'/api/tasks/'+retryTask.id)).json()).task;return t.status==='failed'&&t;});
+  assert.match(failed.error,/PLATFORM_RETRY_ACCEPTANCE/);
+  if(process.argv.includes('--retry-review')) {
+    mkdirSync(resolve(root,'artifacts'),{recursive:true});
+    writeFileSync(resolve(root,'artifacts/retry-host-review.json'),JSON.stringify({url:status.url,id:failed.id}));
+    console.log('WAIT: real native retry task is failed; awaiting the workbench Retry button');
+  } else {
+    const response=await fetch(status.url+'/api/tasks/'+failed.id+'/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:'research'})});
+    assert.equal(response.status,202);assert.ok(['queued','running'].includes((await response.json()).status));
+  }
+  const recovered=await until(async()=>{const t=(await(await fetch(status.url+'/api/tasks/'+failed.id)).json()).task;return t.status==='ready'&&t;},process.argv.includes('--retry-review')?180000:40000);
+  assert.equal(recovered.stage,'done');assert.equal(recovered.error,null);assert.equal(recovered.publication.status,'published');
+  assert.equal(recovered.nativeSessionId,failed.nativeSessionId);assert.equal(recovered.runs.length,2);
+  assert.deepEqual(recovered.runs.map(r=>r.status),['failed','completed']);assert.notEqual(recovered.terminalId,failed.terminalId);
+  const listed=(await(await fetch(status.url+'/api/briefings?kind=daily')).json()).items.find(t=>t.id===recovered.id);
+  assert.equal(listed.status,'ready');assert.equal(listed.publication.status,'published');
+  console.log('PASS: real host Retry -> new receipt -> ready/done; detail and daily list agree; failed run retained; native session reused');
+  if(process.argv.includes('--retry-review')) {
+    writeFileSync(resolve(root,'artifacts/retry-host-result.json'),JSON.stringify({status:recovered.status,stage:recovered.stage,listStatus:listed.status,runs:recovered.runs.map(r=>r.status),sameSession:recovered.nativeSessionId===failed.nativeSessionId}));
+    // Keep the actual completed card available for visual inspection.
+    await until(()=>existsSync(resolve(root,'artifacts/retry-host-reviewed.flag')),180000);
+  }
   const scheduleBody={daily:'09:00',weekly:'09:00',weekday:5,enabled:true,research};
   const scheduled=await fetch(status.url+'/api/briefings/schedule',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(scheduleBody)});assert.equal(scheduled.status,200,await scheduled.text());
   const stopped=await fetch(status.url+'/api/briefings/schedule',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...scheduleBody,enabled:false})});assert.equal(stopped.status,200);
