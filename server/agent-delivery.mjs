@@ -74,3 +74,9 @@ export class AgentPublisher {
     persist(p); return p;
   }
 }
+
+// Windows PowerShell can emit UTF-8 JSON with a BOM. Strip only that prefix;
+// malformed JSON and invalid receipt fields still fail normal validation.
+export function parseAgentDelivery(text) {
+  return agentDeliverySchema.parse(JSON.parse(text.replace(/^\uFEFF/, '')));
+}

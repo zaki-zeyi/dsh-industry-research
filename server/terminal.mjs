@@ -10,7 +10,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { newId } from './store.mjs';
 import { ServiceError } from './service.mjs';
 import { executionPrompt } from './report.mjs';
-import { agentDeliverySchema } from './agent-delivery.mjs';
+import { parseAgentDelivery } from './agent-delivery.mjs';
 import { uploadPrompt } from './upload-prompt.mjs';
 import { prepareLarkAgent } from './lark-agent-files.mjs';
 
@@ -95,7 +95,7 @@ export class TerminalManager {
     let delivery;
     try {
       const text = readFileSync(meta.deliveryPath, 'utf8'); if (text.length > 16000) return;
-      delivery = agentDeliverySchema.parse(JSON.parse(text));
+      delivery = parseAgentDelivery(text);
     } catch { return; } // Partial/invalid writes never become success or interrupt work.
     if (meta.deliveryRequestId && delivery.requestId !== meta.deliveryRequestId) return;
     const key = JSON.stringify(delivery); if (key === meta.deliveryKey) return;

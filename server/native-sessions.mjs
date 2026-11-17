@@ -4,7 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { newId } from './store.mjs';
 import { executionPrompt, parseReport } from './report.mjs';
 import { uploadPrompt } from './upload-prompt.mjs';
-import { agentDeliverySchema } from './agent-delivery.mjs';
+import { parseAgentDelivery } from './agent-delivery.mjs';
 import { cloudPrompt, waitCloudDelivery, RESEARCH_TIMEOUT_MS } from './cloud-research.mjs';
 import { ServiceError } from './service.mjs';
 import { prepareLarkAgent } from './lark-agent-files.mjs';
@@ -107,7 +107,7 @@ export class NativeSessions {
       meta.activity = 'working'; meta.lastTurnReason = null; meta.lastTurnErrorCode = null; meta.lastTurnCompletedAt = null;
       meta.turnSequence = (meta.turnSequence ?? 0) + 1;
       meta.lastTurnStartedAt = new Date().toISOString();
-      try { meta.turnInitialDeliveryKey = JSON.stringify(agentDeliverySchema.parse(JSON.parse(readFileSync(meta.deliveryPath, 'utf8')))); }
+      try { meta.turnInitialDeliveryKey = JSON.stringify(parseAgentDelivery(readFileSync(meta.deliveryPath, 'utf8'))); }
       catch { meta.turnInitialDeliveryKey = null; }
     }
     else if (event.type === 'turn/end') { meta.activity = 'waiting_input'; meta.lastTurnReason = event.data?.reason?.kind; meta.lastTurnCompletedAt = new Date().toISOString(); meta.lastTurnErrorCode = /^[A-Z0-9_]{1,64}$/.test(event.data?.reason?.error?.code ?? '') ? event.data.reason.error.code : undefined; }
@@ -140,7 +140,7 @@ export class NativeSessions {
   observeDeliveries(completedId) {
     for (const id of this.bySession.values()) {
       const meta = this.get(id); if (!meta.deliveryRequestId || !meta.deliveryPath) continue;
-      let receipt; try { const text = readFileSync(meta.deliveryPath, 'utf8'); if (text.length > 524288) continue; receipt = agentDeliverySchema.parse(JSON.parse(text)); } catch { continue; }
+      let receipt; try { const text = readFileSync(meta.deliveryPath, 'utf8'); if (text.length > 524288) continue; receipt = parseAgentDelivery(text); } catch { continue; }
       // A completed host retry can publish while the previous service run is
       // still unwinding. Its first callback cannot reconcile an active task;
       // replay the valid receipt after that run exits instead of losing it.

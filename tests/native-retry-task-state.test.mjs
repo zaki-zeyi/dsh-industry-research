@@ -153,3 +153,18 @@ test('成功回执在旧执行退出前已被消费，退出后的轮询仍恢�
     assert.equal(f.service.require(f.task.id).runs.length, 2);
   } finally { f.service.active.delete(f.task.id); await f.close(); }
 });
+
+
+test('Windows BOM 成功回执在原生重试结束后恢复完成，旧 BOM 回执不能误恢复', async () => {
+  for (const stale of [false, true]) {
+    const f = await failedBriefing();
+    try {
+      if (stale) writeFileSync(f.meta.deliveryPath, '\uFEFF' + JSON.stringify(f.receipt));
+      f.host.emit(f.meta.sessionId, 'turn/start');
+      writeFileSync(f.meta.deliveryPath, '\uFEFF' + JSON.stringify(f.receipt));
+      f.host.emit(f.meta.sessionId, 'turn/end', { kind: 'completed' });
+      f.service.nativeSessions.observeDeliveries();
+      assert.equal(f.service.require(f.task.id).status, stale ? 'failed' : 'ready');
+    } finally { await f.close(); }
+  }
+});
