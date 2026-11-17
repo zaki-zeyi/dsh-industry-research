@@ -72,6 +72,7 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     if (nativeSessions) await nativeSessions.reconcileWorkspace();
     recordTrace(store,'runtime.started',{status:'ready',phase:service.mode});
     service.recover();
+    service.cloudWrites.start();
     void service.topicSchedules.catchUpMissed().catch(() => {});
     if (service.briefingSchedules) void service.briefingSchedules.catchUpMissed().catch(() => {});
 

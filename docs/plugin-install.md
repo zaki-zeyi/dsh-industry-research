@@ -1,6 +1,6 @@
 # 安装与发布
 
-插件包名 `dsh-industry-research`，页签「行研工作台」。当前源码版本 0.8.15。
+插件包名 `dsh-industry-research`，页签「行研工作台」。当前源码版本 0.13.2。
 
 ## 用户安装
 
@@ -57,7 +57,7 @@ npm run plugin:pack
 npm run plugin:check-pack
 node scripts/release-acceptance.mjs
 node scripts/publish-git-plugin.mjs --output <新的临时目录>   # 不加 --push 时只在本地生成安装提交
-node scripts/git-install-acceptance.mjs --pnpm-cli <宿主pnpm入口> --expected-version 0.8.15
+node scripts/git-install-acceptance.mjs --pnpm-cli <宿主pnpm入口> --expected-version 0.13.2
 ```
 
 macOS CI 运行包安装及浏览器验收，不等同于真实 macOS 桌面应用点击验收。真实飞书授权、模型调研、音视频转写和机器人消息需要实际环境单独验收。

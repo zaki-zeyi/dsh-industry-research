@@ -184,6 +184,7 @@ test('保存锁返回服务端已复用的analysisIndex，目录检查失败后�
     const writes = new CloudWrites(s), snapshot = await writes.acquire(t.id, 'request');
     assert.equal(resolveCalls, 1); assert.equal(snapshot.analysisIndex.folderToken, 'Analysis');
     t.status = 'ready'; writes.release(t.id); assert.equal(writes.locks.size, 0);
+    t.status = 'running';
     s.directories.prepare = async () => { throw Error('directory failure'); };
     await assert.rejects(writes.acquire(t.id, 'request'), /directory failure/); assert.equal(writes.locks.size, 0);
     assert.throws(() => writes.assertOwner(t), /先获取/);

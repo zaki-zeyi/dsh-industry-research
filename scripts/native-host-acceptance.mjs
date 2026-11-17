@@ -40,7 +40,14 @@ const model = createServer(async (req, res) => {
   if (match && body.tools?.length && !input.includes('针对这份报告补充解释')) {
     const prompt = readFileSync(match[1], 'utf8');
     if(parallelGate){parallelSeen.add(match[1]);if(parallelSeen.size===3)releaseParallel();await parallelGate;}
-    if(prompt.includes('并行调研与保存锁'))await promisify(execFile)(process.execPath,[resolve(match[1],'..','cloud-write-client.mjs'),resolve(match[1],'..','cloud-write-config.json')]);
+    const writeCommand=/必须执行 node ("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")/.exec(prompt);
+    if(writeCommand){
+      await promisify(execFile)(process.execPath,[JSON.parse(writeCommand[1]),JSON.parse(writeCommand[2])]);
+      // Exercise command admission through the real host's generated launcher.
+      // The CLI remains the isolated fixture; no user cloud document is edited.
+      const config=JSON.parse(readFileSync(JSON.parse(writeCommand[2]),'utf8'));
+      await promisify(execFile)(process.execPath,[resolve(match[1],'..',`lark-${config.terminalId}`,'lark-agent-client.mjs'),'docs','+update','--doc-token','acceptance-fixture','--content','acceptance']);
+    }
     if (prompt.includes('本次报告仅存储在飞书云文档')) {
       const receiptPath = /原子更新 (.+)，本次 requestId/.exec(prompt)[1], requestId = /本次 requestId 固定为 ([a-f0-9-]+)/.exec(prompt)[1];
       const retryProbe = prompt.includes('PLATFORM_RETRY_ACCEPTANCE');

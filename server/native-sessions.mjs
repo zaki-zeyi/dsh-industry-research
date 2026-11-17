@@ -86,7 +86,7 @@ export class NativeSessions {
     if (!prior || prior.agent !== 'dsh-native') this.host.permissionPresets.set(resolved.agent.session, 'danger-full-access');
     const meta = { id, taskId: task.id, agent: 'dsh-native', sessionId, workspaceId: workspace.id, agentPreset: created?.agentPreset ?? prior?.agentPreset, cwd, reportPath: resolve(cwd, `report-${id}.json`), promptPath: resolve(cwd, `prompt-${id}.txt`), status: 'running', activity: 'waiting_input', workflow: 'manual-upload', createdAt: new Date().toISOString() };
     if (task.cloudOnly) { meta.workflow = 'cloud-only'; meta.targetFolderToken = task.feishuRoot.folderToken; meta.reportPath = undefined; meta.deliveryRequestId = newId(); meta.deliveryPath = resolve(cwd, `delivery-${meta.deliveryRequestId}.json`); }
-    if(task.cloudOnly){meta.writeClientPath=resolve(cwd,'cloud-write-client.mjs');meta.writeConfigPath=resolve(cwd,'cloud-write-config.json');copyFileSync(new URL('./cloud-write-client.mjs',import.meta.url),meta.writeClientPath);writeFileSync(meta.writeConfigPath,JSON.stringify({taskId:task.id,requestId:meta.deliveryRequestId,endpointFile:resolve(this.workRoot,'briefing-endpoint.json')}));}
+    if(task.cloudOnly){meta.writeClientPath=resolve(cwd,'cloud-write-client.mjs');meta.writeConfigPath=resolve(cwd,`cloud-write-config-${id}.json`);meta.writeGuard={taskId:task.id,terminalId:id,requestId:meta.deliveryRequestId,endpointFile:resolve(this.workRoot,'briefing-endpoint.json'),leasePath:resolve(cwd,`write-lease-${id}.json`),operationDirectory:resolve(cwd,`write-operations-${id}`)};mkdirSync(meta.writeGuard.operationDirectory,{recursive:true});copyFileSync(new URL('./cloud-write-client.mjs',import.meta.url),meta.writeClientPath);writeFileSync(meta.writeConfigPath,JSON.stringify(meta.writeGuard));}
     prepareLarkAgent(meta, this.larkCommand);
     writeFileSync(meta.promptPath, task.cloudOnly ? cloudPrompt(task, meta) : `${executionPrompt(task)}\n\n请将完整报告 JSON 保存到 ${meta.reportPath}。本轮只生成报告，完成后立即结束当前轮次并等待用户新要求，不重复调研。平台会在本轮结束后自动发送保存指令；收到该独立指令后再执行保存或授权。`);
     this.store.saveTerminal(meta); this.bySession.set(sessionId, id); return meta;
@@ -102,6 +102,14 @@ export class NativeSessions {
     const id = this.bySession.get(sessionId); if (!id || this.closed) return;
     const meta = this.get(id);
     if (event.type === 'turn/start') {
+      // A real new turn in the same serial host session confirms that older
+      // bindings are no longer writing, even if their turn/end event was lost.
+      for (const prior of this.store.terminalList()) {
+        if (prior.id === id || prior.agent !== 'dsh-native' || prior.sessionId !== sessionId || prior.activity !== 'working') continue;
+        prior.activity = 'waiting_input'; prior.lastTurnReason = 'superseded';
+        prior.lastTurnCompletedAt = new Date().toISOString();
+        this.store.saveTerminal(prior);
+      }
       // Host-side Retry does not call send(). Clear the previous failed turn too,
       // and remember which receipt predates this turn so it cannot revive a task.
       meta.activity = 'working'; meta.lastTurnReason = null; meta.lastTurnErrorCode = null; meta.lastTurnCompletedAt = null;
