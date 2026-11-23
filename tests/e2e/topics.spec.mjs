@@ -55,7 +55,7 @@ test('PRD468 专题列表进入详情，分别展示总报与全部日期日报�
  await page.route(/\/api\/industry\/library(?:\?.*)?$/,route=>route.fulfill({json:{companies:[]}}));
  let reads=0;await page.route(/\/api\/topics(?:\?.*)?$/,route=>{reads++;return route.fulfill({json:{items:[{...total,totalReport:total,dailyReports:[daily2,daily1],schedule:{enabled:false}}],syncedAt:new Date().toISOString()}});});
  await page.goto('/');await page.getByRole('button',{name:'专题调研',exact:true}).click();
- await expect(page.locator('.topic-card')).toHaveCount(1);await expect(page.getByRole('link',{name:'打开总报',exact:false})).toHaveCount(0);
+ await expect(page.locator('.topic-card')).toHaveCount(1);await expect(page.locator('.topic-report-card')).toHaveCount(0);
  const storage=await page.locator('.topic-storage').boundingBox(),location=await page.locator('.topic-storage-location').boundingBox();
  expect(location.x-storage.x).toBeGreaterThan(20);expect(storage.height).toBeLessThan(130);
  await page.screenshot({path:'artifacts/prd497-topic-list.png',fullPage:true});
@@ -75,6 +75,36 @@ test('PRD468 专题列表进入详情，分别展示总报与全部日期日报�
  const mobileStorage=await page.locator('.topic-storage').boundingBox(),mobileText=await page.locator('.topic-storage-location').boundingBox();expect(mobileText.x-mobileStorage.x).toBeGreaterThan(18);
  await page.screenshot({path:'artifacts/prd497-topic-mobile.png',fullPage:true});
  await card.focus();await page.keyboard.press('Space');await expect(page.getByRole('heading',{name:question,exact:true})).toBeVisible();
+});
+
+test('专题卡片直达总报和最近发布的日报，打开报告仍停留在专题列表', async ({page, context}) => {
+ const topic = {topicId:'88888888-8888-4888-8888-888888888888',question:'推理芯片进展',workflowVersion:468};
+ const totalUrl = 'https://example.feishu.cn/docx/TopicTotal';
+ const dailyUrl = 'https://example.feishu.cn/docx/LatestDaily';
+ const card = {
+  id:'topic-report-links',topic,status:'ready',
+  totalReport:{publication:{status:'published',url:totalUrl}},
+  dailyReports:[
+   {status:'running',publication:{status:'publishing',url:'https://example.feishu.cn/docx/Unfinished'}},
+   {status:'ready',publication:{status:'published',url:dailyUrl}},
+   {status:'ready',publication:{status:'published',url:'https://example.feishu.cn/docx/OlderDaily'}},
+  ],
+ };
+ const empty = {id:'no-reports-yet',topic:{...topic,topicId:'77777777-7777-4777-8777-777777777777',question:'尚未生成报告的专题'},status:'queued',dailyReports:[]};
+ await page.route(/\/api\/topics(?:\?.*)?$/,route=>route.fulfill({json:{items:[card,empty]}}));
+ await context.route('https://example.feishu.cn/docx/*',route=>route.fulfill({body:'报告验收'}));
+ await page.goto('/');
+ await page.getByRole('button',{name:'专题调研',exact:true}).click();
+ for(const [label,url] of [['打开总报',totalUrl],['打开最新日报',dailyUrl]]){
+  const link = page.getByRole('link',{name:topic.question+' · '+label,exact:true});
+  const [report] = await Promise.all([page.waitForEvent('popup'),link.click()]);
+  await expect(report).toHaveURL(url);
+  await expect(page.getByRole('heading',{level:1,name:'专题调研',exact:true})).toBeVisible();
+  await report.close();
+ }
+ const emptyCard = page.locator('.topic-card-wrap').filter({hasText:empty.topic.question});
+ await expect(emptyCard.getByRole('link')).toHaveCount(0);
+ await expect(emptyCard.getByText('暂无日报',{exact:true})).toBeVisible();
 });
 
 for(const asynchronous of [false,true])test(`PRD519 删除专题确认、取消、整卡点击隔离与${asynchronous?'异步续查':'刷新竞态'}`,async({page})=>{
