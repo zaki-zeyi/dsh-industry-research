@@ -16,8 +16,8 @@ async function api(path, options = {}) {
   return body;
 }
 
-const statusLabel = task => task.stage === 'waiting_save'
-  ? '等待保存（其他任务正在写入）'
+const statusLabel = task => task.status === 'running' && task.stage === 'waiting_save'
+  ? '等待保存' : task.status === 'running' && task.stage === 'saving' ? '正在保存'
   : ({ ready: '已完成', failed: '失败', interrupted: '已中断', running: '解析中', queued: '排队中' })[task.status] ?? task.status;
 
 

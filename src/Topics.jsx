@@ -8,7 +8,7 @@ import { NotificationRetry } from './NotificationRetry.jsx';
 const store=createTabStore();
 async function api(path,options={}){const r=await fetch('/api'+path,{...options,headers:{'Content-Type':'application/json',...options.headers}});const v=await r.json();if(!r.ok){const error=new Error(v.error??'请求失败');error.code=v.code;throw error;}return v;}
 const selectedTopics=new Map();
-const taskStatus=t=>t.stage==='waiting_save'?'等待保存':({ready:'已完成',queued:'排队中',running:'调研中',failed:'失败',interrupted:'已中断'})[t.status]??t.status;
+const taskStatus=t=>t.status==='running'&&t.stage==='waiting_save'?'等待保存':t.status==='running'&&t.stage==='saving'?'正在保存':({ready:'已完成',queued:'排队中',running:'调研中',failed:'失败',interrupted:'已中断'})[t.status]??t.status;
 export function Topics({config,onOpen,onRetry,onFixNotification,onRebind}){
  const key='topics:'+(config?.topicScope??config?.publicationScope);
  const selectionKey=config?.topicSelectionScope??key;

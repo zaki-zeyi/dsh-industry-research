@@ -86,7 +86,13 @@ export class NativeSessions {
     if (!prior || prior.agent !== 'dsh-native') this.host.permissionPresets.set(resolved.agent.session, 'danger-full-access');
     const meta = { id, taskId: task.id, agent: 'dsh-native', sessionId, workspaceId: workspace.id, agentPreset: created?.agentPreset ?? prior?.agentPreset, cwd, reportPath: resolve(cwd, `report-${id}.json`), promptPath: resolve(cwd, `prompt-${id}.txt`), status: 'running', activity: 'waiting_input', workflow: 'manual-upload', createdAt: new Date().toISOString() };
     if (task.cloudOnly) { meta.workflow = 'cloud-only'; meta.targetFolderToken = task.feishuRoot.folderToken; meta.reportPath = undefined; meta.deliveryRequestId = newId(); meta.deliveryPath = resolve(cwd, `delivery-${meta.deliveryRequestId}.json`); }
-    if(task.cloudOnly){meta.writeClientPath=resolve(cwd,'cloud-write-client.mjs');meta.writeConfigPath=resolve(cwd,`cloud-write-config-${id}.json`);meta.writeGuard={taskId:task.id,terminalId:id,requestId:meta.deliveryRequestId,endpointFile:resolve(this.workRoot,'briefing-endpoint.json'),leasePath:resolve(cwd,`write-lease-${id}.json`),operationDirectory:resolve(cwd,`write-operations-${id}`)};mkdirSync(meta.writeGuard.operationDirectory,{recursive:true});copyFileSync(new URL('./cloud-write-client.mjs',import.meta.url),meta.writeClientPath);writeFileSync(meta.writeConfigPath,JSON.stringify(meta.writeGuard));}
+    if (task.cloudOnly && this.queuedSaving) {
+      meta.queuedSavePath = resolve(cwd, 'queued-save-client.mjs');
+      meta.queuedSaveConfig = resolve(cwd, `queued-save-${id}.json`);
+      copyFileSync(new URL('./queued-save-client.mjs', import.meta.url), meta.queuedSavePath);
+      writeFileSync(meta.queuedSaveConfig, JSON.stringify({ taskId: task.id, terminalId: id,
+        requestId: meta.deliveryRequestId, endpointFile: resolve(this.workRoot, 'briefing-endpoint.json') }));
+    } else if(task.cloudOnly){meta.writeClientPath=resolve(cwd,'cloud-write-client.mjs');meta.writeConfigPath=resolve(cwd,`cloud-write-config-${id}.json`);meta.writeGuard={taskId:task.id,terminalId:id,requestId:meta.deliveryRequestId,endpointFile:resolve(this.workRoot,'briefing-endpoint.json'),leasePath:resolve(cwd,`write-lease-${id}.json`),operationDirectory:resolve(cwd,`write-operations-${id}`)};mkdirSync(meta.writeGuard.operationDirectory,{recursive:true});copyFileSync(new URL('./cloud-write-client.mjs',import.meta.url),meta.writeClientPath);writeFileSync(meta.writeConfigPath,JSON.stringify(meta.writeGuard));}
     prepareLarkAgent(meta, this.larkCommand);
     writeFileSync(meta.promptPath, task.cloudOnly ? cloudPrompt(task, meta) : `${executionPrompt(task)}\n\n请将完整报告 JSON 保存到 ${meta.reportPath}。本轮只生成报告，完成后立即结束当前轮次并等待用户新要求，不重复调研。平台会在本轮结束后自动发送保存指令；收到该独立指令后再执行保存或授权。`);
     this.store.saveTerminal(meta); this.bySession.set(sessionId, id); return meta;
@@ -125,8 +131,11 @@ export class NativeSessions {
       // A receipt may have been observed while the turn was still working.
       // Reconcile it again now that completion is known, even if its bytes match.
       this.observeDeliveries(id); const latest = this.get(id);
-      if (!latest.delivery || latest.delivery.requestId !== latest.deliveryRequestId || latest.delivery.status === 'publishing') {
-        this.onDelivery?.(meta.taskId, id, { requestId: latest.deliveryRequestId, status: 'failed', error: meta.workflow === 'cloud-only' ? '本轮飞书交付未完成，请在原生会话核对后重试；任务记录已保留。' : '本轮宿主会话已结束但未交付有效上传结果；报告已保留，请在原生会话核对后重试上传。' });
+      const accepted = latest.queuedSavePath && this.store.get(meta.taskId)?.queuedSave?.requestId === latest.deliveryRequestId;
+      if (!accepted && (!latest.delivery || latest.delivery.requestId !== latest.deliveryRequestId || latest.delivery.status === 'publishing')) {
+        this.onDelivery?.(meta.taskId, id, { requestId: latest.deliveryRequestId, status: 'failed', error: latest.queuedSavePath
+          ? '本轮结束前未向平台提交增量，请在工作台重试。'
+          : meta.workflow === 'cloud-only' ? '本轮飞书交付未完成，请在原生会话核对后重试；任务记录已保留。' : '本轮宿主会话已结束但未交付有效上传结果；报告已保留，请在原生会话核对后重试上传。' });
       }
     }
     this.onActivity?.(meta.taskId);

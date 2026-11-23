@@ -7,7 +7,9 @@ import { createTabStore } from './tab-store.mjs';
 import { useTabEntry, useTabPolling } from './use-tab-store.js';
 
 async function api(path, options = {}) { const r = await fetch('/api/briefings' + path, { ...options, headers: { 'Content-Type': 'application/json' } }); const v = await r.json(); if (!r.ok) throw new Error(v.error); return v; }
-const statusLabel = task => task.stage === 'waiting_save' ? '等待保存（其他任务正在写入）' : ({ ready: '已完成', failed: '失败', interrupted: '已中断', queued: '排队中', running: '调研中' })[task.status] ?? task.status;
+const statusLabel = task => task.status === 'running' && task.stage === 'waiting_save' ? '等待保存' :
+  task.status === 'running' && task.stage === 'saving' ? '正在保存' :
+  ({ ready: '已完成', failed: '失败', interrupted: '已中断', queued: '排队中', running: '调研中' })[task.status] ?? task.status;
 
 
 // One shared store: switching 日报 ↔ 周报 shows the target tab's own cache

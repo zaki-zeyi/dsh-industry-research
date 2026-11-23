@@ -1,5 +1,5 @@
 import {execFile} from 'node:child_process';
-import {promisify} from 'node:util';
+
 import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
 import { DatabaseSync } from 'node:sqlite';
@@ -12,19 +12,39 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('..', import.meta.url)), dir = mkdtempSync(resolve(tmpdir(), 'native-host-')), profile = resolve(dir, 'profiles/native-test');
 mkdirSync(resolve(profile, 'node_modules'), { recursive: true }); symlinkSync(process.argv.includes('--package-root') ? resolve(process.argv[process.argv.indexOf('--package-root') + 1]) : root, resolve(profile, 'node_modules/dsh-industry-research'), 'junction');
 writeFileSync(resolve(profile, 'package.json'), JSON.stringify({ name: 'native-host-test', private: true, dependencies: { 'dsh-industry-research': `link:${root}` }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-industry-research'] } } }));
-const report = { title: '真实宿主原生会话验收报告', summary: '本报告由隔离的真实 DSH 宿主与本机模拟模型接口协作生成。', markdown: '本验收通过真实宿主的 Session Controller 创建会话、设定完整权限、提交任务并接收原生轮次事件。报告文件由本机模型测试夹具交付，验证工作台正确读取结构化结果并保留会话绑定。[S1]', sources: [{ id: 'S1', title: '本机模拟证据', url: 'https://example.com/native-host', excerpt: '本来源为验收夹具，用于验证本机真实宿主的会话与报告协议。' }] };
 let retryAttempts = 0;
 let modelCalls = 0, browser, page, followUpObserved = false, parallelGate=null,releaseParallel;const parallelSeen=new Set();
 const fakeLark = resolve(dir, 'fake-lark.cjs');
+const cloudDir = resolve(dir, 'fake-cloud');
+mkdirSync(cloudDir);
 writeFileSync(fakeLark, `#!/usr/bin/env node
 const fs=require('fs'),file=${JSON.stringify(resolve(dir,'fake-lark-profiles.json'))};let profiles={};try{profiles=JSON.parse(fs.readFileSync(file,'utf8'));}catch{}
 const args=process.argv.slice(2);
-if(args.includes('+fetch')){
- console.log(JSON.stringify({ok:true,data:{document:{content:JSON.stringify({companies:[{name:'后摩智能',url:'https://example.feishu.cn/docx/embeddedNativeReport',dimensions:['技术路线'],updatedAt:'2026-11-10T00:00:00Z',added:1,conflicts:0}]})}}}));
+const path=require('node:path'),crypto=require('node:crypto'),cloud=process.env.NATIVE_ACCEPTANCE_CLOUD_DIR;
+const arg=name=>args[args.indexOf(name)+1];
+const value=data=>console.log(JSON.stringify({ok:true,data}));
+const docUrl=id=>'https://example.feishu.cn/docx/'+id;
+const read=id=>JSON.parse(fs.readFileSync(path.join(cloud,id+'.json'),'utf8'));
+const save=doc=>{const name=path.join(cloud,doc.document_id+'.json');fs.writeFileSync(name+'.tmp',JSON.stringify(doc));fs.renameSync(name+'.tmp',name);};
+const body=()=>fs.readFileSync(0,'utf8');
+const fromUrl=name=>read(arg(name).split('/').at(-1));
+const markdown=xml=>xml.replace(/<[^>]*>/g,'').replaceAll('&quot;','"').replaceAll('&lt;','<').replaceAll('&gt;','>').replaceAll('&apos;',"'").replaceAll('&amp;','&');
+if(args.includes('+create')){
+ const id=crypto.randomUUID(),doc={document_id:id,revision_id:1,content:args.includes('--content')?body():'',title:arg('--title'),parent:args.includes('--parent-token')?arg('--parent-token'):''};
+ save(doc);value({document:{url:docUrl(id)}});
+}else if(args.includes('+fetch')){
+ const doc=fromUrl('--doc');
+ value({document:{...doc,content:arg('--doc-format')==='markdown'?markdown(doc.content):doc.content}});
+}else if(args.includes('+update')){
+ const doc=fromUrl('--doc');if(doc.revision_id!==Number(arg('--revision-id')))process.exit(1);
+ const input=body();doc.content=arg('--command')==='overwrite'?input:doc.content+input;doc.revision_id++;save(doc);value({document:{revision_id:doc.revision_id}});
+}else if(args.includes('+update-title')){
+ const doc=fromUrl('--url');doc.title=arg('--title');save(doc);value({});
 }else if(args.includes('files')&&args.includes('list')){
  const parent=args[args.indexOf('--folder-token')+1]??'';
  const files=parent==='autoFolder123'?[{name:'全量信息库',type:'folder',token:'industryNativeFolder'},{name:'日报',type:'folder',token:'nativeDailyFolder'}]:parent==='industryNativeFolder'||parent==='nativeDailyFolder'?[]:[{name:'行研工作台',type:'folder',token:'autoFolder123'}];
- console.log(JSON.stringify({ok:true,data:{files,has_more:false}}));
+ const docs=fs.readdirSync(cloud).filter(name=>name.endsWith('.json')).map(name=>read(name.slice(0,-5))).filter(doc=>doc.parent===parent);
+ value({files:[...files,...docs.map(doc=>({name:doc.title,token:doc.document_id,type:'docx',url:docUrl(doc.document_id)}))],has_more:false});
 }else if(args[0]==='profile'){
  process.stdin.resume();process.stdin.on('end',()=>{profiles[args[args.indexOf('--name')+1]]=args[args.indexOf('--app-id')+1];fs.writeFileSync(file,JSON.stringify(profiles));console.log('saved');});
 }else if(args.includes('+messages-send')){if(args[args.indexOf('--as')+1]!=='bot'||args[args.indexOf('--user-id')+1]!=='ou_nativefixture')process.exit(1);console.log(JSON.stringify({ok:true,data:{message_id:'om_fixture'}}));}else{
@@ -40,20 +60,30 @@ const model = createServer(async (req, res) => {
   if (match && body.tools?.length && !input.includes('针对这份报告补充解释')) {
     const prompt = readFileSync(match[1], 'utf8');
     if(parallelGate){parallelSeen.add(match[1]);if(parallelSeen.size===3)releaseParallel();await parallelGate;}
-    const writeCommand=/必须执行 node ("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")/.exec(prompt);
-    if(writeCommand){
-      await promisify(execFile)(process.execPath,[JSON.parse(writeCommand[1]),JSON.parse(writeCommand[2])]);
-      // Exercise command admission through the real host's generated launcher.
-      // The CLI remains the isolated fixture; no user cloud document is edited.
-      const config=JSON.parse(readFileSync(JSON.parse(writeCommand[2]),'utf8'));
-      await promisify(execFile)(process.execPath,[resolve(match[1],'..',`lark-${config.terminalId}`,'lark-agent-client.mjs'),'docs','+update','--doc-token','acceptance-fixture','--content','acceptance']);
-    }
-    if (prompt.includes('本次报告仅存储在飞书云文档')) {
-      const receiptPath = /原子更新 (.+)，本次 requestId/.exec(prompt)[1], requestId = /本次 requestId 固定为 ([a-f0-9-]+)/.exec(prompt)[1];
+    const submit=/经 stdin 执行 node ("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")/.exec(prompt);
+    if (submit) {
+      const command = JSON.parse(submit[1]), configPath = JSON.parse(submit[2]);
+      const { requestId } = JSON.parse(readFileSync(configPath, 'utf8'));
       const retryProbe = prompt.includes('PLATFORM_RETRY_ACCEPTANCE');
       if (retryProbe) retryAttempts++;
-      const receipt = { requestId, status: 'published', folderToken: /目标文件夹 ID：([A-Za-z0-9_-]+)/.exec(prompt)?.[1] ?? 'autoFolder123', url: 'https://example.feishu.cn/docx/embeddedNativeReport', ...(prompt.includes('reportFolderToken') ? {reportFolderToken:'nativeDailyFolder',noUpdates:false,partial:false}:{}), ...(prompt.includes('knownLibrary') || prompt.includes('reportFolderToken') ? { libraryFolderToken: 'industryNativeFolder', manifestUrl: 'https://example.feishu.cn/docx/industryNativeManifest', companies: [{ name: '后摩智能', url: 'https://example.feishu.cn/docx/embeddedNativeReport', dimensions: ['技术路线'], added: 1, conflicts: 0 }] } : {}) };
-      writeFileSync(receiptPath, (retryProbe ? '\uFEFF' : '') + JSON.stringify(retryProbe && retryAttempts === 1 ? { requestId, status: 'failed', error: 'PLATFORM_RETRY_ACCEPTANCE: first attempt intentionally fails' } : receipt));
+      if (retryProbe && retryAttempts === 1) {
+        const receiptPath = resolve(configPath, '..', 'delivery-' + requestId + '.json');
+        writeFileSync(receiptPath, '\uFEFF' + JSON.stringify({ requestId, status: 'failed', error: 'PLATFORM_RETRY_ACCEPTANCE: first attempt intentionally fails' }));
+      } else {
+        const payload = { facts: [{ company: '后摩智能', dimension: '技术路线', key: '芯片流片',
+          date: '2026-11-20', text: '后摩智能完成芯片流片', sources: ['https://example.com/native-host'] }],
+          ...(prompt.includes('报告统计区间') ? { report: '本机原生宿主日报验收正文。' } : {}) };
+        await new Promise((done, reject) => {
+          const client = execFile(process.execPath, [command, configPath], (error, stdout, stderr) => {
+            if (error) reject(new Error(stderr || error.message));
+            else {
+              try { assert.deepEqual(JSON.parse(stdout), { accepted: true }); done(); }
+              catch (error) { reject(error); }
+            }
+          });
+          client.stdin.end(JSON.stringify(payload));
+        });
+      }
     }
   }
   res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -77,7 +107,7 @@ writeFileSync(resolve(dir, 'test-patch.json'), JSON.stringify([
   { id: 'llm-deepseek', config: { baseURL: `http://127.0.0.1:${model.address().port}`, apiKeyEnv: 'DSH_NATIVE_ACCEPTANCE_KEY' } },
 ]));
 const cli = process.platform === 'win32' ? resolve(process.env.APPDATA,'npm/node_modules/@deepseek-ai/dsh/lib/bin.js') : null;
-const child = spawn(cli ? process.execPath : process.env.DSH_COMMAND ?? 'dsh', [...(cli?['--expose-internals',cli]:[]),'--profile', 'native-test', '--patch', resolve(dir, 'test-patch.json'), '--no-open', '--port', String(port)], { env: { ...process.env, DSH_HOME: dir, LARK_CLI_COMMAND: fakeLark, DSH_NATIVE_ACCEPTANCE_KEY: 'sk-' + 'a'.repeat(32) }, stdio: ['ignore', 'pipe', 'pipe'] });
+const child = spawn(cli ? process.execPath : process.env.DSH_COMMAND ?? 'dsh', [...(cli?['--expose-internals',cli]:[]),'--profile', 'native-test', '--patch', resolve(dir, 'test-patch.json'), '--no-open', '--port', String(port)], { env: { ...process.env, DSH_HOME: dir, LARK_CLI_COMMAND: fakeLark, NATIVE_ACCEPTANCE_CLOUD_DIR: cloudDir, DSH_NATIVE_ACCEPTANCE_KEY: 'sk-' + 'a'.repeat(32) }, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = ''; child.stdout.on('data', x => { log = (log + x).slice(-12000); }); child.stderr.on('data', x => { log = (log + x).slice(-12000); });
 const hostURL = `http://127.0.0.1:${port}`;
 async function until(fn, timeout = 40000) { const start = Date.now(); while (Date.now() - start < timeout) { const value = await fn(); if (value) return value; if (child.exitCode !== null) throw new Error(`DSH exited ${child.exitCode}`); await new Promise(r => setTimeout(r, 200)); } throw new Error('真实宿主验收等待超时'); }
@@ -127,7 +157,7 @@ try {
   parallelGate=new Promise(done=>{releaseParallel=done;});
   const batch=await Promise.all([1,2,3].map(n=>fetch(status.url+'/api/industry/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...research,requirements:'并行宿主验收'+n})}).then(async r=>{assert.equal(r.status,202);return r.json();})));
   await until(async()=>{const tasks=await Promise.all(batch.map(t=>fetch(status.url+'/api/tasks/'+t.id).then(r=>r.json()).then(v=>v.task)));if(tasks.some(t=>t.status==='failed'))throw new Error(tasks.find(t=>t.status==='failed').error);return tasks.every(t=>t.status==='ready');});parallelGate=null;
-  assert.equal(parallelSeen.size,3);console.log('PASS: PRD815 三个真实宿主原生会话同时进入模型，保存锁依次获取并完成交付');
+  assert.equal(parallelSeen.size,3);console.log('PASS: PRD815 三个真实宿主原生会话同时进入模型，增量均持久化并按文档完成交付');
 
   if (process.argv.includes('--browser')) {
     browser = await chromium.launch({ headless: true }); page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });

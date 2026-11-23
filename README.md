@@ -1,5 +1,7 @@
 # dsh-industry-research · 行研工作台
 
+0.13.5：Agent 提交后由平台按飞书文档排队保存，支持重启续跑。独立报告可以并行保存，公司索引在本任务交付完成后更新。详见 [发布说明](docs/release-0.13.5.md)。
+
 0.13.4：专题调研列表新增「日报一键重试」，批量提交当前专题库失败的日报并显示提交结果。
 
 0.13.3：专题卡片可直接打开飞书总报和最近发布的日报，点击卡片主体可进入专题详情。
@@ -100,7 +102,7 @@ npm run plugin:pack
 
 ## 安装
 
-当前源码版本为 **0.13.4**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
+当前源码版本为 **0.13.5**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
 Windows、macOS 桌面版以及网页版，均可在 DSH「添加插件」填写：
 

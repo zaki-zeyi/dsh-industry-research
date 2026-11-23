@@ -7,7 +7,7 @@ import { isReadOnlyLarkRequest } from './lark-write-policy.mjs';
 
 // This file and the launcher are copied together. Resolve configuration relative
 // to the script, while CLI input/output paths remain relative to the caller cwd.
-const { command, args = [], managedFolders, writeGuard } = JSON.parse(readFileSync(new URL('./lark-agent-config.json', import.meta.url), 'utf8'));
+const { command, args = [], managedFolders, platformWrites, writeGuard } = JSON.parse(readFileSync(new URL('./lark-agent-config.json', import.meta.url), 'utf8'));
 const request = process.argv.slice(2);
 const drive = request.indexOf('drive');
 if (managedFolders && drive >= 0 && (request[drive+1] === '+create-folder' || request[drive+1] === 'files' && ['create_folder','create-folder'].includes(request[drive+2]))) {
@@ -16,6 +16,10 @@ if (managedFolders && drive >= 0 && (request[drive+1] === '+create-folder' || re
 }
 // Only documented read verbs bypass admission. Unknown commands fail closed.
 const readOnly = isReadOnlyLarkRequest(request);
+if (platformWrites && !readOnly) {
+  console.error('本轮飞书写入由工作台执行，请通过保存提交命令交付增量。');
+  process.exit(1);
+}
 let leaseId;
 async function guard(action, operationId) {
   const {url}=JSON.parse(readFileSync(writeGuard.endpointFile,'utf8'));
