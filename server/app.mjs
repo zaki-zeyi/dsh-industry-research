@@ -2,6 +2,7 @@ import { documentKind, documentDeletionInput } from './document-deletions.mjs';
 import { documentScope, documentOperationKey, documentRemoved, taskDocumentRemoved } from './document-deletion-state.mjs';
 import { topicDeletionInput } from './topic-deletions.mjs';
 import { topicTask, topicScope, topicDocumentKey, topicCards, topicInput, assertTopicAvailable } from './topics.mjs';
+import { isFailedTopicDaily } from './topic-defaults.mjs';
 import { cloudPublications, mergePublicationCards, publicationCacheKey } from './cloud-publications.mjs';
 import { createScopedSync } from './sync-once.mjs';
 import { briefingTask } from './briefings.mjs';
@@ -87,6 +88,38 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     const existing=topicCards(service,(await cloudPublications(service,'topic')).items).find(t=>t.topic.question===input.question);
     res.status(202).json(await service.createAuthorized(topicTask({...input,topicId:input.topicId??existing?.topic.topicId}),key));
   }catch(e){next(e);}});
+  app.post('/api/topics/retry-failed-dailies', async (req, res, next) => {
+    try {
+      const {scope} = z.object({scope:z.string().min(1).max(4000)}).strict().parse(req.body);
+      const checkScope = () => {
+        if (scope !== topicScope(service.feishuSettings(), service.binding?.applicationSnapshot?.())) {
+          throw new ServiceError(409, '飞书账号或存储位置已变化，请刷新专题列表后再试');
+        }
+      };
+      checkScope();
+      if (service.cloudOnly) await service.binding.requireBound();
+      const remote = await cloudPublications(service, 'topic');
+      checkScope();
+      if (service.closed) throw new ServiceError(503, '工作台正在停止，请重启后再试');
+      const candidates = topicCards(service, remote.items)
+        .filter(group => !group.deletion)
+        .flatMap(group => group.dailyReports.filter(isFailedTopicDaily));
+      const rejected = [];
+      let accepted = 0;
+      // Submit through the existing local queue, reusing task IDs and periods.
+      // There is no await during submission, so an overlapping request sees the queued statuses.
+      for (const task of candidates) {
+        try {
+          service.retry(task.id, 'research');
+          accepted++;
+        } catch (error) {
+          if (!(error instanceof ServiceError)) service.store.runtimeLog('topic.retry.failed', {taskId:task.id}, 'error');
+          rejected.push({id:task.id, title:task.direction, error:error instanceof ServiceError?error.message:'暂时无法提交，请稍后重试'});
+        }
+      }
+      res.status(accepted?202:200).json({accepted,rejected});
+    } catch (error) { next(error); }
+  });
   app.get('/api/topics/:id/deletion',async(req,res,next)=>{try{
     res.setHeader('Cache-Control','no-store');
     const plan=await service.topicDeletions.preview(req.params.id,z.string().min(1).parse(req.query.scope));

@@ -124,9 +124,9 @@ export function createTabStore({ freshMs = FRESH_MS, retryMs = RETRY_MS, now = (
 
   // Re-read the local cache only; used by polling so a visible refresh is never
   // duplicated and so no CLI call can be started from a timer.
-  async function reload(key, loaders) {
+  async function reload(key, loaders, { supersede = false } = {}) {
     const current = read(key);
-    if (current.opening || current.syncing) return null;
+    if (!supersede && (current.opening || current.syncing)) return null;
     const epoch = current.epoch + 1;
     write(key, { epoch });
     await readCache(key, epoch, loaders);

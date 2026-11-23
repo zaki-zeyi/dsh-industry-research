@@ -1,4 +1,5 @@
 import { withTopicMergeRules } from './library-merge-prompt.mjs';
+export const isFailedTopicDaily = report => report.status === 'failed' && !report.remoteOnly;
 export const topicTotalTitle=question=>question+'专题调研总报';
 export function topicPrompt(v) {
   return `帮我对【${v.question}】在【${v.sources.join('、')}】进行调研${v.requirements ? `，并满足【${v.requirements}】` : ''}，自动去重合并保存到飞书云盘【专题调研】对应专题的【总报】中，文档命名为【${topicTotalTitle(v.question)}】。关键信息注明来源链接和日期，并呈现本次更新摘要。`;

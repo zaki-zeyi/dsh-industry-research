@@ -1,5 +1,7 @@
 # dsh-industry-research · 行研工作台
 
+0.13.4：专题调研列表新增「日报一键重试」，批量提交当前专题库失败的日报并显示提交结果。
+
 0.13.3：专题卡片可直接打开飞书总报和最近发布的日报，点击卡片主体可进入专题详情。
 
 0.13.2：修复 AI 会话异常后的保存锁残留，失败时撤销旧许可、重试重新拿锁；在途写入确认结束后才交锁，成功交付后同步完成状态。已补测 Key 失效、额度不足、网络断连及真实飞书写入。详见 [发布说明](docs/release-0.13.2.md)。
@@ -98,7 +100,7 @@ npm run plugin:pack
 
 ## 安装
 
-当前源码版本为 **0.13.3**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
+当前源码版本为 **0.13.4**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
 Windows、macOS 桌面版以及网页版，均可在 DSH「添加插件」填写：
 

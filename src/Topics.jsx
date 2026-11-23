@@ -1,7 +1,7 @@
 import { ChoiceGroup } from './ChoiceGroup.jsx';
 import React, { useEffect, useRef, useState } from 'react';
 import { FolderOpen, ArrowUpRight, Trash2 } from 'lucide-react';
-import { topicPrompt, topicDailyPrompt, withTopicTotalMerge, normalizeTopicPrompt } from '../server/topic-defaults.mjs';
+import { topicPrompt, topicDailyPrompt, withTopicTotalMerge, normalizeTopicPrompt, isFailedTopicDaily } from '../server/topic-defaults.mjs';
 import { createTabStore } from './tab-store.mjs';
 import { useTabEntry, useTabPolling } from './use-tab-store.js';
 import { NotificationRetry } from './NotificationRetry.jsx';
@@ -13,6 +13,12 @@ export function Topics({config,onOpen,onRetry,onFixNotification,onRebind}){
  const key='topics:'+(config?.topicScope??config?.publicationScope);
  const selectionKey=config?.topicSelectionScope??key;
  const [query,setQuery]=useState(''),[modal,setModal]=useState(null),[deleting,setDeleting]=useState(null),[error,setError]=useState(''),[selected,setSelected]=useState(()=>selectedTopics.get(selectionKey)??null);
+ const [batchRetry, setBatchRetry] = useState(null);
+ const batchInFlight = useRef(false), currentKey = useRef(key);
+ useEffect(() => {
+   currentKey.current = key;
+   return () => { currentKey.current = null; };
+ }, [key]);
  useEffect(()=>{setSelected(selectedTopics.get(selectionKey)??null);setQuery('');},[selectionKey]);
  const loaders={cached:()=>api('/topics'),sync:({force})=>api('/topics?refresh=true'+(force?'&force=true':''))};
  const state=useTabEntry(store,key,loaders),items=state.items;
@@ -23,7 +29,38 @@ export function Topics({config,onOpen,onRetry,onFixNotification,onRebind}){
  async function begin(){try{if(config?.cloudOnly){const b=await api('/feishu-binding');if(!b.bound)throw new Error('请先通过上方“绑定飞书”完成授权');}setModal({});}catch(e){setError(e.message);}}
  const refresh=()=>store.refresh(key,loaders);
  const total=topic?.totalReport;
- return <section className="industry-content"><p className="industry-eyebrow">INDUSTRY INTELLIGENCE / 05</p>{selected&&<button className="secondary" onClick={()=>select(null)}>← 返回专题列表</button>}<div className="industry-heading"><div><h1>{selected?topic?.topic.question??'正在读取专题…':'专题调研'}</h1><p>{selected?'专题总报与每期日报，分别保留研究成果和对应会话。':'选择一个专题，查看总报与全部专题日报。'}</p></div>{selected&&topic?<button className="primary" onClick={()=>setModal({task:{...topic,topic:{...topic.topic,prompt:undefined}},scheduled:true})}>设置日报</button>:<button className="primary" onClick={begin}>启动专题调研</button>}</div><div className="topic-storage"><span className="topic-storage-icon" aria-hidden="true"><FolderOpen size={21}/></span><div className="topic-storage-location"><span>存储位置</span><strong>飞书云盘 / {config?.feishuRoot?.rootName??'行研工作台'} / 专题调研{topic?' / '+topic.topic.question:''}</strong><small>{topic?'总报与每期日报按专题归档':'按调研方向归档'}</small></div><div className="topic-storage-sync"><span>上次同步</span><time dateTime={state.syncedAt??undefined}>{state.syncedAt?new Date(state.syncedAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}):'等待同步'}</time></div></div><div className="industry-toolbar">{!selected&&<label className="industry-search"><input aria-label="搜索专题" placeholder="搜索专题" value={query} onChange={e=>setQuery(e.target.value)}/></label>}<button disabled={Boolean(state.syncing)} onClick={refresh}>{state.syncing?'同步中…':'刷新'}</button></div>{(error||state.error||state.syncError)&&<div role="alert" className="industry-error">{error||state.error||state.syncError}<button onClick={refresh}>重试同步</button></div>}
+ const hasFailedDaily = items.some(group => !group.deletion && group.dailyReports?.some(isFailedTopicDaily));
+ const batch = batchRetry?.key === key ? batchRetry : null;
+
+ async function retryFailedDailies() {
+   if (batchInFlight.current || !hasFailedDaily || !config?.topicScope) return;
+   batchInFlight.current = true;
+   setBatchRetry({key, pending:true});
+   try {
+     const result = await api('/topics/retry-failed-dailies', {
+       method:'POST', body:JSON.stringify({scope:config.topicScope}),
+     });
+     if (currentKey.current === key) {
+       await store.reload(key, loaders, {supersede:true});
+     }
+     setBatchRetry({key, ...result});
+   } catch (error) {
+     setBatchRetry({key, error:error.message});
+   } finally {
+     batchInFlight.current = false;
+   }
+ }
+ return <section className="industry-content"><p className="industry-eyebrow">INDUSTRY INTELLIGENCE / 05</p>{selected&&<button className="secondary" onClick={()=>select(null)}>← 返回专题列表</button>}<div className="industry-heading"><div><h1>{selected?topic?.topic.question??'正在读取专题…':'专题调研'}</h1><p>{selected?'专题总报与每期日报，分别保留研究成果和对应会话。':'选择一个专题，查看总报与全部专题日报。'}</p></div>{selected&&topic?<button className="primary" onClick={()=>setModal({task:{...topic,topic:{...topic.topic,prompt:undefined}},scheduled:true})}>设置日报</button>:<div>
+   <button type="button" className="secondary" disabled={Boolean(batch?.pending)||!hasFailedDaily||!config?.topicScope} onClick={retryFailedDailies}>
+     {batch?.pending?'正在提交重试…':'日报一键重试'}
+   </button>
+   <button className="primary" onClick={begin}>启动专题调研</button>
+ </div>}</div><div className="topic-storage"><span className="topic-storage-icon" aria-hidden="true"><FolderOpen size={21}/></span><div className="topic-storage-location"><span>存储位置</span><strong>飞书云盘 / {config?.feishuRoot?.rootName??'行研工作台'} / 专题调研{topic?' / '+topic.topic.question:''}</strong><small>{topic?'总报与每期日报按专题归档':'按调研方向归档'}</small></div><div className="topic-storage-sync"><span>上次同步</span><time dateTime={state.syncedAt??undefined}>{state.syncedAt?new Date(state.syncedAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}):'等待同步'}</time></div></div><div className="industry-toolbar">{!selected&&<label className="industry-search"><input aria-label="搜索专题" placeholder="搜索专题" value={query} onChange={e=>setQuery(e.target.value)}/></label>}<button disabled={Boolean(state.syncing)} onClick={refresh}>{state.syncing?'同步中…':'刷新'}</button></div>{(error||state.error||state.syncError)&&<div role="alert" className="industry-error">{error||state.error||state.syncError}<button onClick={refresh}>重试同步</button></div>}
+ {!selected&&batch?.error&&<p role="alert" className="industry-error">{batch.error}</p>}
+ {!selected&&batch?.accepted!==undefined&&<div className="topic-batch-result">
+   <p role="status">{batch.accepted>0?'已提交 '+batch.accepted+' 份专题日报重试。':batch.rejected.length?'本次未提交任何日报。':'当前没有失败的专题日报。'}{batch.rejected.length>0&&' '+batch.rejected.length+' 份未能提交。'}</p>
+   {batch.rejected.length>0&&<details><summary>查看未提交原因</summary><ul>{batch.rejected.map(report=><li key={report.id}>{report.title}：{report.error}</li>)}</ul></details>}
+ </div>}
  {!selected?<><div className="industry-cards">{items.filter(t=>t.topic.question.includes(query)).map(t=><TopicCard key={t.topic.topicId} task={t} onSelect={()=>select(t.topic.topicId)} onDelete={()=>setDeleting(t)}/>)}</div>{!items.length&&<div className="industry-empty"><h2>{state.status!=='ready'||state.syncing?'正在读取专题调研…':'暂无调研专题'}</h2><p>启动调研后，将按专题分别展示总报与每日动态。</p></div>}</>:topic?<><h2 className="topic-section-heading">专题总报</h2><div className="industry-cards">{total?<TopicReportCard task={total} title="总报" onOpen={onOpen} onRetry={onRetry} onFixNotification={onFixNotification} onUpdated={()=>store.reload(key,loaders)}/>:<div className="industry-empty"><h3>暂无专题总报</h3><button className="secondary" onClick={()=>setModal({task:topic,scheduled:false})}>生成专题总报</button></div>}</div>{topic.schedule?.enabled&&<p className="card-meta">专题日报 · 每天 {topic.schedule.time}（北京时间）</p>}<h2 className="topic-section-heading">专题日报 <small>{topic.dailyReports.length} 份</small></h2><p className="card-meta">存储位置：专题调研 / {topic.topic.question} / 日报</p><div className="industry-cards">{topic.dailyReports.map(t=><TopicReportCard key={t.id} task={t} title={t.topic.window?.display??t.direction} daily onOpen={onOpen} onRetry={onRetry} onFixNotification={onFixNotification} onUpdated={()=>store.reload(key,loaders)}/>)}</div>{!topic.dailyReports.length&&<div className="industry-empty"><h3>暂无专题日报</h3><p>设置专题日报后，每期报告都会独立保留在这里。</p></div>}</>:<div className="industry-empty">{state.status==='ready'?'当前目录没有此专题，请返回专题列表。':'正在读取专题…'}</div>}
  {deleting&&<TopicDeleteModal task={deleting} scope={config?.topicScope} onRebind={()=>{setDeleting(null);onRebind?.();}} onClose={()=>setDeleting(null)} onDeleted={async()=>{setDeleting(null);store.removeItem(key,deleting.id);await store.reload(key,loaders);}}/>}
  {modal&&<TopicModal task={modal.task} scheduled={modal.scheduled} onClose={()=>setModal(null)} onSaved={t=>{setModal(null);store.reload(key,loaders);if(t){select(t.topic.topicId);onOpen(t);}}}/>}</section>;

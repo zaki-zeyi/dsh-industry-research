@@ -107,6 +107,37 @@ test('专题卡片直达总报和最近发布的日报，打开报告仍停留�
  await expect(emptyCard.getByText('暂无日报',{exact:true})).toBeVisible();
 });
 
+test('专题列表一键重试保留列表，显示部分提交结果并更新日报状态', async ({page}) => {
+ const scope = (await (await page.request.get('/api/config')).json()).topicScope;
+ const topic = {topicId:'66666666-6666-4666-8666-666666666666',question:'日报一键重试验收',workflowVersion:468};
+ const day = '2026-11-22';
+ const daily = {id:'batch-daily',topic:{...topic,window:{display:day}},direction:'专题日报 · '+day,status:'failed',publication:{status:'failed'}};
+ const blocked = {...daily,id:'blocked-daily',direction:'专题日报 · 2026-11-21',topic:{...topic,window:{display:'2026-11-21'}}};
+ let accepted = false, requests = 0;
+ await page.route(/\/api\/topics(?:\?.*)?$/, route => route.fulfill({json:{items:[
+   {id:'batch-topic',topic,status:'ready',totalReport:null,dailyReports:[accepted?{...daily,status:'queued',stage:'queued'}:daily,blocked]},
+ ],syncedAt:new Date().toISOString()}}));
+ await page.route('**/api/topics/retry-failed-dailies', route => {
+   expect(route.request().method()).toBe('POST');
+   expect(route.request().postDataJSON()).toEqual({scope});
+   requests++;
+   accepted = true;
+   return route.fulfill({status:202,json:{accepted:1,rejected:[{id:blocked.id,title:blocked.direction,error:'任务正在执行，请勿重复重试'}]}});
+ });
+ await page.goto('/');
+ await page.getByRole('button',{name:'专题调研',exact:true}).click();
+ await page.getByRole('button',{name:'日报一键重试',exact:true}).click();
+ const result = page.locator('.topic-batch-result').getByRole('status');
+ await expect(result).toContainText('已提交 1 份专题日报重试');
+ await expect(result).toContainText('1 份未能提交');
+ await page.getByText('查看未提交原因',{exact:true}).click();
+ await expect(page.getByText('专题日报 · 2026-11-21：任务正在执行，请勿重复重试',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'查看专题：'+topic.question,exact:true}).click();
+ await expect(page.locator('.topic-report-card').filter({hasText:day}).locator('.task-status')).toHaveText('排队中');
+ await expect(page.getByRole('button',{name:'日报一键重试',exact:true})).toHaveCount(0);
+ expect(requests).toBe(1);
+});
+
 for(const asynchronous of [false,true])test(`PRD519 删除专题确认、取消、整卡点击隔离与${asynchronous?'异步续查':'刷新竞态'}`,async({page})=>{
  const topicId='33333333-3333-4333-8333-333333333333',question='删除流程验收专题';
  const total={id:'delete-total',direction:'专题总报 · '+question,status:'ready',createdAt:'2026-11-16T01:00:00Z',topic:{topicId,question,workflowVersion:468},publication:{status:'published',url:'https://example.feishu.cn/docx/DeleteTotal'}};
