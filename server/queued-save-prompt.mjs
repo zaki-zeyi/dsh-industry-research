@@ -1,5 +1,6 @@
 import { cliFor } from './feishu-application.mjs';
 import { internalTranscriptFormat } from './internal-material-prompt.mjs';
+import { topicCitationRule } from './topic-defaults.mjs';
 
 export function queuedSavePrompt(task, meta) {
   const cli = cliFor(task.feishuApp, meta);
@@ -20,14 +21,16 @@ export function queuedSavePrompt(task, meta) {
         JSON.stringify({ companies: research.companies, dimensions: research.dimensions, documents: known }),
         '有候选更新且存在公司文档时，在本轮调研中读取原文，识别旧条目的不同表述、状态变化和冲突。已收录且无新证据的事实无需提交。');
     }
-    if (task.topic) instructions.push('专题事实省略 company，按有意义的章节指定 dimension。专题日报的 report 和用于合并总报的 facts 分别提供。直接更新专题总报只提交 facts。');
+    if (task.topic) instructions.push('专题事实省略 company，按有意义的章节指定 dimension。专题日报的 report 和用于合并总报的 facts 分别提供。直接更新专题总报只提交 facts。' + topicCitationRule);
   }
   if (!task.industry && (!task.topic || task.topic.window)) {
     instructions.push('report 是完整 Markdown 正文，由平台按任务标题独立创建文档。正文应有可追溯的原始来源。');
   }
   if (task.briefing || task.topic?.window) {
     const window = task.briefing?.window ?? task.topic.window;
-    instructions.push('报告统计区间为 ' + window.display + '（左闭右开），注明披露日、事件发生日和资料缺口。只把区间内核验的事实纳入 facts。');
+    instructions.push(task.topic
+      ? '专题日报统计区间为 ' + window.display + '。时间边界为 UTC [' + window.start + ', ' + window.end + ')。注明披露日、事件发生日和资料缺口。专题日报和 facts 只纳入区间内披露的已核验事实。'
+      : '报告统计区间为 ' + window.display + '（左闭右开），注明披露日、事件发生日和资料缺口。只把区间内核验的事实纳入 facts。');
   }
   if (task.analysis) {
     instructions.push('只读取以下所选公司的全量信息库文档，比较所选维度，不补充库外事实。将资料不足的公司放进 insufficient 数组。来源配置：' +

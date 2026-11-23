@@ -1,9 +1,9 @@
 import { libraryMergeRules } from './library-merge-prompt.mjs';
 const labelFor = kind => kind === 'daily' ? '日报' : '周报';
-export function reportWindow(kind, now = new Date()) {
+export function reportWindow(kind, now = new Date(), days = kind === 'weekly' ? 7 : 1) {
   const date = new Date(now.getTime() + 8 * 3600000).toISOString().slice(0, 10);
   const end = new Date(date + 'T00:00:00+08:00');
-  const start = new Date(end.getTime() - (kind === 'weekly' ? 7 : 1) * 86400000);
+  const start = new Date(end.getTime() - days * 86400000);
   const fmt = d => new Date(d.getTime() + 8 * 3600000).toISOString().slice(0,16).replace('T',' ');
   return { start: start.toISOString(), end: end.toISOString(), display: `${fmt(start)} 至 ${fmt(new Date(end - 60000))}（北京时间）` };
 }

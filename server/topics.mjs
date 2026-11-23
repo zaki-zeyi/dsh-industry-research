@@ -1,4 +1,4 @@
-import { topicPrompt, topicDailyPrompt, withTopicTotalMerge, normalizeTopicPrompt, topicTotalTitle } from './topic-defaults.mjs';
+import { topicPrompt, topicDailyPrompt, withTopicTotalMerge, normalizeTopicPrompt, topicTotalTitle, topicCitationRule } from './topic-defaults.mjs';
 export { topicPrompt } from './topic-defaults.mjs';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
@@ -36,10 +36,32 @@ export const topicRootKey = task => 'topic-root:' + topicScope(task.feishuRoot,t
 export const legacyTopicFolderKey = task => 'topic-folder:' + topicScope(task.feishuRoot,task.feishuApp);
 export const topicFolderKey = task => 'topic-folder-v2:' + topicScope(task.feishuRoot,task.feishuApp)+':'+task.topic.topicId;
 export const topicDocumentKey = task => 'topic-document:' + topicScope(task.feishuRoot,task.feishuApp) + ':' + task.topic.topicId;
-export const topicDailyDocumentKey = task => 'topic-daily-document:' + topicScope(task.feishuRoot,task.feishuApp) + ':' + task.topic.topicId+':'+task.topic.window.start;
-export function topicTask(input, now) {
-  const parsed=topicInput.parse(input),v={...parsed,...(parsed.prompt?{prompt:normalizeTopicPrompt(parsed.prompt)}:{})}, window=now ? reportWindow('daily',new Date(now)) : undefined;
-  return {direction:(window?'专题日报 · ':'专题总报 · ')+v.question.slice(0,140)+(window?' · '+window.display.slice(0,10):''),sources:v.sources.join('、'),prompt:v.prompt ?? (window?topicDailyPrompt(v,window.display):topicPrompt(v)),topic:{...v,topicId:v.topicId ?? randomUUID(),workflowVersion:468,...(window?{window,totalMergeRequired:true}:{})}};
+const DAY_MS = 86400000;
+// A period is identified by its last included local day. With a one-day
+// window this is the legacy start timestamp, so saved links still resolve.
+export function topicDailyPeriod(window) {
+  const start = Date.parse(window?.start), end = Date.parse(window?.end);
+  return Number.isFinite(start) && end - start >= DAY_MS
+    ? new Date(end - DAY_MS).toISOString()
+    : window?.start;
+}
+export const topicDailyDocumentKey = task => 'topic-daily-document:' + topicScope(task.feishuRoot,task.feishuApp) + ':' + task.topic.topicId+':'+topicDailyPeriod(task.topic.window);
+
+export function topicTask(input, now, lookbackDays = 1) {
+  const parsed = topicInput.parse(input);
+  const v = {...parsed, ...(parsed.prompt ? {prompt:normalizeTopicPrompt(parsed.prompt)} : {})};
+  const window = now == null ? undefined : reportWindow('daily', new Date(now), lookbackDays);
+  const dateInBeijing = iso => new Date(Date.parse(iso)+8*3600000).toISOString().slice(0,10);
+  const question = v.question.slice(0,140);
+  let direction = '专题总报 · '+question;
+  let prompt = v.prompt ?? topicPrompt(v);
+  if (window) {
+    const lastDay = dateInBeijing(topicDailyPeriod(window));
+    const firstDay = dateInBeijing(window.start);
+    direction = '专题日报 · '+question+' · '+(firstDay===lastDay?lastDay:firstDay+' 至 '+lastDay);
+    prompt = v.prompt?.replaceAll('{{时间范围}}',window.display) ?? topicDailyPrompt(v,window.display);
+  }
+  return {direction,sources:v.sources.join('、'),prompt,topic:{...v,topicId:v.topicId ?? randomUUID(),workflowVersion:468,...(window?{window,totalMergeRequired:true}:{})}};
 }
 export function rememberTopic(service,task,delivery) {
   if(!task.topic)return;
@@ -81,7 +103,7 @@ export function rememberTopic(service,task,delivery) {
   if(previous?.url && delivery.url && previous.url!==delivery.url)throw new Error('重试必须复用已有专题报告文档');
   if(modern&&delivery.url){
     if(tasks.some(t=>t.id!==task.id&&t.topic&&topicScope(t.feishuRoot,t.feishuApp)===topicScope(task.feishuRoot,task.feishuApp)&&t.publication?.url===delivery.url&&(
-      t.topic.topicId!==task.topic.topicId||Boolean(t.topic.window&&t.topic.workflowVersion===468)!==Boolean(task.topic.window)||task.topic.window&&(!t.topic.window||t.topic.workflowVersion!==468||t.topic.window.start!==task.topic.window.start))))throw new Error('不同专题、总报或不同期日报不能覆盖同一文档');
+      t.topic.topicId!==task.topic.topicId||Boolean(t.topic.window&&t.topic.workflowVersion===468)!==Boolean(task.topic.window)||task.topic.window&&(!t.topic.window||t.topic.workflowVersion!==468||topicDailyPeriod(t.topic.window)!==topicDailyPeriod(task.topic.window)))))throw new Error('不同专题、总报或不同期日报不能覆盖同一文档');
   }
   if(delivery.url)service.store.saveSetting(docKey,{url:delivery.url});
   if(merging&&delivery.topicTotalUrl)service.store.saveSetting(totalKey,{...knownTotal,url:delivery.topicTotalUrl,taskId:knownTotal?.taskId??task.id,status:knownTotal?.status==='published'?'published':delivery.status});
@@ -97,7 +119,7 @@ ${modern?`存储结构为根目录 /【${TOPIC_FOLDER}】/【${task.topic.questi
 保存锁返回的 ${daily&&modern?'topicDailyDocument.url':'topicDocument.url'} 优先于旧快照 ${JSON.stringify(prior ?? null)}。${daily&&modern?'每期日报一个独立文档，不得与专题总报使用同一文档，也不得覆盖其他日期日报。':'同一专题一个总报文档，先完整读取原文，保留人工内容，按事实去重、补充或更新，冲突并列来源和日期。'}重试复用本期已有文档。创建结果不确定时停止并提示核对，不盲目重建。
 ${modern&&!daily?'若保存锁带有旧版总报链接，读取并复用该文档；按 drive skills 将其移动到当前专题目录，不删除、不复制或重建旧文档。':''}
 ${merging?`同一次保存锁内还必须完成总报增量合并：使用锁返回的 topicDocument.url 完整读取本专题原总报，保留历史内容、人工编辑及原始证据链接；将本期日报的新事实按事实和来源去重后补充到对应章节，冲突并列来源及日期，禁止整篇替换。已有总报必须复用原链接；总报不存在才在 topicLibrary.folderToken 下创建唯一【${topicTotalTitle(task.topic.question)}】，取得链接立即回传 publishing 的 topicTotalUrl，禁止建在日报目录。确认无更新时保留原总报；无总报且无更新时创建明确标注资料状态的总报，不编造事实。两份文档都读回核对后才能回传 published，并带上总报真实链接 topicTotalUrl；任一步失败回传 failed，保留已生成日报、总报链接和部分成果，下次重试先读回去重，不能重复追加。`:''}
-根据本次调研方向、其他要求与实际内容选择报告章节和维度，不套用平台旧版固定三段模板。关键信息注明原始来源链接和信息日期，资料不足明确标注，不能编造。已有总报可按主题调整旧模板章节，保留原有事实、来源与人工内容，不为沿用旧模板而继续使用固定三段结构。${daily?`本次专题日报仅检索 ${task.topic.window.display} 的新披露，UTC 左闭右开 ${task.topic.window.start} 至 ${task.topic.window.end}。确认全部无更新才标记 noUpdates；资料缺口标 partial，不可当作无更新。自定义 Prompt 的 {{时间范围}} 指上述区间。`:''}
+根据本次调研方向、其他要求与实际内容选择报告章节和维度，不套用平台旧版固定三段模板。${topicCitationRule}资料不足明确标注，不能编造。已有总报可按主题调整旧模板章节，保留原有事实、来源与人工内容，不为沿用旧模板而继续使用固定三段结构。${daily?`本次专题日报仅检索 ${task.topic.window.display} 的新披露，UTC 左闭右开 ${task.topic.window.start} 至 ${task.topic.window.end}。确认全部无更新才标记 noUpdates；资料缺口标 partial，不可当作无更新。自定义 Prompt 的 {{时间范围}} 指上述区间。`:''}
 ${modern?`本专题总报文档统一命名为 ${JSON.stringify(topicTotalTitle(task.topic.question))}；已有总报沿用原链接，旧标题可按 drive skills 原地重命名，不复制或重建。`:''}
 标题使用 ${JSON.stringify(modern?(daily?task.direction:topicTotalTitle(task.topic.question)):task.direction)}，不附内部标识。正文通过 stdin/内存传给 CLI，不存本地正文。完成后读回验证。
 原子更新 ${meta.deliveryPath}，本次 requestId 固定为 ${meta.deliveryRequestId}：
@@ -114,7 +136,10 @@ export function topicCards(service,remote){
     let group=[...groups.values()].find(g=>g.topic.topicId===t.topic.topicId||(folder&&g.topicFolderToken===folder)||(!t.topic.window&&t.publication?.url&&g.totalReport?.publication?.url===t.publication.url));
     if(!group){group={...t,topicFolderToken:folder,totalReport:null,dailyReports:[],schedule:service.topicSchedules?.get(t.topic.topicId)};groups.set(t.topic.topicId,group);}
     if(!group.topicFolderToken&&folder)group.topicFolderToken=folder;
-    if(t.topic.workflowVersion===468&&t.topic.window){if(!group.dailyReports.some(d=>d.id===t.id||t.topic.window?.start&&d.topic.window?.start===t.topic.window.start||d.publication?.url&&d.publication.url===t.publication?.url))group.dailyReports.push(t);}
+    if(t.topic.workflowVersion===468&&t.topic.window){
+      const period=topicDailyPeriod(t.topic.window);
+      if(!group.dailyReports.some(d=>d.id===t.id||period&&topicDailyPeriod(d.topic.window)===period||d.publication?.url&&d.publication.url===t.publication?.url))group.dailyReports.push(t);
+    }
     else if(!group.totalReport&&(!t.remoteOnly||t.publication?.url))group.totalReport=t;
     else if(t.publication?.url===group.totalReport?.publication?.url&&group.totalReport?.remoteOnly&&!t.remoteOnly)group.totalReport=t;
   }
@@ -129,5 +154,6 @@ export function topicCards(service,remote){
     delete g.totalReport.totalReport;delete g.totalReport.dailyReports;delete g.totalReport.schedule;
   }
   const deletion=g=>topicDeletionState(service.store,service.feishuSettings(),service.binding?.applicationSnapshot?.(),g.topic.topicId,g.topicFolderToken,g.totalReport?.publication?.url);
-  return [...groups.values()].filter(g=>deletion(g)?.status!=='deleted').map(g=>({...g,deletion:deletion(g)?{status:'pending'}:undefined,topic:{...g.topic,question:g.totalReport?.topic.question??g.topic.question},dailyReports:g.dailyReports.sort((a,b)=>String(b.topic.window?.start??b.createdAt??'').localeCompare(String(a.topic.window?.start??a.createdAt??'')))}));
+  const order = report => topicDailyPeriod(report.topic.window) || report.createdAt || '';
+  return [...groups.values()].filter(g=>deletion(g)?.status!=='deleted').map(g=>({...g,deletion:deletion(g)?{status:'pending'}:undefined,topic:{...g.topic,question:g.totalReport?.topic.question??g.topic.question},dailyReports:g.dailyReports.sort((a,b)=>order(b).localeCompare(order(a)))}));
 }
