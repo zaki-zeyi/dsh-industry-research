@@ -91,10 +91,14 @@ async function readTopicPublications(service,{root,app,key,list,children}){
       else items.push({id:'folder-'+token,remoteOnly:true,direction:'专题总报 · '+topic.question,status:'ready',createdAt:timestamp(folder),topic,topicFolderToken:token,publication:{status:'pending'}});
       const dailyFolders=matchingFolders(content,'日报').map(driveToken);
       for(const daily of (await readFolders(dailyFolders,list)).filter(isDocument)){
-        const date=/\d{4}-\d{2}-\d{2}/.exec(daily.name??'')?.[0];
-        const parsed=date?Date.parse(date+'T00:00:00+08:00'):NaN;
-        const start=Number.isFinite(parsed)?new Date(parsed).toISOString():'';
-        const window={start,end:start?new Date(Date.parse(start)+86400000).toISOString():'',display:date??'历史日报 · 统计区间见文档'};
+        const name=daily.name??'';
+        const range=/(\d{4}-\d{2}-\d{2})(?: 至 (\d{4}-\d{2}-\d{2}))?$/.exec(name.trim());
+        const firstDay=range?.[1]??/\d{4}-\d{2}-\d{2}/.exec(name)?.[0];
+        const lastDay=range?.[2]??firstDay;
+        const start=Date.parse(firstDay+'T00:00:00+08:00'), last=Date.parse(lastDay+'T00:00:00+08:00');
+        const window=Number.isFinite(start)&&last>=start
+          ? {start:new Date(start).toISOString(),end:new Date(last+86400000).toISOString(),display:range?.[2]?firstDay+' 至 '+lastDay:firstDay}
+          : {start:'',end:'',display:'历史日报 · 统计区间见文档'};
         items.push(record(daily,{...topic,window},{topicFolderToken:token,topicRootFolderToken:parent,dailyFolderToken:matchingFolders(content,'日报')[0]&&driveToken(matchingFolders(content,'日报')[0])}));
       }
     }

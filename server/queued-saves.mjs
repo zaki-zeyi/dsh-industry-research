@@ -6,7 +6,7 @@ import { briefingKey } from './briefings.mjs';
 import { assertDocumentAvailable, documentDeletionState, documentRemoved } from './document-deletion-state.mjs';
 import { library, libraryNamespaceKey, mergeCompanyDelivery, parseLibraryManifest } from './industry.mjs';
 import { internalFolderKey } from './internal-materials.mjs';
-import { assertTopicAvailable, legacyTopicFolderKey, topicDailyDocumentKey, topicDocumentKey, topicFolderKey } from './topics.mjs';
+import { assertTopicAvailable, legacyTopicFolderKey, topicDailyDocumentKey, topicDailyPeriod, topicDocumentKey, topicFolderKey } from './topics.mjs';
 import { topicTotalTitle } from './topic-defaults.mjs';
 import { documentToken, jsonBlock, plainXml } from './queued-save-documents.mjs';
 import { mergeQueuedFacts } from './queued-save-merge.mjs';
@@ -184,7 +184,7 @@ export class QueuedSaves {
       if (!daily || task.topic.totalMergeRequired) add('topicTotal', total);
       if (!daily) return jobs;
       parent = folders?.dailyFolderToken;
-      primaryRef = 'topic-daily:' + parent + ':' + task.topic.window.start;
+      primaryRef = 'topic-daily:' + parent + ':' + topicDailyPeriod(task.topic.window);
       primaryUnique = true;
       url = store.setting(topicDailyDocumentKey(task))?.url ?? url;
     }
