@@ -114,6 +114,7 @@ export class ResearchService {
           terminal: terminalId => { run.terminalId = terminalId; t.terminalId = terminalId; t.terminalMode = !t.nativeSession; this.save(t); },
           checkpoint: text => { t.draft = text; this.save(t); },
         });
+        if (report.queuedSave) return;
         signal.throwIfAborted();
         if (t.cloudOnly) {
           const delivery = agentDeliverySchema.parse(report.cloudDelivery);
@@ -156,6 +157,7 @@ export class ResearchService {
       }
       this.event(id, 'system', t.publication.owner === 'agent' ? (t.publication.status === 'published' ? '终端 Agent 已回传飞书文档链接。' : '报告已生成并保留副本，可点击“上传飞书”交给终端 Agent 保存。') : t.publication.target === 'local' ? '报告已保存到本地文档。' : t.publication.target === 'feishu' ? '报告已成功保存到飞书。' : '报告已保存到本地演示文档。真实模式会返回飞书链接。');
     } catch (e) {
+      if (t.cloudOnly && this.require(id).queuedSave) return;
       const message = signal.aborted ? '执行已中断，已保留内容和记录' : (e.message ?? '任务执行失败');
       if (t.stage === 'publish') { t.publication.status = signal.aborted ? 'interrupted' : 'failed'; t.publication.error = message; }
       else { t.status = signal.aborted ? 'interrupted' : 'failed'; t.error = message; const run = t.runs.at(-1); if (run) { run.status = t.status; run.endedAt = new Date().toISOString(); if(t.nativeSession&&t.terminalId)run.failedTurnSequence=this.store.terminal(t.terminalId)?.turnSequence??0; } }
@@ -165,6 +167,7 @@ export class ResearchService {
   }
   retry(id, stage) {
     const t = this.require(id);
+    if (t.queuedSave && this.queuedSaves) return this.queuedSaves.retry(t);
     assertTopicAvailable(this,t.topic,t.feishuRoot,t.feishuApp);
     assertDocumentAvailable(this,t);
     if (t.nativeSession && !this.nativeSessions) throw new ServiceError(503, '请在宿主 DSH 插件中重试此原生会话');
@@ -212,6 +215,20 @@ export class ResearchService {
       throw new ServiceError(503, '无法发送上传指令，请恢复终端后重试上传');
     }
     return this.require(id);
+  }
+  completeQueuedSave(t, delivery) {
+    this.rememberCloudFolder(t, delivery);
+    rememberTopic(this, t, delivery);
+    this.rememberBriefing(t, delivery);
+    this.rememberInternalMaterial(t, delivery);
+    if (t.analysis) t.analysisReport = mergeAnalysisDelivery(this.store, t, delivery);
+    t.publication = { ...agentPublication(delivery), owner: 'platform' };
+    t.status = 'ready';
+    t.stage = 'done';
+    const run = t.runs.at(-1);
+    if (run) { run.status = 'completed'; run.endedAt = new Date().toISOString(); }
+    this.save(t);
+    this.event(t.id, 'system', delivery.url ? '飞书保存和核对已完成。' : '本轮没有待写入的公司事实。');
   }
   rememberBriefing(t, delivery) {
     if (!t.briefing) return;
@@ -328,6 +345,7 @@ export class ResearchService {
   }
   cancel(id) {
     const t = this.require(id); const active = this.active.get(id);
+    if (t.queuedSave && this.queuedSaves) return this.queuedSaves.cancel(t);
     if (active) active.controller.abort();
     else { const index = this.queue.findIndex(x => x.id === id); if (index < 0) throw new ServiceError(409, '任务当前未在执行'); this.queue.splice(index, 1); t.status = 'interrupted'; t.stage = 'queued'; this.save(t); }
     return this.require(id);
@@ -338,6 +356,7 @@ export class ResearchService {
       try{assertDocumentAvailable(this,t);}catch{continue;}
       if(t.topic){try{assertTopicAvailable(this,t.topic,t.feishuRoot,t.feishuApp);}catch{continue;}}
       if((t.briefing||t.internal||t.topic?.window)&&t.notification?.status==='sending'){t.notification={...t.notification,status:'failed',error:'服务重启，通知结果待核对；报告已保留，可重试通知。'};this.store.save(t);}
+      if (t.status === 'running' && this.queuedSaves?.recover(t)) continue;
       if (t.status === 'queued') this.enqueue(t.id, 'research');
       else if (t.status === 'running') { t.status = 'interrupted'; t.error = t.cloudOnly ? '服务重启导致调研中断，任务与会话已保留，请先核对飞书文档后重试' : '服务重启导致调研中断，已保留草稿与会话，请重试'; const run = t.runs.at(-1); if (run) run.status = 'interrupted'; this.save(t); this.event(t.id, 'system', t.error); }
       else if (t.report && t.publication.owner === 'agent' && t.publication.requestId && t.publication.status === 'publishing') { t.publication.status = 'failed'; t.publication.error = '服务重启导致上传中断，报告已保留，请点击重试上传，由 Agent 先核对已有文档。'; this.save(t); }
@@ -347,5 +366,5 @@ export class ResearchService {
     }
     for (const id of notificationsToRetry) void this.notifications?.send(id).catch(() => {});
   }
-  async close() { this.closed = true; this.cloudWrites.close(); const jobs = [...this.active.values()]; for (const j of jobs) j.controller.abort(); await Promise.allSettled(jobs.map(j => j.promise)); await this.notifications?.close(); await this.internalNotifications?.close(); await this.topicDeletions?.close(); await this.internalReconciliation?.close(); await this.documentDeletions?.close(); this.bus.removeAllListeners(); }
+  async close() { this.closed = true; this.cloudWrites.close(); const jobs = [...this.active.values()]; for (const j of jobs) j.controller.abort(); await Promise.allSettled([...jobs.map(j => j.promise), this.queuedSaves?.close()]); await this.notifications?.close(); await this.internalNotifications?.close(); await this.topicDeletions?.close(); await this.internalReconciliation?.close(); await this.documentDeletions?.close(); this.bus.removeAllListeners(); }
 }

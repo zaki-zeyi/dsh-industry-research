@@ -8,6 +8,8 @@ import { BriefingSchedules } from './briefings.mjs';
 import { resolve } from 'node:path';
 import { FeishuBinding } from './feishu-binding.mjs';
 import { FeishuDirectories } from './feishu-directories.mjs';
+import { QueuedSaves } from './queued-saves.mjs';
+import { QueuedSaveDocuments } from './queued-save-documents.mjs';
 import { AISettings } from './ai-settings.mjs';
 import { NativeSessions, NativeResearcher } from './native-sessions.mjs';
 import { Store } from './store.mjs';
@@ -25,7 +27,7 @@ import { createHash } from 'node:crypto';
 import { recordTrace, recordRuntimeStart, recordRuntimeStop } from './connection-trace.mjs';
 import { fileURLToPath } from 'node:url';
 export function dataIdentity(path) { return createHash('sha256').update(resolve(path)).digest('hex'); }
-export async function startRuntime({ env = process.env, port = Number(env.PORT ?? 3088), dataDir = resolve(env.DATA_DIR ?? './data'), dist = fileURLToPath(new URL('../dist', import.meta.url)), host, binding, directories, libraryRun, libraryImportRun, analysisRun, publicationRun } = {}) {
+export async function startRuntime({ env = process.env, port = Number(env.PORT ?? 3088), dataDir = resolve(env.DATA_DIR ?? './data'), dist = fileURLToPath(new URL('../dist', import.meta.url)), host, binding, directories, libraryRun, libraryImportRun, analysisRun, publicationRun, queuedDocuments } = {}) {
   dataDir = resolve(dataDir);
   mkdirSync(dataDir, { recursive: true });
   const lock = resolve(dataDir, '.runtime.lock');
@@ -58,6 +60,10 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     // Injected bindings belong to offline hosts/tests. Production native runs
     // always resolve directories on the server before authorizing cloud writes.
     service.directories = directories ?? (service.cloudOnly && !binding ? new FeishuDirectories(store, { command: service.binding.command }) : undefined);
+    if (nativeSessions && service.directories && (queuedDocuments || !binding)) {
+      service.queuedSaves = new QueuedSaves(service, queuedDocuments ?? new QueuedSaveDocuments(service.binding.command));
+      nativeSessions.queuedSaving = true;
+    }
     terminals.onDelivery = (id, terminalId, receipt) => service.recordAgentDelivery(id, terminalId, receipt);
     terminals.onSessionExit = (id, terminalId) => service.agentTerminalExited(id, terminalId);
     service.terminals = terminals; service.aiSettings = aiSettings; service.nativeSessions = nativeSessions;
@@ -73,6 +79,7 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     recordTrace(store,'runtime.started',{status:'ready',phase:service.mode});
     service.recover();
     service.cloudWrites.start();
+    service.queuedSaves?.start();
     void service.topicSchedules.catchUpMissed().catch(() => {});
     if (service.briefingSchedules) void service.briefingSchedules.catchUpMissed().catch(() => {});
 

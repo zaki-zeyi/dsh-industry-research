@@ -21,6 +21,24 @@ export class Store {
       CREATE INDEX IF NOT EXISTS terminal_frames_session ON terminal_frames(terminal_id,seq);`);
   }
   transaction(fn) { this.db.exec('BEGIN IMMEDIATE'); try { const v = fn(); this.db.exec('COMMIT'); return v; } catch (e) { this.db.exec('ROLLBACK'); throw e; } }
+  initSaveJobs() {
+    this.db.exec(`CREATE TABLE IF NOT EXISTS save_jobs (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+      task_id TEXT NOT NULL, status TEXT NOT NULL, body TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS save_jobs_task ON save_jobs(task_id, seq);
+    CREATE INDEX IF NOT EXISTS save_jobs_pending ON save_jobs(status, seq);`);
+  }
+  putSaveJob(job) {
+    this.db.prepare(`INSERT INTO save_jobs(id,task_id,status,body) VALUES(?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET status=excluded.status,body=excluded.body`)
+      .run(job.id, job.taskId, job.status, JSON.stringify(job));
+  }
+  saveJobs(taskId) {
+    const rows = taskId ? this.db.prepare('SELECT body FROM save_jobs WHERE task_id=? ORDER BY seq').all(taskId)
+      : this.db.prepare("SELECT body FROM save_jobs WHERE status IN ('pending','running') ORDER BY seq").all();
+    return rows.map(row => JSON.parse(row.body));
+  }
   get(id) { const r = this.db.prepare('SELECT body FROM tasks WHERE id=?').get(id); return r ? JSON.parse(r.body) : null; }
   list() { return this.db.prepare('SELECT body FROM tasks ORDER BY created_at DESC, id DESC').all().map(r => JSON.parse(r.body)); }
   save(task) { task.updatedAt = new Date().toISOString(); this.db.prepare('INSERT INTO tasks VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(task.id, JSON.stringify(task), task.createdAt); return task; }

@@ -18,9 +18,11 @@ import './industry-binding.css';
 import './analysis.css';
 async function api(path, options = {}) { const r = await fetch('/api' + path, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } }); const value = await r.json(); if (!r.ok) throw new Error(value.error ?? '请求失败'); return value; }
 const time = value => new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Shanghai' }).format(new Date(value));
-const status = t => t.stage==='waiting_save'?'等待保存（其他任务正在写入）':({ ready: '已完成', failed: '失败', interrupted: '已中断', running: '调研中', queued: '排队中' })[t.status] ?? t.status;
+const status = t => t.status === 'running' && t.stage === 'waiting_save' ? '等待保存' :
+  t.status === 'running' && t.stage === 'saving' ? '正在保存' :
+  ({ ready: '已完成', failed: '失败', interrupted: '已中断', running: '调研中', queued: '排队中' })[t.status] ?? t.status;
 // Card badges stay short: a report that no local task can be matched to is simply published.
-const cardStatus = item => item.status ? ({ ready: '已完成', failed: '失败', interrupted: '已中断', running: '调研中', queued: '排队中' })[item.status] ?? item.status : '已发布';
+const cardStatus = item => item.status ? status(item) : '已发布';
 export function IndustryApp({ BindingModal, RootModal, Conversation }) {
   const [config, setConfig] = useState(null), [binding, setBinding] = useState(null), [tab, setTab] = useState('library');
   const [companies, setCompanies] = useState([]), [tasks, setTasks] = useState([]), [cursor, setCursor] = useState(null), [query, setQuery] = useState('');

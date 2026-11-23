@@ -25,11 +25,9 @@ export function uniqueFolder(files, name, knownToken) {
   return preferredFolder(files, name, knownToken);
 }
 
-// One resolver per runtime. Its queue also serializes different profiles that
-// access the same shared root; the normal write lock still owns document writes.
 export class FeishuDirectories {
   constructor(store, { command = 'lark-cli', run } = {}) {
-    this.store = store; this.command = command; this.run = run; this.tail = Promise.resolve();
+    this.store = store; this.command = command; this.run = run; this.pending = new Map();
   }
   async json(app, args) {
     const selected = [...(app?.profile ? ['--profile', app.profile] : []), ...args];
@@ -52,7 +50,20 @@ export class FeishuDirectories {
     return listing.files;
   }
   async folder(app, parent, name, signal, provenToken) {
-    const key = keyFor(parent, name, app), cached = this.store.setting(key);
+    const key = keyFor(parent, name, app);
+    signal?.throwIfAborted();
+    const prior = this.pending.get(key);
+    if (prior) {
+      await prior.catch(() => {});
+      return this.folder(app, parent, name, signal, provenToken);
+    }
+    const job = this.resolveFolder(key, app, parent, name, signal, provenToken);
+    this.pending.set(key, job);
+    try { return await job; }
+    finally { this.pending.delete(key); }
+  }
+  async resolveFolder(key, app, parent, name, signal, provenToken) {
+    const cached = this.store.setting(key);
     signal?.throwIfAborted();
     // Only this resolver's confirmed, parent-scoped records may bypass lookup.
     // Older profile-scoped tokens are not evidence of the selected parent.
@@ -90,19 +101,16 @@ export class FeishuDirectories {
     if (matches.length && !/^https:\/\//.test(matches[0].url ?? '')) throw failure('FOLDER_INVALID_RESPONSE', `已有【${name}】缺少文档链接，请先核对`);
     return matches[0]?.url ?? null;
   }
-  prepare(task, signal) {
-    const job = this.tail.then(async () => {
-      const started = Date.now(), details = { taskId: task.id, appId: task.feishuApp?.appId, phase: 'directory_resolution' };
-      recordTrace(this.store, 'feishu.directories.started', { ...details, status: 'started' });
-      try {
-        await this.resolve(task, signal);
-        recordTrace(this.store, 'feishu.directories.finished', { ...details, status: 'completed', durationMs: Date.now() - started });
-      } catch (error) {
-        recordTrace(this.store, 'feishu.directories.failed', { ...details, status: 'failed', code: error.code ?? classifyFeishuError(error), durationMs: Date.now() - started }, 'error');
-        throw error;
-      }
-    });
-    this.tail = job.catch(() => {}); return job;
+  async prepare(task, signal) {
+    const started = Date.now(), details = { taskId: task.id, appId: task.feishuApp?.appId, phase: 'directory_resolution' };
+    recordTrace(this.store, 'feishu.directories.started', { ...details, status: 'started' });
+    try {
+      await this.resolve(task, signal);
+      recordTrace(this.store, 'feishu.directories.finished', { ...details, status: 'completed', durationMs: Date.now() - started });
+    } catch (error) {
+      recordTrace(this.store, 'feishu.directories.failed', { ...details, status: 'failed', code: error.code ?? classifyFeishuError(error), durationMs: Date.now() - started }, 'error');
+      throw error;
+    }
   }
   async resolve(task, signal) {
     const app = task.feishuApp, store = this.store;
@@ -134,9 +142,10 @@ export class FeishuDirectories {
     if (task.analysis) {
       const current = analysisLibrary(store, root, app);
       const folderToken = await get(root.folderToken, '友商分析', proven(current, 'folderToken', 'analysisFolderToken', old => Boolean(old.analysis)));
-      const same = current.folderToken === folderToken;
-      const manifestUrl = same && current.manifestUrl || await this.index(app, folderToken, '分析报告索引');
-      task.analysisIndex = store.saveSetting(analysisKey(root, app), { ...(same ? current : { reports: [] }), rootFolderToken: root.folderToken, folderToken, manifestUrl });
+      const manifestUrl = current.folderToken === folderToken && current.manifestUrl || await this.index(app, folderToken, '分析报告索引');
+      const latest = analysisLibrary(store, root, app);
+      const same = latest.folderToken === folderToken;
+      task.analysisIndex = store.saveSetting(analysisKey(root, app), { ...(same ? latest : { reports: [] }), rootFolderToken: root.folderToken, folderToken, manifestUrl: same && latest.manifestUrl || manifestUrl });
     }
     if(task.topic){
       if(task.topic.workflowVersion!==468){

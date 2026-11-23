@@ -7,7 +7,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { readFileSync } from 'node:fs';
 import { cliFor } from './feishu-application.mjs';
 import { parseAgentDelivery } from './agent-delivery.mjs';
+import { queuedSavePrompt } from './queued-save-prompt.mjs';
 export function cloudPrompt(task, meta) {
+  if (meta.queuedSavePath) return queuedSavePrompt(task, meta);
   return writeGuard(meta)+cloudContent(task,meta);
 }
 function writeGuard(meta){return meta.writeClientPath?`【并行调研与保存锁】先完成资料检索，各会话可以并行。任何飞书写入（根目录、子目录、公司文档、报告和索引）之前，必须执行 node ${JSON.stringify(meta.writeClientPath)} ${JSON.stringify(meta.writeConfigPath)}，等待命令成功返回最新目录和索引JSON。等待时不要绕过锁或重发创建，不修改任何飞书资源。返回JSON中的feishuRoot、industryLibrary、briefingLibrary、topicLibrary、topicDocument、topicDailyDocument、analysisIndex和internalFolders覆盖下面可能过时的快照；逐条复用最新链接和token。目录唯一性由平台在保存锁内检查，根目录和业务子目录只使用返回的token；禁止自行创建文件夹。缺少所需目录token时停止写入并回传失败，不得把本机缓存缺失当成飞书目录不存在。持锁期间先读取远端最新原文/索引再增量合并，保留其他任务刚写入的公司和条目。保存并回传回执后结束本轮，由平台释放锁；不要自行释放后继续写入。命令失败则停止写入并回传失败。用户后续续聊若要写入，也必须先重新获取锁；任务已结束时需要从工作台启动新一轮调研。\n\n`: "";}
@@ -36,6 +38,7 @@ export const RESEARCH_TIMEOUT_MS = 30 * 60 * 1000;
 export async function waitCloudDelivery(sessions, meta, { signal, timeoutMs = RESEARCH_TIMEOUT_MS, now = Date.now, pause = delay }) {
   const started = now();
   while (now() - started <= timeoutMs) {
+    if (meta.queuedSavePath && sessions.store.get(meta.taskId)?.queuedSave?.requestId === meta.deliveryRequestId) return { queuedSave: true };
     signal.throwIfAborted();
     let receipt;
     try {
@@ -46,12 +49,16 @@ export async function waitCloudDelivery(sessions, meta, { signal, timeoutMs = RE
       if (receipt.folderToken && meta.targetFolderToken && receipt.folderToken !== meta.targetFolderToken) throw new Error('交付目录与指定文件夹不一致，请在原会话核对');
       if (receipt.status === 'published' && !receipt.folderToken) throw new Error('飞书交付缺少实际目标目录 ID，请在原会话核对');
       if (receipt.status === 'published' && receipt.report && !receipt.analysisFolderToken) throw new Error('友商分析交付缺少分析目录 ID，请在原会话核对');
-      if (receipt.status === 'published' && sessions.get(meta.id).activity === 'waiting_input') return { cloudDelivery: receipt };
+      if (!meta.queuedSavePath && receipt.status === 'published' && sessions.get(meta.id).activity === 'waiting_input') return { cloudDelivery: receipt };
       if (receipt.status === 'failed') throw new Error(receipt.error);
     }
     const state = sessions.get(meta.id);
-    if (state.lastTurnCompletedAt) throw new Error('本轮会话已结束但未交付飞书报告链接，请在原生会话核对后重试');
+    if (state.lastTurnCompletedAt) throw new Error(meta.queuedSavePath ?
+      '本轮会话已结束，但平台未收到可保存的增量，请在工作台重试' :
+      '本轮会话已结束但未交付飞书报告链接，请在原生会话核对后重试');
     await pause(150, null, { signal });
   }
-  sessions.cancel(meta.id); throw new Error('调研超过 30 分钟仍未完成飞书交付，任务失败；已完成文档和会话记录保留，可在原会话核对后重试');
+  sessions.cancel(meta.id); throw new Error(meta.queuedSavePath ?
+    '调研超过 30 分钟仍未提交增量；会话记录已保留，可在工作台重试' :
+    '调研超过 30 分钟仍未完成飞书交付，任务失败；已完成文档和会话记录保留，可在原会话核对后重试');
 }
