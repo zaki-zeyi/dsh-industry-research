@@ -24,7 +24,7 @@ function fixture({ changedDigest = false, busy = false, oldRelease = false } = {
   const manifest = JSON.stringify({ schema: 'dsh-industry-research/update/v1', name: 'dsh-industry-research',
     version: nextVersion, sourceCommit, installCommit, installTag: `plugin-install-v${nextVersion}`, archiveSha256: 'c'.repeat(64) });
   const digest = createHash('sha256').update(manifest).digest('hex');
-  const release = { tag_name: `v${oldRelease ? '0.13.6' : nextVersion}`, target_commitish: sourceCommit,
+  const release = { tag_name: `v${oldRelease ? '0.13.6' : nextVersion}`, target_commitish: sourceCommit, immutable: !oldRelease,
     published_at: '2026-11-20T00:00:00Z',
     assets: oldRelease ? [] : [{ name: 'update-manifest.json', digest: `sha256:${changedDigest ? 'd'.repeat(64) : digest}`,
       browser_download_url: 'https://github.com/example/update-manifest.json' }] };
@@ -83,5 +83,18 @@ test('较旧正式版没有更新清单时显示当前已是新版', async () =>
   const status = await updates.check();
   assert.equal(status.state, 'current');
   assert.equal(status.error, '');
+  updates.close();
+});
+
+test('可变正式发布不能触发自动安装', async () => {
+  const mutable = fixture();
+  const request = async url => {
+    const response = await mutable.request(url);
+    if (!url.includes('api.github.com')) return response;
+    return new Response(JSON.stringify({ ...await response.json(), immutable: false }));
+  };
+  const updates = new PluginUpdates(mutable.service, mutable.manager, installedVersion, { request });
+  assert.match((await updates.check()).error, /不可变保护/);
+  assert.equal(mutable.calls.length, 0);
   updates.close();
 });

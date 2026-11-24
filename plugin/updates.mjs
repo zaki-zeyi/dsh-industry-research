@@ -128,6 +128,7 @@ export class PluginUpdates {
         this.state = 'current';
         return this.snapshot();
       }
+      if (release.immutable !== true) throw new Error('正式发布未启用不可变保护，已暂停自动更新');
       const asset = release.assets?.find(item => item.name === 'update-manifest.json');
       if (!asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest ?? '')) throw new Error('正式发布缺少可校验的更新清单');
       const { bytes, value: manifest } = await readJson(await this.request(asset.browser_download_url, {
