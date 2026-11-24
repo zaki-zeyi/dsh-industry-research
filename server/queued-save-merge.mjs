@@ -2,7 +2,7 @@ import { escapeXml, plainXml } from './queued-save-documents.mjs';
 import { normalizedFact, saveDigest } from './queued-save-payload.mjs';
 import { ServiceError } from './service-error.mjs';
 
-const factLine = fact => (fact.conflict ? '【信息冲突】' : '') + fact.text + '（' + fact.date + '）';
+const factLine = fact => (fact.conflict ? '【信息冲突】' : '') + fact.text;
 const links = urls => urls.map((url, index) => ' <a href="' + escapeXml(url) + '">来源 ' + (index + 1) + '</a>').join('');
 const paragraphs = content => [...content.matchAll(/<(p|li)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/gi)].map(match => match[2]);
 
@@ -50,9 +50,13 @@ export async function mergeQueuedFacts({ documents, store, task, url, facts, che
         !matched?.includes('href="' + escapeXml(url) + '"') &&
         !doc.content.includes(escapeXml('补充来源（' + fact.date + '）') + ' <a href="' + escapeXml(url) + '"'));
       if (!alreadySaved || missingSources.length) {
-        const text = alreadySaved ? '补充来源（' + fact.date + '）' : factLine(fact);
+        const date = '（' + fact.date + '）';
+        const text = alreadySaved ? '补充来源' : factLine(fact);
         const sources = alreadySaved ? missingSources : fact.sources;
-        const block = '<p>' + escapeXml(text) + links(sources) + '</p>';
+        const body = task.topic && !alreadySaved
+          ? escapeXml(text) + links(sources) + escapeXml(date)
+          : escapeXml(text + date) + links(sources);
+        const block = '<p>' + body + '</p>';
         const currentAnchor = headingFor(doc.content, dimension);
         check();
         await documents.update(app, url, doc.revision, (needsHeading && !currentAnchor ? '<h2>' + escapeXml(dimension) + '</h2>' : '') + block, currentAnchor);

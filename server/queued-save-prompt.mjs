@@ -25,6 +25,7 @@ export function queuedSavePrompt(task, meta) {
   }
   if (!task.industry && (!task.topic || task.topic.window)) {
     instructions.push('report 是完整 Markdown 正文，由平台按任务标题独立创建文档。正文应有可追溯的原始来源。');
+    if (task.topic) instructions.push('在 report 中将来源写成正文后的行内 Markdown 链接，格式为“事实正文 [来源](原始URL)（信息日期）”。不要用文末链接列表代替逐条引用。');
   }
   if (task.briefing || task.topic?.window) {
     const window = task.briefing?.window ?? task.topic.window;

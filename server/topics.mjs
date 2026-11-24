@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { libraryNamespaceKey } from './industry.mjs';
 import { cliFor } from './feishu-application.mjs';
 import { reportWindow } from './briefing-prompt.mjs';
+import { topicMinuteTitle, topicMinuteWindow } from './topic-window.mjs';
 import { ServiceError } from './service-error.mjs';
 export const TOPIC_FOLDER = '专题调研';
 export const topicInput = z.object({
@@ -14,7 +15,7 @@ export const topicInput = z.object({
   prompt: z.string().trim().min(10).max(14000).optional(),
   topicId: z.string().uuid().optional(),
 }).strict();
-export const topicMetadata = topicInput.extend({ topicId: z.string().uuid(), workflowVersion:z.literal(468).optional(), totalMergeRequired:z.boolean().optional(), window: z.object({start:z.string(),end:z.string(),display:z.string()}).optional() });
+export const topicMetadata = topicInput.extend({ topicId: z.string().uuid(), workflowVersion:z.literal(468).optional(), totalMergeRequired:z.boolean().optional(), window: z.object({start:z.string(),end:z.string(),display:z.string(),reportDate:z.iso.date().optional()}).optional() });
 export const topicScope = (root, app) => libraryNamespaceKey(root, app) + ':' + (root.folderToken ?? root.folderUrl ?? '') + ':' + (app?.ownerOpenId ?? '');
 export const topicDeletionKey = (root,app,id) => 'topic-deletion:'+topicScope(root,app)+':'+id;
 export const topicDeletionResourceKey=(scope,resource)=>'topic-deletion-resource:'+scope+':'+resource;
@@ -37,9 +38,10 @@ export const legacyTopicFolderKey = task => 'topic-folder:' + topicScope(task.fe
 export const topicFolderKey = task => 'topic-folder-v2:' + topicScope(task.feishuRoot,task.feishuApp)+':'+task.topic.topicId;
 export const topicDocumentKey = task => 'topic-document:' + topicScope(task.feishuRoot,task.feishuApp) + ':' + task.topic.topicId;
 const DAY_MS = 86400000;
-// A period is identified by its last included local day. With a one-day
-// window this is the legacy start timestamp, so saved links still resolve.
+// Key new periods by the expected delivery date so that changing the window
+// does not collide with another send slot. Old periods ended at send-day midnight.
 export function topicDailyPeriod(window) {
+  if (window?.reportDate) return new Date(window.reportDate + 'T00:00:00+08:00').toISOString();
   const start = Date.parse(window?.start), end = Date.parse(window?.end);
   return Number.isFinite(start) && end - start >= DAY_MS
     ? new Date(end - DAY_MS).toISOString()
@@ -47,10 +49,11 @@ export function topicDailyPeriod(window) {
 }
 export const topicDailyDocumentKey = task => 'topic-daily-document:' + topicScope(task.feishuRoot,task.feishuApp) + ':' + task.topic.topicId+':'+topicDailyPeriod(task.topic.window);
 
-export function topicTask(input, now, lookbackDays = 1) {
+export function topicTask(input, now, range = 1) {
   const parsed = topicInput.parse(input);
   const v = {...parsed, ...(parsed.prompt ? {prompt:normalizeTopicPrompt(parsed.prompt)} : {})};
-  const window = now == null ? undefined : reportWindow('daily', new Date(now), lookbackDays);
+  const window = now == null ? undefined : typeof range === 'number'
+    ? reportWindow('daily', new Date(now), range) : topicMinuteWindow(new Date(now), range);
   const dateInBeijing = iso => new Date(Date.parse(iso)+8*3600000).toISOString().slice(0,10);
   const question = v.question.slice(0,140);
   let direction = '专题总报 · '+question;
@@ -58,7 +61,8 @@ export function topicTask(input, now, lookbackDays = 1) {
   if (window) {
     const lastDay = dateInBeijing(topicDailyPeriod(window));
     const firstDay = dateInBeijing(window.start);
-    direction = '专题日报 · '+question+' · '+(firstDay===lastDay?lastDay:firstDay+' 至 '+lastDay);
+    const periodTitle = window.reportDate ? topicMinuteTitle(window) : firstDay===lastDay?lastDay:firstDay+' 至 '+lastDay;
+    direction = '专题日报 · '+question+' · '+periodTitle;
     prompt = v.prompt?.replaceAll('{{时间范围}}',window.display) ?? topicDailyPrompt(v,window.display);
   }
   return {direction,sources:v.sources.join('、'),prompt,topic:{...v,topicId:v.topicId ?? randomUUID(),workflowVersion:468,...(window?{window,totalMergeRequired:true}:{})}};

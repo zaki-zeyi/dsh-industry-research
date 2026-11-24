@@ -3,24 +3,32 @@ import { z } from 'zod';
 import { topicInput, topicTask, topicScope, assertTopicAvailable } from './topics.mjs';
 import { withTopicTotalMerge } from './topic-defaults.mjs';
 import { previousScheduleRun, scheduleTiming } from './briefings.mjs';
+import { topicMinuteWindow, topicRangeError, topicTimePattern, wholeDayTopicRange } from './topic-window.mjs';
+const timeInput = z.string().regex(topicTimePattern, '时间格式应为 HH:mm');
+const daysAgoInput = z.number().int().nonnegative();
+const rangeInput = z.object({
+  startDaysAgo: daysAgoInput, startTime: timeInput, endDaysAgo: daysAgoInput, endTime: timeInput,
+}).strict();
 export const topicScheduleInput=z.object({
-  time:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  time:timeInput,
   lookbackDays:z.number().int().positive().default(1),
+  range:rangeInput.optional(),
   enabled:z.boolean().default(true),
   research:topicInput,
-}).strict();
+}).strict().superRefine((plan, ctx) => {
+  const message = topicRangeError(plan.range ?? wholeDayTopicRange(plan.lookbackDays), plan.time);
+  if (message) ctx.addIssue({ code: 'custom', path: ['range'], message });
+});
 export class TopicSchedules {
   constructor(service,host){this.service=service;this.host=host;this.chain=Promise.resolve();}
   get schedule(){return typeof this.host?.get==='function'?this.host.get('schedule'):this.host?.schedule;}
   scope(){return topicScope(this.service.feishuSettings(),this.service.binding?.applicationSnapshot?.());}
   all(){return this.service.store.setting('topic-schedules')??{};}
-  get(id){const p=this.all()[this.scope()+':'+id]??{topicId:id,time:'09:00',enabled:false};return {...p,lookbackDays:p.lookbackDays??1,...(p.research?.prompt?{research:{...p.research,prompt:withTopicTotalMerge(p.research.prompt)}}:{}),...(p.enabled?scheduleTiming({...p,kind:'daily'}):{nextRunAt:null}),available:Boolean(this.schedule)};}
+  get(id){const p=this.all()[this.scope()+':'+id]??{topicId:id,time:'09:00',enabled:false};return {...p,lookbackDays:p.lookbackDays??1,range:p.range??wholeDayTopicRange(p.lookbackDays),...(p.research?.prompt?{research:{...p.research,prompt:withTopicTotalMerge(p.research.prompt)}}:{}),...(p.enabled?scheduleTiming({...p,kind:'daily'}):{nextRunAt:null}),available:Boolean(this.schedule)};}
   save(id,input){const scope=this.scope(),job=this.chain.then(()=>this.commit(id,input,scope));this.chain=job.catch(()=>{});return job;}
   async commit(id,input,scope){
     z.string().uuid().parse(id);const v=topicScheduleInput.parse(input);if(v.research.prompt)v.research.prompt=withTopicTotalMerge(v.research.prompt);
-    if (Date.now()-v.lookbackDays*86400000<Date.parse('0001-01-02T00:00:00+08:00')) {
-      throw Object.assign(new Error('调研时间范围超出可用日期，请减少天数'),{status:400});
-    }
+    topicMinuteWindow(new Date(), v.range ?? wholeDayTopicRange(v.lookbackDays));
     assertTopicAvailable(this.service,{topicId:id});
     if(scope!==this.scope())throw Object.assign(new Error('飞书目录或账号已变化，请重新设置'),{status:409});
     if(!this.schedule)throw Object.assign(new Error('当前宿主未启用官方 Schedule 服务'),{status:503});
@@ -49,7 +57,7 @@ export class TopicSchedules {
     const p=this.get(id);if(!p.enabled)throw Object.assign(new Error('专题日报未启用'),{status:409});
     const date=new Date(scheduledFor),key='topic:'+scope+':'+id+':'+new Date(date.getTime()+28800000).toISOString().slice(0,10);
     const old=this.service.store.request(key);if(old)return this.service.require(old.task_id);
-    const input=topicTask({...p.research,topicId:id},date,p.lookbackDays);
+    const input=topicTask({...p.research,topicId:id},date,p.range);
     return this.service.createAuthorized(input,key,{scheduled:{kind:'topic',scheduledFor:date.toISOString()}});
   }
   removeTopic(id,scope){
