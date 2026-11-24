@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, createWriteStream } from 'node:fs';
+import { mkdirSync, createWriteStream, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { npmCommand } from './npm-command.mjs';
 
@@ -8,7 +8,11 @@ if (!['build', 'test', 'test:e2e', 'plugin:pack', 'plugin:check-pack'].includes(
 const directory = resolve('artifacts/diagnostics');
 mkdirSync(directory, { recursive: true });
 const log = createWriteStream(resolve(directory, stage.replaceAll(':', '-') + '.log'));
-const command = npmCommand(['run', stage]);
+// Concurrent Windows test workers can race while node-pty attaches to the
+// runner console; run the same test suite one file at a time on that runner.
+const command = stage === 'test' && process.platform === 'win32' && existsSync(resolve('tests/terminal.test.mjs'))
+  ? { command: process.execPath, args: ['--test', '--test-concurrency=1', '--test-force-exit', 'tests/*.test.mjs'] }
+  : npmCommand(['run', stage]);
 function run(command, args) {
   return new Promise(done => {
     const child = spawn(command, args, { env: { ...process.env, CI_ARTIFACT_DIR: resolve(directory, 'runtime') }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -20,7 +24,6 @@ function run(command, args) {
 }
 // Complete native-file preparation before parallel workers can load the DLL.
 // Keep the wrapper usable from isolated test projects without this repository.
-import { existsSync } from 'node:fs';
 const prepare = resolve('scripts/prepare-pty.mjs');
 const prepared = stage === 'test' && existsSync(prepare) ? await run(process.execPath, [prepare]) : 0;
 process.exitCode = prepared || await run(command.command, command.args);
