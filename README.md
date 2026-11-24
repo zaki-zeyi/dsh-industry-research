@@ -104,13 +104,19 @@ npm run plugin:pack
 
 ## 安装
 
-当前源码版本为 **0.13.6**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
+当前源码版本为 **0.13.7**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
 Windows、macOS 桌面版以及网页版，均可在 DSH「添加插件」填写：
 
 https://github.com/zaki-zeyi/dsh-industry-research.git#release
 
-该地址显式安装 release 分支的预构建插件；main 为默认开发分支。网页安装发生在 DSH 服务端，服务端必须能够访问 GitHub。
+该地址显式安装 release 分支的预构建插件；main 为默认开发分支。网页安装发生在 DSH 服务端，服务端必须能够访问 GitHub。分支安装适合手动体验；要使用面板中的自动更新，请从正式 Release 的 `update-manifest.json` 复制 `installCommit`，用以下固定提交地址安装一次：
+
+```text
+git+https://github.com/zaki-zeyi/dsh-industry-research.git#<installCommit>
+```
+
+之后插件会检查正式 Release 的清单与摘要，在工作台空闲时通过 DSH 插件管理器更新。自动安装默认关闭；安装后的版本在宿主重载或重启后核对。若当前是本地 `link:`、TGZ 或移动分支安装，面板会提示先迁移到固定提交。详见 [0.13.7 发布说明](docs/release-0.13.7.md)。
 
 也可以下载对应版本的 desktop.zip，解压后在「添加插件」填写包含 package.json 的目录绝对路径。Windows/macOS x64、arm64 共用 ZIP；网页版需填写服务端的目录路径。安装后保留目录，按宿主提示启用或重新加载。
 

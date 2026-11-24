@@ -27,7 +27,7 @@ test('插件卸载注销路由并关闭自身服务，初始化期间卸载也�
     const cleanups = []; let route;
     const ctx = { effect(fn) { cleanups.push(fn()); }, webServer: { register(value) { if (value.path === '/industry-research/status') route = value; return () => { if (route === value) route = null; }; } } };
     const dataDir = temp(t);
-    apply(ctx, { dataDir, port: 0, mode: 'demo' });
+    const loaded = apply(ctx, { dataDir, port: 0, mode: 'demo' });
     const status = () => { let body; route.handler({}, { setHeader() {}, end(value) { body = JSON.parse(value); } }); return body; };
     let url;
     if (!early) {
@@ -35,6 +35,7 @@ test('插件卸载注销路由并关闭自身服务，初始化期间卸载也�
       assert.equal(status().state, 'ready'); url = status().url;
     }
     for (const cleanup of cleanups.reverse()) await cleanup();
+    await loaded;
     assert.equal(route, null);
     if (url) await assert.rejects(fetch(`${url}/api/health`));
     const next = await connectRuntime({ dataDir, port: 0, mode: 'demo' }); await next.close();
@@ -83,7 +84,7 @@ test('PRD1511 内嵌原生会话校验来源并保留工作台，切换报告释
   const f = embeddedClientFixture(), data = { type: 'industry-research:embed-session', taskId: f.taskId, requestId: 'embed-1' };
   await f.send(data, 'https://evil.example'); await f.send(data, undefined, {}); assert.equal(f.fetches, 0);
   await f.send(data); assert.equal(f.retained.length, 1); assert.equal(f.retained[0].id, 'host-native-session');
-  const tree = f.render(); assert.equal(tree.children[0].props.style.display, 'none'); assert.equal(tree.children[1].props['aria-label'], '行研工作台原生对话');
+  const tree = f.render(); assert.equal(tree.children[0].props.style.display, 'none'); assert.equal(tree.children.find(child => child?.props?.['aria-label'] === '行研工作台原生对话')?.props['aria-label'], '行研工作台原生对话');
   const buttons = []; const visit = node => { if (!node || typeof node !== 'object') return; if (node.type === 'button') buttons.push(node); for (const child of node.children ?? []) visit(child); }; visit(tree);
   buttons.find(x => x.children[0] === '调研报告').props.onClick();
   assert.equal(f.released.length, 1); assert.equal(f.render().children[0].props.style.display, 'block'); assert.equal(f.replies.at(-1).value.type, 'industry-research:show-report');

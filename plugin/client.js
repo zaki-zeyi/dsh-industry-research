@@ -6,6 +6,16 @@ window.__ModuleLoader__.load({
     function Panel({ SessionProvider, renderSlot }) {
       const frame = React.useRef(null), reference = React.useRef(null), revision = React.useRef(0), frameSource = React.useRef(null), pending = React.useRef(null);
       const [status, setStatus] = React.useState({ state: 'starting' }), [conversation, setConversation] = React.useState(null), [startupAttempt, setStartupAttempt] = React.useState(0);
+      const [update, setUpdate] = React.useState(null);
+      const updateAction = async (action, enabled) => {
+        try {
+          const query = new URLSearchParams({ action });
+          if (enabled !== undefined) query.set('enabled', enabled ? '1' : '0');
+          const response = await fetch('/industry-research/update?' + query, { method: 'POST', credentials: 'same-origin' });
+          const result = await response.json();
+          setUpdate(response.ok ? result : current => ({ ...current, state: 'failed', error: result.error }));
+        } catch (error) { setUpdate(current => ({ ...current, state: 'failed', error: error.message })); }
+      };
       const disposeLease = lease => { if (lease && !lease.released) { lease.released = true; lease.value?.release(); } };
       const release = () => { disposeLease(reference.current); reference.current = null; };
       const discardPending = () => { disposeLease(pending.current); pending.current = null; };
@@ -99,6 +109,18 @@ window.__ModuleLoader__.load({
         }, 2000);
         return () => { disposed = true; clearInterval(timer); };
       }, [conversation?.taskId]);
+      React.useEffect(() => {
+        let live = true;
+        const refresh = async () => {
+          try {
+            const response = await fetch('/industry-research/update', { cache: 'no-store', credentials: 'same-origin' });
+            if (response.ok && live) setUpdate(await response.json());
+          } catch {}
+        };
+        void refresh();
+        const timer = setInterval(refresh, 15000);
+        return () => { live = false; clearInterval(timer); };
+      }, []);
       if (status.state !== 'ready') return h('div', { style: { padding: 32 }, role: status.state === 'error' ? 'alert' : 'status' }, h('p', null, status.state === 'error' ? `调研服务连接失败：${status.message}` : '正在启动行研工作台…'), status.state === 'error' && h('button', { onClick: () => { frameSource.current = null; setStartupAttempt(value => value + 1); } }, '重新连接工作台'));
       if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(status.url)) return h('div', null, '调研服务地址无效');
       if (!frameSource.current) frameSource.current = `${status.url}/?embed=dsh&hostOrigin=${encodeURIComponent(window.location.protocol === 'dsh-app:' ? 'dsh-app://app' : window.location.origin)}${lastTask ? `#${lastTask}` : ''}`;
@@ -107,6 +129,13 @@ window.__ModuleLoader__.load({
       const created = conversation?.createdAt ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai', hour12: false }).format(new Date(conversation.createdAt)) : '';
       return h('div', { style: { display: 'flex', flexDirection: 'column', width: '100%', height: '100%', minHeight: 0, overflow: 'hidden' } },
         h('iframe', { title: '行研工作台', ref: frame, src: frameSource.current, style: { width: '100%', height: '100%', minHeight: 400, border: 0, display: conversation ? 'none' : 'block', flex: 1 }, allow: 'clipboard-write' }),
+        update && h('section', { role: update.error ? 'alert' : 'status', style: { display: 'flex', gap: 10, alignItems: 'center', padding: '6px 14px', background: '#f5f7fb', fontSize: 13 } },
+          h('span', null, update.error || (update.candidateVersion ? `行研工作台 ${update.candidateVersion} 可更新` : `行研工作台 ${update.installedVersion}`)),
+          h('button', { onClick: () => updateAction('check'), disabled: update.state === 'checking' || update.state === 'installing' }, '检查更新'),
+          update.candidateVersion && h('button', { onClick: () => updateAction('install'), disabled: !update.supported || update.eligible !== true || update.state === 'installing' }, update.state === 'installing' ? '正在更新' : '立即更新'),
+          h('label', null, h('input', { type: 'checkbox', checked: update.automatic, disabled: update.eligible !== true && !update.automatic, onChange: event => updateAction('automatic', event.target.checked) }), '空闲时自动更新'),
+          update.eligible === false && h('span', null, '当前为本地版或非固定提交安装，需先安装正式版'),
+          update.state === 'restart-required' && h('span', null, '更新已安装，请重启 DSH')),
         conversation && h('section', { className: 'rw-workspace', 'aria-label': '行研工作台原生对话', style: { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'auto' } },
           h('header', { className: 'rw-topbar' }, h('div', { className: 'rw-breadcrumb' }, '工作空间', h('span', null, '/'), h('strong', null, '行研工作台'), h('span', null, '/'), h('span', null, '调研详情')), h('span', { className: 'rw-host-label' }, 'DSH 原生会话')),
           h('div', { className: 'rw-detail', style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },

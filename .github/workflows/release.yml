@@ -86,11 +86,13 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           gh auth setup-git --hostname github.com
           if ($LASTEXITCODE -ne 0) { throw 'Git credential setup failed' }
-          node scripts/publish-git-plugin.mjs --output "$env:RUNNER_TEMP/plugin-release" --push
+          $published = node scripts/publish-git-plugin.mjs --output "$env:RUNNER_TEMP/plugin-release" --push | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'Release installation branch publication failed' }
+          node scripts/write-update-manifest.mjs $published.commit $published.installTag
+          if ($LASTEXITCODE -ne 0) { throw 'Update manifest publication failed' }
           npm install --prefix "$env:RUNNER_TEMP/pnpm" pnpm@10.11.0 --ignore-scripts
           if ($LASTEXITCODE -ne 0) { throw 'pnpm installation failed' }
           node scripts/git-install-acceptance.mjs --pnpm-cli "$env:RUNNER_TEMP/pnpm/node_modules/pnpm/bin/pnpm.cjs" --expected-version $version
           if ($LASTEXITCODE -ne 0) { throw 'Public GitHub installation failed' }
-          gh release create "v$version" artifacts/*.tgz artifacts/*desktop.zip artifacts/*.sha256 artifacts/plugin-release.json --target '${{ github.sha }}' --title "v$version" --notes-file $notes
+          gh release create "v$version" artifacts/*.tgz artifacts/*desktop.zip artifacts/*.sha256 artifacts/plugin-release.json artifacts/update-manifest.json --target '${{ github.sha }}' --title "v$version" --notes-file $notes
           if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed' }
