@@ -16,10 +16,12 @@ after(() => rmSync(cacheRoot, { recursive: true, force: true }));
 function fixture({ changedDigest = false, changedArchive = false, busy = false, oldRelease = false,
   ineligible = false, noHmr = false, failInstall = false } = {}) {
   const settings = new Map();
+  const events = [];
   const store = {
     setting: key => settings.get(key),
     saveSetting: (key, value) => settings.set(key, value),
     list: () => busy ? [{ status: 'running' }] : [],
+    runtimeLog: (event, details, level) => events.push({ event, details, level }),
   };
   const service = { store, active: new Map(), queuedSaves: { running: new Map(), submissions: new Map() } };
   const calls = [];
@@ -70,8 +72,41 @@ function fixture({ changedDigest = false, changedArchive = false, busy = false, 
     if (url === archiveUrl) return new Response(changedArchive ? Buffer.from('corrupt') : archive);
     return new Response(manifest);
   };
-  return { service, manager, calls, request, requests, settings, archive, cacheDir: join(cacheRoot, randomUUID()) };
+  return { service, manager, calls, request, requests, settings, events, archive, cacheDir: join(cacheRoot, randomUUID()) };
 }
+
+test('更新进度反映下载、等待健康检查和完成，并记录更新日志', async () => {
+  const f = fixture();
+  const updates = new PluginUpdates(f.service, f.manager, installedVersion,
+    { request: f.request, cacheDir: f.cacheDir });
+  await updates.check();
+  await updates.download();
+  assert.deepEqual(updates.snapshot().progress.phases.map(item => item.status), ['complete', 'waiting', 'waiting']);
+  assert.ok(f.events.some(item => item.event === 'update.check.started'));
+  assert.ok(f.events.some(item => item.event === 'update.release.verified' && item.details.bytesTotal === f.archive.length));
+  assert.ok(f.events.some(item => item.event === 'update.download.completed' && item.details.percent === 100));
+  assert.equal(new Set(f.events.map(item => item.details.operationId)).size, 1);
+  await updates.install();
+  assert.deepEqual(updates.snapshot().progress.phases.map(item => item.status), ['complete', 'complete', 'complete']);
+  updates.close();
+});
+
+test('下载失败标红并通过重试恢复', async () => {
+  const f = fixture({ changedArchive: true });
+  const updates = new PluginUpdates(f.service, f.manager, installedVersion,
+    { request: f.request, cacheDir: f.cacheDir });
+  await updates.check();
+  await assert.rejects(updates.download(), /大小不符|校验失败/);
+  assert.equal(updates.snapshot().progress.phases[0].status, 'error');
+  const good = fixture();
+  updates.request = good.request;
+  await updates.retry();
+  assert.equal(updates.snapshot().progress.phases[0].status, 'complete');
+  assert.ok(f.events.some(item => item.event === 'update.download.failed' && item.level === 'error'));
+  assert.ok(f.events.some(item => item.event === 'update.download.failed' && item.details.code === 'INTEGRITY_FAILED'));
+  assert.ok(f.events.some(item => item.event === 'update.retry.requested'));
+  updates.close();
+});
 
 test('正式发布完整包和旧版恢复包下载后，断网从本地路径更新', async () => {
   const { service, manager, calls, request, requests, settings, archive, cacheDir } = fixture();

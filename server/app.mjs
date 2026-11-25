@@ -67,6 +67,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
       if (req.body?.action === 'check') return res.json(await controller.check());
       if (req.body?.action === 'automatic' && typeof req.body.enabled === 'boolean') return res.json(controller.automatic(req.body.enabled));
       if (req.body?.action === 'install') return res.status(202).json(controller.install());
+      if (req.body?.action === 'retry') return res.status(202).json(controller.retry());
       return res.status(400).json({ error: '更新操作无效' });
     } catch (error) { next(error); }
   });
@@ -84,7 +85,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     try { withTrace(traceFor(data.traceId,data.attempt,data.action),()=>service.store.runtimeLog('feishu.ui.'+data.event,{phase:data.phase,flowId:data.flowId,appId:data.appId,status:data.status},['request_failed','script_error','qr_error'].includes(data.event)?'warn':'info')); } catch {}
     res.setHeader('Cache-Control','no-store'); res.sendStatus(204);
   } catch(e) { next(e); } });
-  app.get('/api/runtime-logs', (req, res, next) => { try { const query = z.object({limit:z.coerce.number().int().min(1).max(200).optional(),before:z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()}).parse(req.query); res.setHeader('Cache-Control','no-store'); res.json({items:service.store.runtimeLogs(query)}); } catch(e) { next(e); } });
+  app.get('/api/runtime-logs', (req, res, next) => { try { const query = z.object({limit:z.coerce.number().int().min(1).max(200).optional(),before:z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),kind:z.enum(['update']).optional()}).parse(req.query); res.setHeader('Cache-Control','no-store'); res.json({items:service.store.runtimeLogs({limit:query.limit,before:query.before,update:query.kind==='update'})}); } catch(e) { next(e); } });
   app.get('/api/industry/preferences', (_req, res) => res.json(preferences(service.store)));
   app.put('/api/industry/preferences', (req, res, next) => { try { res.json(service.store.saveSetting('industry-preferences', preferencesSchema.parse(req.body))); } catch (e) { next(e); } });
   app.get('/api/industry/library', async (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); const root = service.feishuSettings(), app = service.binding?.applicationSnapshot?.(); res.json(req.query.refresh === 'true' ? await indexSync.run(libraryKey(root,app),{},()=>library(service.store,root,app),()=>refreshLibrary(service.store, root, app, libraryRun, { command: service.binding?.command })) : library(service.store, root, app)); } catch (e) { const safe = libraryReadError(e); service.store.runtimeLog('feishu.index.failed', { code: safe.code, phase: 'cloud_read', operation: 'library' }, 'error'); next(safe); } });

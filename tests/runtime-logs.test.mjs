@@ -17,9 +17,11 @@ test('平台日志保留1000条，白名单过滤敏感字段并支持按游标�
 });
 test('平台日志接口返回结构化事件且拒绝无效分页参数',async()=>{
   const f=fixture();f.store.runtimeLog('feishu.application.validation_failed',{targetAppId:'cli_new123',previousAppId:'cli_old123',code:'LARK_STABLE_IDENTITY_REQUIRED'},'error');
+  f.store.runtimeLog('update.download.completed',{version:'0.13.12'});
   const server=createApp(f.service).listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
   try{const base=`http://127.0.0.1:${server.address().port}/api/runtime-logs`;
-    const response=await fetch(base+'?limit=10');assert.equal(response.headers.get('cache-control'),'no-store');const body=await response.json();assert.equal(body.items[0].details.targetAppId,'cli_new123');
+    const response=await fetch(base+'?limit=10');assert.equal(response.headers.get('cache-control'),'no-store');const body=await response.json();assert.equal(body.items.find(item=>item.event==='feishu.application.validation_failed').details.targetAppId,'cli_new123');
+    const update=await fetch(base+'?kind=update');const updateBody=await update.json();assert.equal(updateBody.items.length,1);assert.equal(updateBody.items[0].event,'update.download.completed');
     assert.equal((await fetch(base+'?limit=999')).status,400);
   }finally{server.closeAllConnections();await new Promise(r=>server.close(r));await f.close();}
 });

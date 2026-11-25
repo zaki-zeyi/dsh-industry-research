@@ -56,6 +56,10 @@ export function apply(ctx, config = {}) {
         void updates.install().catch(error => { updates.state = 'failed'; updates.error = error.message; });
         return updateResult(updates.snapshot());
       },
+      retry: () => {
+        void updates.retry().catch(error => { updates.state = 'failed'; updates.error = error.message; });
+        return updateResult(updates.snapshot());
+      },
     };
     updates.start();
   });
@@ -98,6 +102,11 @@ export function apply(ctx, config = {}) {
       }
       if (action.get('action') === 'install') {
         void updates.install().catch(error => { updates.state = 'failed'; updates.error = error.message; });
+        res.statusCode = 202;
+        return res.end(JSON.stringify(updateResult(updates.snapshot())));
+      }
+      if (action.get('action') === 'retry') {
+        void updates.retry().catch(error => { updates.state = 'failed'; updates.error = error.message; });
         res.statusCode = 202;
         return res.end(JSON.stringify(updateResult(updates.snapshot())));
       }
