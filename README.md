@@ -1,5 +1,9 @@
 # dsh-industry-research · 行研工作台
 
+0.13.8：新增插件更新入口与正式发布校验；自动安装默认关闭。详见 [发布说明](docs/release-0.13.8.md)。
+
+0.13.7：专题日报可设置精确到分钟的调研起止时间。专题总报和日报要求将可点击的来源链接放在对应条目正文后。
+
 0.13.6：专题日报可按北京时间配置前 N 个完整自然日，默认 1 天。专题总报和日报的默认 Prompt 要求每条信息附来源链接。
 
 0.13.5：Agent 提交后由平台按飞书文档排队保存，支持重启续跑。独立报告可以并行保存，公司索引在本任务交付完成后更新。详见 [发布说明](docs/release-0.13.5.md)。
@@ -104,7 +108,7 @@ npm run plugin:pack
 
 ## 安装
 
-当前源码版本为 **0.13.7**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
+当前源码版本为 **0.13.8**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
 Windows、macOS 桌面版以及网页版，均可在 DSH「添加插件」填写：
 
@@ -116,7 +120,7 @@ https://github.com/zaki-zeyi/dsh-industry-research.git#release
 git+https://github.com/zaki-zeyi/dsh-industry-research.git#<installCommit>
 ```
 
-之后插件会检查不可变正式 Release 的清单与摘要，在工作台空闲时通过 DSH 插件管理器更新。自动安装默认关闭；安装后的版本在宿主重载或重启后核对。若当前是本地 `link:`、TGZ 或移动分支安装，面板会提示先迁移到固定提交。仓库需在 GitHub Settings 的 Releases 中启用 release immutability 后，才能向自动更新通道发布新版本。详见 [0.13.7 发布说明](docs/release-0.13.7.md)。
+之后插件会检查不可变正式 Release 的清单与摘要，在工作台空闲时通过 DSH 插件管理器更新。自动安装默认关闭；安装后的版本在宿主重载或重启后核对。若当前是本地 `link:`、TGZ 或移动分支安装，面板会提示先迁移到固定提交。仓库需在 GitHub Settings 的 Releases 中启用 release immutability 后，才能向自动更新通道发布新版本。详见 [0.13.8 发布说明](docs/release-0.13.8.md)。
 
 也可以下载对应版本的 desktop.zip，解压后在「添加插件」填写包含 package.json 的目录绝对路径。Windows/macOS x64、arm64 共用 ZIP；网页版需填写服务端的目录路径。安装后保留目录，按宿主提示启用或重新加载。
 

@@ -6,7 +6,9 @@ import { resolve } from 'node:path';
 import { topicDailyPrompt, withTopicTotalMerge, normalizeTopicPrompt } from '../server/topic-defaults.mjs';
 import { topicTask, topicPrompt, rememberTopic, topicScope, topicDocumentKey, topicFolderKey, topicDailyDocumentKey, topicCards } from '../server/topics.mjs';
 import { TopicSchedules, topicScheduleInput } from '../server/topic-schedules.mjs';
+import { wholeDayTopicRange } from '../server/topic-window.mjs';
 import { queuedSavePrompt } from '../server/queued-save-prompt.mjs';
+import { mergeQueuedFacts } from '../server/queued-save-merge.mjs';
 import { cloudPrompt } from '../server/cloud-research.mjs';
 import { startRuntime } from '../server/runtime.mjs';
 import { mockHost } from './fixtures/fake-native-host.mjs';
@@ -44,6 +46,41 @@ test('PRD5633 多日按北京时间自然日计算，不同报告日期即使开
  for(const days of [0,-1,1.5,'3'])assert.throws(()=>topicScheduleInput.parse({time:'10:00',lookbackDays:days,research:input}));
  assert.equal(topicScheduleInput.parse({time:'10:00',research:input}).lookbackDays,1);
 });
+test('PRD5821 分钟范围跨北京时间日期，报告期独立于截止日',()=>{
+ const range={startDaysAgo:1,startTime:'18:30',endDaysAgo:0,endTime:'08:45'};
+ const v={...input,topicId:id,prompt:'仅调查 {{时间范围}} 内新披露的信息。'};
+ const now='2026-12-01T01:00:00Z', feishuRoot={rootName:'研究',folderToken:'Root'};
+ const task={...topicTask(v,now,range),feishuRoot};
+ const previous={...topicTask(v,'2026-11-30T01:00:00Z'),feishuRoot};
+ assert.deepEqual(task.topic.window,{
+  start:'2026-11-30T10:30:00.000Z',end:'2026-12-01T00:45:00.000Z',
+  display:'2026-11-30 18:30 至 2026-12-01 08:45（北京时间，结束时间不含）',reportDate:'2026-11-30',
+ });
+ assert.match(task.prompt,/2026-11-30 18:30 至 2026-12-01 08:45/);
+ assert.equal(topicDailyDocumentKey(task),topicDailyDocumentKey({...topicTask(v,now),feishuRoot}));
+ assert.notEqual(topicDailyDocumentKey(task),topicDailyDocumentKey(previous));
+ const base={time:'09:00',research:input};
+ assert.doesNotThrow(()=>topicScheduleInput.parse({...base,range}));
+ assert.throws(()=>topicScheduleInput.parse({...base,range:{...range,endTime:'09:01'}}),/不能晚于发送/);
+ assert.throws(()=>topicScheduleInput.parse({...base,range:{...range,endDaysAgo:1,endTime:'18:30'}}),/必须早于结束/);
+ assert.throws(()=>topicScheduleInput.parse({...base,range:{...range,startTime:'18:30:01'}}),/HH:mm/);
+ const queued=queuedSavePrompt(task,{queuedSavePath:'/tmp/save',queuedSaveConfig:'/tmp/config'});
+ assert.match(queued,/UTC \[2026-11-30T10:30:00.000Z, 2026-12-01T00:45:00.000Z\)/);
+ assert.match(queued,/事实正文 \[来源\]\(原始URL\)/);
+ assert.equal(normalizeTopicPrompt('自定义要求。每个信息条目附可点击的原始来源链接和信息日期。'),
+  '自定义要求。每个信息条目附可点击的原始来源链接和信息日期，链接紧跟该条正文，放在同一段落或列表项内。');
+});
+test('PRD5821 平台保存专题总报时将链接写在事实正文后',async()=>{
+ const url='https://example.com/source',values=new Map();
+ let content='';
+ await mergeQueuedFacts({
+  documents:{read:async()=>({content,revision:1}),update:async(_app,_url,_revision,addition)=>{content+=addition;}},
+  store:{setting:key=>values.get(key),saveSetting:(key,value)=>values.set(key,value)},
+  task:{topic:{topicId:id}},url:'https://example.feishu.cn/docx/Total',check(){},
+  facts:[{dimension:'产品',key:'新品发布',text:'公司发布新品。',date:'2026-11-24',sources:[url]}],
+ });
+ assert.ok(content.includes('<p>公司发布新品。 <a href="'+url+'">来源 1</a>（2026-11-24）</p>'));
+});
 test('FR05 专题交付保护目录和已有文档，保留部分成果',()=>{
  const values=new Map(),service={store:{setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v)}};
  const task={...topicTask({...input,topicId:id}),feishuRoot:{rootName:'研究',folderToken:'Root'},feishuApp:{appId:'app'}};
@@ -64,12 +101,20 @@ test('FR05 每专题独立官方日报、幂等、重启补发及目录切换隔
  assert.equal([...records.values()][0].daily.time_zone,'Asia/Shanghai');assert.match([...records.values()][0].prompt,/scope/);
  const scope=schedules.scope();const plan=values.get('topic-schedules')[scope+':'+id];plan.activatedAt='2026-11-13T00:00:00Z';
  await schedules.catchUpMissed(Date.parse('2026-11-15T02:00:00Z'));await schedules.catchUpMissed(Date.parse('2026-11-15T02:00:00Z'));
- assert.equal(created.length,1);assert.match(created[0].prompt,/2026-11-14/);assert.equal(created[0].topic.topicId,id);assert.doesNotMatch(created[0].prompt,/【调研问题】【调研结论】【调研依据】/);assert.match(created[0].prompt,/特别关注算力成本/);assert.doesNotMatch(schedules.get(id).research.prompt,/【调研问题】【调研结论】【调研依据】/);
+ assert.equal(created.length,1);assert.match(created[0].prompt,/2026-11-12 00:00 至 2026-11-15 00:00/);assert.equal(created[0].topic.topicId,id);assert.doesNotMatch(created[0].prompt,/【调研问题】【调研结论】【调研依据】/);assert.match(created[0].prompt,/特别关注算力成本/);assert.doesNotMatch(schedules.get(id).research.prompt,/【调研问题】【调研结论】【调研依据】/);
  assert.equal(schedules.get(id).lookbackDays,3);
+ assert.deepEqual(schedules.get(id).range,wholeDayTopicRange(3));
  assert.equal(created[0].topic.window.start,'2026-11-11T16:00:00.000Z');
  assert.equal(created[0].topic.window.end,'2026-11-14T16:00:00.000Z');
  delete plan.lookbackDays;
  assert.equal(schedules.get(id).lookbackDays,1);
+ assert.deepEqual(schedules.get(id).range,wholeDayTopicRange());
+ const range={startDaysAgo:1,startTime:'18:30',endDaysAgo:0,endTime:'08:45'};
+ await schedules.save(id,{time:'09:00',range,research:input});
+ assert.deepEqual(schedules.get(id).range,range);
+ await schedules.catchUpMissed(Date.parse('2026-11-16T02:00:00Z'));
+ assert.equal(created[1].topic.window.start,'2026-11-15T10:30:00.000Z');
+ assert.equal(created[1].topic.window.end,'2026-11-16T00:45:00.000Z');
  const other='22222222-2222-4222-8222-222222222222';await schedules.save(other,{time:'10:00',enabled:true,research:{...input,question:'另一个专题'}});
  assert.equal(schedules.get(id).time,'09:00');assert.equal(schedules.get(other).time,'10:00');
  root={rootName:'其他目录',folderToken:'Other'};assert.equal(schedules.get(id).enabled,false);await assert.rejects(schedules.trigger(id,{scope}),/切换/);
@@ -123,6 +168,12 @@ test('PRD468 读取层级目录导入总报与所有日报，不将日报覆盖�
  assert.equal(reports.length,3);
  assert.deepEqual(reports[0].topic.window,{start:'2026-11-13T16:00:00.000Z',end:'2026-11-16T16:00:00.000Z',display:'2026-11-14 至 2026-11-16'});
  assert.equal(reports[0].publication.url,'https://example.feishu.cn/docx/Day3');
+ const minute=topicTask({...input,topicId:id},'2026-11-18T01:00:00Z',{startDaysAgo:1,startTime:'18:30',endDaysAgo:0,endTime:'08:45'});
+ files.Daily.push({type:'docx',name:minute.direction,url:'https://example.feishu.cn/docx/Minute'});
+ const precise=await cloudPublications(service,'topic',{refresh:true,run:async(_command,args)=>({stdout:JSON.stringify({ok:true,data:{files:files[args[args.indexOf('--folder-token')+1]]??[],has_more:false}})})});
+ const imported=topicCards(service,precise.items)[0].dailyReports[0];
+ assert.deepEqual(imported.topic.window,minute.topic.window);
+ assert.equal(imported.publication.url,'https://example.feishu.cn/docx/Minute');
 });
 test('PRD468 旧版日报作为总报保留，新总报可复用其链接',()=>{
  const old={id:'old',topic:{topicId:id,window:{start:'2026-11-01T16:00:00.000Z'}},feishuRoot:{rootName:'研究',folderToken:'Root'},feishuApp:{},publication:{url:'https://example.feishu.cn/docx/Legacy'}};

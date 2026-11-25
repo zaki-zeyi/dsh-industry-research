@@ -4,6 +4,7 @@ import { libraryKey, listDriveFolder } from './industry.mjs';
 import { LibraryRefreshError } from './library-errors.mjs';
 import { matchingFolders, driveToken } from './folder-identity.mjs';
 import { documentRemoved } from './document-deletion-state.mjs';
+import { readTopicMinuteTitle } from './topic-window.mjs';
 
 const labels = { daily: '日报', weekly: '周报', topic: '专题调研库' };
 const isDocument = file => ['docx', 'doc'].includes(file.type) && /^https:\/\//.test(file.url ?? '');
@@ -91,14 +92,15 @@ async function readTopicPublications(service,{root,app,key,list,children}){
       else items.push({id:'folder-'+token,remoteOnly:true,direction:'专题总报 · '+topic.question,status:'ready',createdAt:timestamp(folder),topic,topicFolderToken:token,publication:{status:'pending'}});
       const dailyFolders=matchingFolders(content,'日报').map(driveToken);
       for(const daily of (await readFolders(dailyFolders,list)).filter(isDocument)){
-        const name=daily.name??'';
-        const range=/(\d{4}-\d{2}-\d{2})(?: 至 (\d{4}-\d{2}-\d{2}))?$/.exec(name.trim());
+        const name=(daily.name??'').trim();
+        const precise=readTopicMinuteTitle(name);
+        const range=/(\d{4}-\d{2}-\d{2})(?: 至 (\d{4}-\d{2}-\d{2}))?$/.exec(name);
         const firstDay=range?.[1]??/\d{4}-\d{2}-\d{2}/.exec(name)?.[0];
         const lastDay=range?.[2]??firstDay;
         const start=Date.parse(firstDay+'T00:00:00+08:00'), last=Date.parse(lastDay+'T00:00:00+08:00');
-        const window=Number.isFinite(start)&&last>=start
+        const window=precise??(Number.isFinite(start)&&last>=start
           ? {start:new Date(start).toISOString(),end:new Date(last+86400000).toISOString(),display:range?.[2]?firstDay+' 至 '+lastDay:firstDay}
-          : {start:'',end:'',display:'历史日报 · 统计区间见文档'};
+          : {start:'',end:'',display:'历史日报 · 统计区间见文档'});
         items.push(record(daily,{...topic,window},{topicFolderToken:token,topicRootFolderToken:parent,dailyFolderToken:matchingFolders(content,'日报')[0]&&driveToken(matchingFolders(content,'日报')[0])}));
       }
     }
