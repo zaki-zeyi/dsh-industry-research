@@ -108,6 +108,21 @@ test('下载失败标红并通过重试恢复', async () => {
   updates.close();
 });
 
+test('更新成功后的联网检查失败不把已完成的安装标为失败', async () => {
+  const f = fixture();
+  f.settings.set('plugin-update', { automatic: true, lastResult: 'updated', lastVersion: installedVersion });
+  const updates = new PluginUpdates(f.service, f.manager, installedVersion,
+    { request: async () => { throw new Error('fetch failed'); }, cacheDir: f.cacheDir });
+  const state = await updates.check();
+  assert.equal(state.state, 'check-failed');
+  assert.equal(state.lastResult, 'updated');
+  assert.equal(state.progress.percent, 100);
+  assert.deepEqual(state.progress.phases.map(item => item.status), ['complete', 'complete', 'complete']);
+  assert.ok(f.events.some(item => item.event === 'update.check.failed' &&
+    item.details.phase === 'check' && item.details.code === 'NETWORK_FAILED'));
+  updates.close();
+});
+
 test('正式发布完整包和旧版恢复包下载后，断网从本地路径更新', async () => {
   const { service, manager, calls, request, requests, settings, archive, cacheDir } = fixture();
   const updates = new PluginUpdates(service, manager, installedVersion, { request, cacheDir, now: () => Date.parse('2026-11-24T00:00:00Z') });

@@ -66,7 +66,7 @@ const labels = {
 };
 const phaseLabels = { check:'版本检查', download:'下载', health:'健康检查', update:'版本切换', rollback:'回退' };
 const failureLabels = { RELEASE_MUTABLE:'发布未启用不可变保护', INTEGRITY_FAILED:'发布或安装包校验失败',
-  TIMEOUT:'请求超时', HTTP_FAILED:'更新服务返回错误', WORKBENCH_BUSY:'仍有任务或写入在执行',
+  TIMEOUT:'请求超时', HTTP_FAILED:'更新服务返回错误', NETWORK_FAILED:'网络连接失败', WORKBENCH_BUSY:'仍有任务或写入在执行',
   HEALTH_CHECK_FAILED:'新版启动健康检查失败', UPDATE_FAILED:'更新步骤失败' };
 function bytes(value) { return value >= 1024 * 1024 ? `${(value / 1024 / 1024).toFixed(1)} MB` : value >= 1024 ? `${(value / 1024).toFixed(1)} KB` : `${value} B`; }
 function UpdateLogDetails({ details }) {
