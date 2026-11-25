@@ -26,10 +26,13 @@ async function validFile(path, archive) {
   return hash.digest('hex') === archive.sha256;
 }
 
-export async function stageUpdateArchive(directory, archive, request, signal) {
+export async function stageUpdateArchive(directory, archive, request, signal, onProgress = () => {}) {
   const target = archivePath(directory, archive);
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  if (await validFile(target, archive)) return { path: target, cached: true };
+  if (await validFile(target, archive)) {
+    onProgress(archive.size, archive.size);
+    return { path: target, cached: true };
+  }
   const url = new URL(archive.url);
   if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password ||
     url.pathname !== `/zaki-zeyi/dsh-industry-research/releases/download/v${archive.version}/${archive.name}`) {
@@ -48,6 +51,7 @@ export async function stageUpdateArchive(directory, archive, request, signal) {
       if (size > archive.size || size > maxArchiveBytes) throw new Error('更新安装包大小不符');
       hash.update(chunk);
       await file.writeFile(chunk);
+      onProgress(size, archive.size);
     }
     if (size !== archive.size || hash.digest('hex') !== archive.sha256) throw new Error('更新安装包校验失败');
     await file.sync();

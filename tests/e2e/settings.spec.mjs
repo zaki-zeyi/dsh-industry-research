@@ -17,6 +17,7 @@ test('设置把版本更新和平台日志放在同一入口', async ({ page }) 
   await page.goto('/');
   await expect(page.getByRole('button', { name: '平台日志', exact: true })).toHaveCount(0);
   await page.locator('.industry-top').getByRole('button', { name: '设置', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '设置', exact: true })).toHaveCount(0);
   await expect(page.getByRole('tab', { name: '版本与更新' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByLabel('版本信息')).toContainText('0.13.11');
   await page.getByRole('button', { name: '检查更新' }).click();
@@ -27,4 +28,41 @@ test('设置把版本更新和平台日志放在同一入口', async ({ page }) 
   expect(actions.every(item => item.token === 'test-token')).toBe(true);
   await page.getByRole('tab', { name: '平台日志' }).click();
   await expect(page.getByRole('heading', { name: '平台日志' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: '更新日志' })).toBeVisible();
+});
+
+test('三阶段进度显示下载错误、重试和独立更新日志', async ({ page }) => {
+  let failed = true;
+  const actions = [];
+  await page.route('**/api/plugin-update', async route => {
+    if (route.request().method() === 'POST') {
+      const body = route.request().postDataJSON();
+      actions.push(body.action);
+      if (body.action === 'retry') failed = false;
+    }
+    await route.fulfill({ status: actions.at(-1) === 'retry' ? 202 : 200, json: {
+      installedVersion: '0.13.12', candidateVersion: '0.13.13', automatic: false, eligible: true,
+      actionToken: 'test-token', state: failed ? 'download-failed' : 'available',
+      error: failed ? '安装包校验失败' : '', packageReady: !failed,
+      progress: { percent: failed ? 18 : 33, phases: [
+        { id: 'download', label: '下载阶段', status: failed ? 'error' : 'complete', percent: failed ? 55 : 100 },
+        { id: 'health', label: '健康检查阶段', status: 'waiting', percent: 0 },
+        { id: 'update', label: '更新阶段', status: 'waiting', percent: 0 },
+      ] },
+    } });
+  });
+  await page.route('**/api/runtime-logs?*', async route => route.fulfill({ json: { items: route.request().url().includes('kind=update') ? [
+    { seq: 1, at: '2026-11-25T07:00:00Z', event: 'update.download.failed', level: 'error', details: { version: '0.13.13' } },
+  ] : [] } }));
+  await page.goto('/');
+  await page.locator('.industry-top').getByRole('button', { name: '设置', exact: true }).click();
+  await expect(page.getByRole('progressbar', { name: '更新总进度' })).toHaveAttribute('aria-valuenow', '18');
+  await expect(page.getByRole('alert')).toContainText('安装包校验失败');
+  await page.getByRole('button', { name: '重试' }).click();
+  await expect(page.getByRole('progressbar', { name: '更新总进度' })).toHaveAttribute('aria-valuenow', '33');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(actions).toEqual(['retry']);
+  await page.getByRole('tab', { name: '平台日志' }).click();
+  await page.getByRole('tab', { name: '更新日志' }).click();
+  await expect(page.getByText('下载或校验失败')).toBeVisible();
 });

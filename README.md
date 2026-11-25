@@ -108,7 +108,7 @@ npm run plugin:pack
 
 ## 安装
 
-当前源码版本为 **0.13.9**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
+当前源码版本为 **0.13.12**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。设置页的三阶段进度和更新日志见 [0.13.12 发布说明](docs/release-0.13.12.md)。
 
 Windows、macOS 桌面版以及网页版，均可在 DSH「添加插件」填写：
 
