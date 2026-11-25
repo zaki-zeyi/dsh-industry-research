@@ -91,7 +91,7 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     server.close(); await service?.close(); service?.binding?.close(); await terminals?.close(); nativeSessions?.close(); store?.close(); release(); throw error;
   }
   let closing;
-  return { server, service, url: `http://127.0.0.1:${server.address().port}`, close() {
+  return { server, service, dataDir, url: `http://127.0.0.1:${server.address().port}`, close() {
     return closing ??= (async () => { terminalSockets.close(); server.close(); server.closeAllConnections(); await service.close(); service.binding?.close(); await terminals.close(); nativeSessions?.close(); recordRuntimeStop(store); store.close(); release(); })();
   } };
 }

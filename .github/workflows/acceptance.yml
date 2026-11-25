@@ -30,6 +30,12 @@ jobs:
         run: node scripts/ci-check.mjs test:e2e
       - run: npm run plugin:pack
       - run: node scripts/release-acceptance.mjs
+      - if: matrix.os == 'windows-latest'
+        run: npm install --prefix "$env:RUNNER_TEMP/dsh-cli" @deepseek-ai/dsh@0.2.0-rc.2 --ignore-scripts --no-audit --no-fund
+      - if: matrix.os == 'windows-latest'
+        env:
+          DSH_CLI_PATH: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
+        run: node scripts/ota-host-acceptance.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

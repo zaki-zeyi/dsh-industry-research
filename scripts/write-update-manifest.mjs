@@ -19,6 +19,8 @@ const manifest = {
   sourceCommit: release.sourceCommit,
   installCommit,
   installTag,
+  archiveName: release.filename,
+  archiveSize: release.size,
   archiveSha256: release.sha256,
 };
 writeFileSync(resolve('artifacts/update-manifest.json'), JSON.stringify(manifest, null, 2) + '\n');

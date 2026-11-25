@@ -59,7 +59,7 @@ try {
   const packed = result[0];
   const archive = resolve(root, 'artifacts', packed.filename);
   const files = packed.files.map(file => file.path);
-  for (const required of ['dist/index.html', 'plugin/index.mjs', 'node_modules/node-pty/lib/index.js', 'node_modules/express/index.js']) if (!files.includes(required)) throw new Error(`安装包缺少 ${required}`);
+  for (const required of ['dist/index.html', 'plugin/index.mjs', 'plugin/payload.mjs', 'plugin/update-slots.mjs', 'node_modules/node-pty/lib/index.js', 'node_modules/express/index.js']) if (!files.includes(required)) throw new Error(`安装包缺少 ${required}`);
   for (const platform of ['win32-x64', 'win32-arm64', 'darwin-x64', 'darwin-arm64']) {
     const native = platform.startsWith('win32') ? 'conpty.node' : 'pty.node';
     if (!files.includes(`node_modules/node-pty/prebuilds/${platform}/${native}`)) throw new Error(`缺少 ${platform} 原生终端文件`);

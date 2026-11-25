@@ -1,93 +1,46 @@
 import { resolve } from 'node:path';
-import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { startRuntime, dataIdentity } from '../server/runtime.mjs';
-import { PluginUpdates } from './updates.mjs';
+import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { UpdateSlots } from './update-slots.mjs';
+import * as basePayload from './payload.mjs';
+
 export const name = 'dsh-industry-research';
-const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
-// Retain the existing storage namespace and health protocol for upgrades.
-export const inject = ['webServer', 'sessionController', 'permissionPresets', 'workspaceRegistry'];
-export async function connectRuntime(config = {}, host) {
-  const dataDir = resolve(config.dataDir ?? resolve(process.env.DSH_HOME ?? resolve(homedir(), '.dsh'), 'industry-research'));
-  const port = config.port ?? 0;
-  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('调研服务端口无效');
-  if (port) {
-    let health;
-    try { const response = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(1500) }); health = await response.json(); } catch {}
-    if (health) {
-      if (health.application !== 'industry-research' || health.dataIdentity !== dataIdentity(dataDir)) throw new Error(`端口 ${port} 已被其他服务或其他调研数据库占用`);
-      if (health.version !== version) throw new Error(`端口 ${port} 正在运行工作台 ${health.version ?? '未知版本'}，请先停止旧服务`);
-      if (host && config.mode !== 'demo' && health.transport !== 'dsh-native') throw new Error('已有调研服务不支持宿主原生会话，请停止旧服务后重新启用插件');
-      return { url: `http://127.0.0.1:${port}`, owned: false, close: async () => {} };
-    }
-  }
-  const env = { ...process.env, RESEARCH_MODE: host && config.mode !== 'demo' ? 'native' : config.mode ?? 'codex', CODEX_MODEL: config.model ?? process.env.CODEX_MODEL, CODEX_COMMAND: config.command ?? process.env.CODEX_COMMAND };
-  const runtime = await startRuntime({ env, port, dataDir, host });
-  return { ...runtime, owned: true };
-}
+export const inject = basePayload.inject;
+export const connectRuntime = basePayload.connectRuntime;
+const baseVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+
 export function apply(ctx, config = {}) {
-  let stopped = false, runtime;
-  let status = { state: 'starting', version };
-  const ready = connectRuntime(config, ctx).then(async result => {
-    runtime = result;
-    if (stopped) return result.close();
-    status = { state: 'ready', url: result.url, owned: result.owned, version };
-  }).catch(error => {
-    status = { state: 'error', message: error.message, version };
-    throw error;
-  });
-  let updates;
-  const updateReady = ready.then(() => {
-    if (stopped || !runtime?.service) return;
-    updates = new PluginUpdates(runtime.service, () => ctx.get?.('pluginManager'), version);
-    updates.start();
-  });
-  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: '/industry-research/status', handler(req, res) {
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store');
-    res.end(JSON.stringify(status));
-  } }));
-  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: '/industry-research/theme.css', handler(_req, res) { res.setHeader('Content-Type', 'text/css; charset=utf-8'); res.setHeader('Cache-Control', 'no-store'); res.end(readFileSync(new URL('./workbench-theme.css', import.meta.url), 'utf8')); } }));
-  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: '/industry-research/session', handler(req, res) {
-    res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.setHeader('Cache-Control', 'no-store');
+  if (typeof ctx.plugin !== 'function') return basePayload.apply(ctx, config);
+  const dataDir = resolve(config.dataDir ?? resolve(process.env.DSH_HOME ?? resolve(homedir(), '.dsh'), 'industry-research'));
+  const slots = new UpdateSlots(dataDir, baseVersion);
+  let current;
+  const mounted = slots.boot(async slot => {
+    const entry = slots.pathFor(slot);
+    const payload = slot.kind === 'base' ? basePayload : await import(pathToFileURL(entry).href);
+    let runtime, fiber;
+    const activationGate = { approved: false };
     try {
-      const id = new URL(req.url, 'http://localhost').searchParams.get('taskId');
-      if (!/^[a-f0-9-]{36}$/.test(id ?? '')) throw new Error('任务标识无效');
-      const task = runtime?.service?.require(id);
-      if (!task?.nativeSession || !task.nativeSessionId) throw new Error('该任务没有宿主原生会话');
-      res.end(JSON.stringify({ taskId: id, sessionId: task.nativeSessionId, direction: task.direction, cloudOnly: Boolean(runtime.service.cloudOnly), publicationUrl: task.publication.target === 'feishu' && task.publication.status === 'published' ? task.publication.url : null, reportReady: Boolean(task.report), publicationStatus: task.publication.status, status: task.status, createdAt: task.createdAt, sources: task.sources, runCount: task.runs.length }));
-    } catch { res.statusCode = 409; res.end(JSON.stringify({ error: '无法打开任务的宿主原生会话，请在行研工作台检查状态' })); }
-  } }));
-  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: '/industry-research/update', async handler(req, res) {
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store');
-    try {
-      await updateReady;
-      if (!updates) throw new Error('更新服务尚未就绪');
-      if (req.method === 'GET') return res.end(JSON.stringify(updates.snapshot()));
-      const origin = req.headers.origin;
-      const expected = `http://${req.headers.host}`;
-      if (req.method !== 'POST' || origin !== expected && origin !== 'dsh-app://app') {
-        res.statusCode = 403;
-        return res.end(JSON.stringify({ error: '更新操作来源无效' }));
+      fiber = await ctx.plugin({
+        name: `dsh-industry-research-payload-${slot.version}`,
+        inject: payload.inject,
+        apply: child => payload.apply(child, { ...config, slotUpdater: slots, activationGate,
+          onRuntime: value => { runtime = value; } }),
+      });
+      if (!runtime?.service) throw new Error('更新槽位未启动工作台服务');
+      const response = await fetch(`${runtime.url}/api/health`, { signal: AbortSignal.timeout(5000) });
+      const health = await response.json();
+      if (!response.ok || health.application !== 'industry-research' || health.version !== slot.version ||
+        health.dataIdentity !== (await import('../server/runtime.mjs')).dataIdentity(dataDir)) {
+        throw new Error(`更新槽位健康检查失败：${slot.version}`);
       }
-      const action = new URL(req.url, 'http://localhost').searchParams;
-      if (action.get('action') === 'check') return res.end(JSON.stringify(await updates.check()));
-      if (action.get('action') === 'automatic' && ['0', '1'].includes(action.get('enabled'))) {
-        return res.end(JSON.stringify(updates.setAutomatic(action.get('enabled') === '1')));
-      }
-      if (action.get('action') === 'install') {
-        void updates.install().catch(error => { updates.state = 'failed'; updates.error = error.message; });
-        res.statusCode = 202;
-        return res.end(JSON.stringify(updates.snapshot()));
-      }
-      res.statusCode = 400;
-      res.end(JSON.stringify({ error: '更新操作无效' }));
+      activationGate.approved = true;
+      return fiber;
     } catch (error) {
-      res.statusCode = 503;
-      res.end(JSON.stringify({ error: error.message }));
+      await Promise.resolve(fiber?.dispose?.()).catch(() => {});
+      throw error;
     }
-  } }));
-  ctx.effect(() => async () => { stopped = true; updates?.close(); await updateReady.catch(() => {}); await runtime?.close(); });
-  return updateReady;
+  }).then(fiber => { current = fiber; return fiber; });
+  ctx.effect(() => async () => { await mounted.catch(() => {}); await current?.dispose(); });
+  return mounted;
 }
