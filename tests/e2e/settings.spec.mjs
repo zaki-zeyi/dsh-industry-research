@@ -52,7 +52,7 @@ test('三阶段进度显示下载错误、重试和独立更新日志', async ({
     } });
   });
   await page.route('**/api/runtime-logs?*', async route => route.fulfill({ json: { items: route.request().url().includes('kind=update') ? [
-    { seq: 1, at: '2026-11-25T07:00:00Z', event: 'update.download.failed', level: 'error', details: { version: '0.13.13' } },
+    { seq: 1, at: '2026-11-25T07:00:00Z', event: 'update.download.failed', level: 'error', details: { version: '0.13.13', phase: 'download', percent: 55, bytesReceived: 550000, bytesTotal: 1000000, durationMs: 1200, code: 'INTEGRITY_FAILED', operationId: 'update-123' } },
   ] : [] } }));
   await page.goto('/');
   await page.locator('.industry-top').getByRole('button', { name: '设置', exact: true }).click();
@@ -65,4 +65,7 @@ test('三阶段进度显示下载错误、重试和独立更新日志', async ({
   await page.getByRole('tab', { name: '平台日志' }).click();
   await page.getByRole('tab', { name: '更新日志' }).click();
   await expect(page.getByText('下载或校验失败')).toBeVisible();
+  await expect(page.getByText('55%')).toBeVisible();
+  await expect(page.getByText('发布或安装包校验失败')).toBeVisible();
+  await expect(page.getByText('update-123')).toBeVisible();
 });

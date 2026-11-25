@@ -39,6 +39,7 @@ test('完整包进独立槽位，重启后健康确认；旧版仍保留', async
   assert.equal(after.state.previous.kind, 'base');
   assert.equal(after.state.pending, null);
   assert.equal((await after.waitForActivation()).state, 'updated');
+  assert.ok(after.state.lastResult.healthDurationMs >= 0);
 });
 
 test('新版启动失败直接回到旧槽位，不需安装也不需网络', async t => {
@@ -54,6 +55,8 @@ test('新版启动失败直接回到旧槽位，不需安装也不需网络', as
   assert.deepEqual(attempts, ['0.13.9', '0.13.8']);
   assert.equal(after.activeVersion, '0.13.8');
   assert.equal(after.state.lastResult.state, 'restored');
+  assert.ok(after.state.lastResult.healthDurationMs >= 0);
+  assert.ok(after.state.lastResult.rollbackDurationMs >= 0);
   assert.equal(existsSync(after.pathFor({ kind: 'slot', version: candidate.version, sha256: candidate.archive.sha256 })), true);
 });
 

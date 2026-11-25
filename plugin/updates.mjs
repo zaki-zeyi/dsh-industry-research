@@ -19,6 +19,17 @@ function newerVersion(candidate, installed) {
   return false;
 }
 
+function failureDetails(error, phase, durationMs) {
+  const message = String(error?.message ?? '');
+  const httpStatus = Number(/(?:返回|下载失败：)\s*(\d{3})/.exec(message)?.[1]);
+  const code = /不可变保护/.test(message) ? 'RELEASE_MUTABLE'
+    : /清单|校验|大小不符|版本不一致|非法路径/.test(message) ? 'INTEGRITY_FAILED'
+      : /timeout|超时|aborted/i.test(message) ? 'TIMEOUT'
+        : Number.isInteger(httpStatus) && httpStatus >= 100 ? 'HTTP_FAILED'
+          : /任务或写入正在执行/.test(message) ? 'WORKBENCH_BUSY' : 'UPDATE_FAILED';
+  return { phase, code, durationMs, ...(Number.isInteger(httpStatus) && httpStatus >= 100 ? { httpStatus } : {}) };
+}
+
 async function readJson(response, maxBytes) {
   if (!response.ok) throw new Error(`更新服务返回 ${response.status}`);
   const bytes = Buffer.from(await response.arrayBuffer());
@@ -46,10 +57,12 @@ export class PluginUpdates {
     this.downloadWork = null;
     this.downloadPercent = 0;
     this.errorPhase = null;
+    this.operationId = this.saved.pending?.operationId ?? this.saved.staged?.operationId ?? randomUUID();
   }
 
   log(event, details = {}, level = 'info') {
-    try { this.service.store.runtimeLog?.(`update.${event}`, { version: this.candidate?.version ?? this.version, ...details }, level); } catch {}
+    try { this.service.store.runtimeLog?.(`update.${event}`, { operationId: this.operationId,
+      version: this.candidate?.version ?? this.version, ...details }, level); } catch {}
   }
 
   progress() {
@@ -84,7 +97,10 @@ export class PluginUpdates {
         this.state = 'failed';
         this.errorPhase = 'health';
         this.error = `版本 ${failedVersion} 启动失败，已回到旧版；等待下一正式版本`;
-        this.log('health.failed', { failedVersion }, 'error');
+        this.log('health.failed', { failedVersion, phase: 'health',
+          durationMs: verdict?.healthDurationMs, code: 'HEALTH_CHECK_FAILED' }, 'error');
+        this.log('rollback.completed', { failedVersion, installedVersion: this.version,
+          phase: 'rollback', rollbackDurationMs: verdict?.rollbackDurationMs }, 'warn');
       }
       return;
     }
@@ -93,6 +109,7 @@ export class PluginUpdates {
       const verdict = this.slotUpdater.state.lastResult;
       if (!verdict || (verdict.version !== pending.version && verdict.reason !== 'state-corrupt') ||
         !['updated', 'restored'].includes(verdict.state)) return;
+      this.operationId = pending.operationId ?? this.operationId;
       this.saved = { ...this.saved, pending: null, staged: null,
         failedVersion: verdict.state === 'restored' ? pending.version : null,
         lastResult: verdict.state, lastVersion: pending.version };
@@ -103,9 +120,14 @@ export class PluginUpdates {
         this.state = 'failed';
         this.errorPhase = 'health';
         this.error = `版本 ${pending.version} 启动失败，已回到旧版；等待下一正式版本`;
-        this.log('health.failed', { failedVersion: pending.version }, 'error');
+        this.log('health.failed', { failedVersion: pending.version, phase: 'health',
+          durationMs: verdict.healthDurationMs, code: 'HEALTH_CHECK_FAILED' }, 'error');
+        this.log('rollback.completed', { failedVersion: pending.version, installedVersion: this.version,
+          phase: 'rollback', rollbackDurationMs: verdict.rollbackDurationMs }, 'warn');
       } else {
-        this.log('completed', { installedVersion: pending.version });
+        this.log('health.passed', { installedVersion: pending.version, phase: 'health',
+          durationMs: verdict.healthDurationMs });
+        this.log('completed', { installedVersion: pending.version, phase: 'update' });
       }
       return;
     }
@@ -148,6 +170,7 @@ export class PluginUpdates {
   }
 
   retry() {
+    this.log('retry.requested', { phase: this.errorPhase ?? 'check' });
     if (this.state === 'download-failed' && this.candidate) return this.download().then(() => this.snapshot());
     if (this.state === 'failed' && this.candidate && this.packageReady && this.errorPhase === 'update') return this.install();
     return this.check();
@@ -198,6 +221,7 @@ export class PluginUpdates {
     if (enabled && this.eligible !== true) throw new Error('请先通过 DSH 插件管理器安装固定提交的正式版');
     this.saved = { ...this.saved, automatic: enabled };
     this.service.store.saveSetting(settingKey, this.saved);
+    this.log('settings.changed', { automatic: enabled });
     if (enabled && this.candidate && this.packageReady && this.now() - Date.parse(this.candidate.publishedAt) >= releaseAgeMs) {
       void this.install().catch(() => {});
     }
@@ -206,10 +230,13 @@ export class PluginUpdates {
 
   async check() {
     if (this.closed || this.checking || this.state === 'installing') return this.snapshot();
+    const startedAt = this.now();
+    if (!this.candidate && !this.saved.pending) this.operationId = randomUUID();
     this.checking = true;
     this.state = 'checking';
     this.error = '';
     this.errorPhase = null;
+    this.log('check.started', { phase: 'check' });
     try {
       if (this.downloadWork) {
         this.downloadAbort?.abort();
@@ -227,7 +254,7 @@ export class PluginUpdates {
         this.saved = { ...this.saved, staged: null, checkedAt: new Date(this.now()).toISOString() };
         this.service.store.saveSetting(settingKey, this.saved);
         this.state = 'current';
-        this.log('check.current');
+        this.log('check.current', { phase: 'check', durationMs: this.now() - startedAt });
         return this.snapshot();
       }
       if (release.immutable !== true) throw new Error('正式发布未启用不可变保护，已暂停自动更新');
@@ -250,6 +277,8 @@ export class PluginUpdates {
       const archiveAsset = release.assets?.find(item => item.name === manifest.archiveName);
       if (!archiveAsset || archiveAsset.size !== manifest.archiveSize ||
         archiveAsset.digest !== `sha256:${manifest.archiveSha256}`) throw new Error('正式发布安装包与更新清单不一致');
+      this.log('release.verified', { phase: 'check', candidateVersion: manifest.version,
+        bytesTotal: manifest.archiveSize, durationMs: this.now() - startedAt });
       this.candidate = newerVersion(manifest.version, this.version) && manifest.version !== this.saved.failedVersion
         ? { version: manifest.version, installCommit: manifest.installCommit, publishedAt: release.published_at,
           archive: { version: manifest.version, name: manifest.archiveName, size: manifest.archiveSize,
@@ -265,7 +294,8 @@ export class PluginUpdates {
         this.error = `版本 ${manifest.version} 启动失败，已回到旧版；等待下一正式版本`;
         this.errorPhase = 'health';
       }
-      this.log(this.candidate ? 'check.available' : 'check.current', { candidateVersion: manifest.version });
+      this.log(this.candidate ? 'check.available' : 'check.current', { phase: 'check',
+        candidateVersion: manifest.version, durationMs: this.now() - startedAt });
       if (this.candidate && this.eligible) void this.download().catch(() => {});
     } catch (error) {
       if (!this.saved.staged?.candidate || this.candidate?.version !== this.saved.staged.candidate.version ||
@@ -276,7 +306,7 @@ export class PluginUpdates {
       } else this.state = this.packageReady ? 'available' : 'download-failed';
       this.error = error.message;
       this.errorPhase = 'download';
-      this.log('check.failed', { code: 'UPDATE_CHECK_FAILED' }, 'error');
+      this.log('check.failed', failureDetails(error, 'check', this.now() - startedAt), 'error');
     } finally {
       this.checking = false;
     }
@@ -310,24 +340,39 @@ export class PluginUpdates {
     this.error = '';
     this.errorPhase = null;
     this.downloadPercent = 0;
-    this.log('download.started');
+    const startedAt = this.now();
+    let lastProgressBand = 0;
+    this.log('download.started', { phase: 'download', bytesTotal: candidate.archive.size });
     const controller = new AbortController();
     this.downloadAbort = controller;
     const promise = (async () => {
       try {
         const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(5 * 60 * 1000)]);
         const staged = await stageUpdateArchive(this.cacheDir, candidate.archive, this.request, signal,
-          (received, total) => { if (this.candidate === candidate) this.downloadPercent = Math.min(99, Math.floor(received * 100 / total)); });
+          (received, total) => {
+            if (this.candidate !== candidate) return;
+            const percent = Math.min(99, Math.floor(received * 100 / total));
+            this.downloadPercent = percent;
+            const band = Math.floor(percent / 25);
+            if (received < total && band > lastProgressBand) {
+              lastProgressBand = band;
+              this.log('download.progress', { phase: 'download', percent,
+                bytesReceived: received, bytesTotal: total, durationMs: this.now() - startedAt });
+            }
+          });
         const previousArchive = this.slotUpdater ? null : await this.previousArchive();
         if (previousArchive) await stageUpdateArchive(this.cacheDir, previousArchive, this.request, signal);
         if (this.candidate !== candidate || this.closed) return staged;
         this.rollbackArchive = previousArchive;
-        this.saved = { ...this.saved, staged: { candidate, rollbackArchive: previousArchive } };
+        this.saved = { ...this.saved, staged: { candidate, rollbackArchive: previousArchive,
+          operationId: this.operationId } };
         this.service.store.saveSetting(settingKey, this.saved);
         this.packageReady = true;
         this.downloadPercent = 100;
         this.state = 'available';
-        this.log('download.completed', { cached: staged.cached });
+        this.log('download.completed', { phase: 'download', cached: staged.cached, percent: 100,
+          bytesReceived: candidate.archive.size, bytesTotal: candidate.archive.size,
+          durationMs: this.now() - startedAt });
         return staged;
       } catch (error) {
         if (this.candidate === candidate && !this.closed) {
@@ -335,7 +380,7 @@ export class PluginUpdates {
           this.state = 'download-failed';
           this.error = error.message;
           this.errorPhase = 'download';
-          this.log('download.failed', { code: 'UPDATE_DOWNLOAD_FAILED' }, 'error');
+          this.log('download.failed', failureDetails(error, 'download', this.now() - startedAt), 'error');
         }
         throw error;
       } finally {
@@ -377,14 +422,16 @@ export class PluginUpdates {
     if (this.service.active.size || this.service.queue?.length || this.service.store.list().some(task => ['running', 'queued'].includes(task.status)) ||
       this.service.queuedSaves?.running.size || this.service.queuedSaves?.submissions.size || this.service.inFlightWrites) {
       this.service.updating = false;
+      this.log('install.deferred', { phase: 'update', code: 'WORKBENCH_BUSY' }, 'warn');
       throw new Error('工作台仍有任务或写入正在执行，稍后自动重试');
     }
+    const startedAt = this.now();
     this.state = 'installing';
     this.errorPhase = null;
-    this.log('install.started');
+    this.log('install.started', { phase: 'update' });
     const requestId = randomUUID();
     this.saved = { ...this.saved, pending: { version: candidate.version, previousVersion: this.version, requestId,
-      archive: candidate.archive, previousArchive: this.rollbackArchive }, lastResult: null };
+      archive: candidate.archive, previousArchive: this.rollbackArchive, operationId: this.operationId }, lastResult: null };
     this.service.store.saveSetting(settingKey, this.saved);
     try {
       const name = 'dsh-industry-research';
@@ -435,7 +482,9 @@ export class PluginUpdates {
         throw new Error(restored ? `${detail}；旧版已从本地缓存恢复` : `${detail}；旧版恢复失败`);
       }
       if (!this.closed) this.state = application === 'restart-required' ? 'restart-required' : 'installed';
-      this.log(application === 'restart-required' ? 'health.waiting' : 'completed');
+      this.log(application === 'restart-required' ? 'health.waiting' : 'completed', {
+        phase: application === 'restart-required' ? 'health' : 'update',
+        durationMs: this.now() - startedAt, installedVersion: candidate.version });
     } catch (error) {
       if (!this.closed) {
         this.saved = { ...this.saved, pending: null, lastResult: 'failed', lastVersion: candidate.version };
@@ -443,7 +492,7 @@ export class PluginUpdates {
         this.state = 'failed';
         this.error = error.message;
         this.errorPhase = 'update';
-        this.log('install.failed', { code: 'UPDATE_INSTALL_FAILED' }, 'error');
+        this.log('install.failed', failureDetails(error, 'update', this.now() - startedAt), 'error');
       }
       throw error;
     } finally {
@@ -456,21 +505,25 @@ export class PluginUpdates {
     await this.refreshEligibility();
     if (!this.eligible) throw new Error('当前运行版本与更新槽位不一致');
     const staged = await this.download();
+    const startedAt = this.now();
     this.state = 'installing';
     this.errorPhase = null;
-    this.log('install.started');
+    this.log('install.started', { phase: 'update' });
     try {
       await this.slotUpdater.schedule(staged.path, candidate);
-      this.saved = { ...this.saved, pending: { version: candidate.version, previousVersion: this.version }, lastResult: null };
+      this.log('slot.prepared', { phase: 'update', candidateVersion: candidate.version,
+        durationMs: this.now() - startedAt });
+      this.saved = { ...this.saved, pending: { version: candidate.version, previousVersion: this.version,
+        operationId: this.operationId }, lastResult: null };
       this.service.store.saveSetting(settingKey, this.saved);
       this.state = 'restart-required';
-      this.log('health.waiting');
+      this.log('health.waiting', { phase: 'health', candidateVersion: candidate.version });
       return this.snapshot();
     } catch (error) {
       this.state = 'failed';
       this.error = error.message;
       this.errorPhase = 'update';
-      this.log('install.failed', { code: 'UPDATE_INSTALL_FAILED' }, 'error');
+      this.log('install.failed', failureDetails(error, 'update', this.now() - startedAt), 'error');
       throw error;
     }
   }

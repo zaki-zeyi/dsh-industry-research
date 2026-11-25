@@ -53,7 +53,7 @@ export class Store {
     if (!/^[a-z][a-z0-9_.-]{0,79}$/.test(event) || !['info','warn','error'].includes(level)) return;
     const safe = {};
     details = { ...logMetadata(), ...details };
-    const allowed = ['appId','targetAppId','previousAppId','code','status','phase','profile','operation','scope','attempt','taskId','killed','credentialStatus','operationId','durationMs','traceId','flowId','step','pluginVersion','instanceId','platform','arch','nativeCode','requestId','httpStatus','version','candidateVersion','installedVersion','failedVersion','cached'];
+    const allowed = ['appId','targetAppId','previousAppId','code','status','phase','profile','operation','scope','attempt','taskId','killed','credentialStatus','operationId','durationMs','rollbackDurationMs','traceId','flowId','step','pluginVersion','instanceId','platform','arch','nativeCode','requestId','httpStatus','version','candidateVersion','installedVersion','failedVersion','cached','automatic','percent','bytesReceived','bytesTotal'];
     for (const key of allowed) {
       const value = details[key];
       if (typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value)) safe[key] = value;

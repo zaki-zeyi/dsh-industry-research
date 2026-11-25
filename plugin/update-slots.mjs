@@ -116,20 +116,24 @@ export class UpdateSlots {
     const pending = this.state.pending;
     const target = pending?.target ?? this.state.active ?? this.base;
     let current, result;
+    const healthStartedAt = Date.now();
     try {
       current = await mount(target);
       if (pending) {
         this.save({ ...this.state, active: target, previous: pending.previous, pending: null,
-          lastResult: { state: 'updated', version: target.version } });
+          lastResult: { state: 'updated', version: target.version, healthDurationMs: Date.now() - healthStartedAt } });
       }
       result = { state: pending ? 'updated' : 'current', version: target.version };
     } catch (error) {
       await Promise.resolve(current?.dispose?.()).catch(() => {});
       const fallback = pending?.previous ?? this.state.previous ?? this.base;
       if (target.kind === fallback.kind && target.version === fallback.version && target.sha256 === fallback.sha256) throw error;
+      const rollbackStartedAt = Date.now();
       current = await mount(fallback);
       this.save({ ...this.state, active: fallback, previous: null, pending: null,
-        lastResult: { state: 'restored', version: target.version, error: error.message } });
+        lastResult: { state: 'restored', version: target.version, error: error.message,
+          healthDurationMs: rollbackStartedAt - healthStartedAt,
+          rollbackDurationMs: Date.now() - rollbackStartedAt } });
       result = { state: 'restored', version: fallback.version, failedVersion: target.version };
     } finally {
       this.finishActivation(result);

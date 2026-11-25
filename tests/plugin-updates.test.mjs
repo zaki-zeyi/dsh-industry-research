@@ -82,7 +82,10 @@ test('更新进度反映下载、等待健康检查和完成，并记录更新�
   await updates.check();
   await updates.download();
   assert.deepEqual(updates.snapshot().progress.phases.map(item => item.status), ['complete', 'waiting', 'waiting']);
-  assert.ok(f.events.some(item => item.event === 'update.download.completed'));
+  assert.ok(f.events.some(item => item.event === 'update.check.started'));
+  assert.ok(f.events.some(item => item.event === 'update.release.verified' && item.details.bytesTotal === f.archive.length));
+  assert.ok(f.events.some(item => item.event === 'update.download.completed' && item.details.percent === 100));
+  assert.equal(new Set(f.events.map(item => item.details.operationId)).size, 1);
   await updates.install();
   assert.deepEqual(updates.snapshot().progress.phases.map(item => item.status), ['complete', 'complete', 'complete']);
   updates.close();
@@ -100,6 +103,8 @@ test('下载失败标红并通过重试恢复', async () => {
   await updates.retry();
   assert.equal(updates.snapshot().progress.phases[0].status, 'complete');
   assert.ok(f.events.some(item => item.event === 'update.download.failed' && item.level === 'error'));
+  assert.ok(f.events.some(item => item.event === 'update.download.failed' && item.details.code === 'INTEGRITY_FAILED'));
+  assert.ok(f.events.some(item => item.event === 'update.retry.requested'));
   updates.close();
 });
 
