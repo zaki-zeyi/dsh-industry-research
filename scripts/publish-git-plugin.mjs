@@ -78,5 +78,15 @@ else if (value(['rev-parse', `${previous}^{tree}`]) !== tree) commit = value(['c
 const changed = commit !== previous;
 git(['update-ref', `refs/heads/${branch}`, commit]);
 git(['symbolic-ref', 'HEAD', `refs/heads/${branch}`]);
-if (push && changed) git(['push', 'origin', `HEAD:refs/heads/${branch}`]);
-console.log(JSON.stringify({ branch, version: manifest.version, sourceCommit, directory, commit, changed, pushed: push }));
+const installTag = `plugin-install-v${manifest.version}`;
+if (push) {
+  const existingTag = git(['ls-remote', '--exit-code', '--tags', 'origin', `refs/tags/${installTag}`], directory, true);
+  if (existingTag.status === 0 && existingTag.stdout.trim().split(/\s+/)[0] !== commit) throw new Error(`安装版本标签 ${installTag} 已指向其他提交`);
+  if (existingTag.status !== 0 && existingTag.status !== 2) throw new Error('无法检查安装版本标签');
+  if (changed) git(['push', 'origin', `HEAD:refs/heads/${branch}`]);
+  if (existingTag.status === 2) {
+    git(['update-ref', `refs/tags/${installTag}`, commit]);
+    git(['push', 'origin', `refs/tags/${installTag}:refs/tags/${installTag}`]);
+  }
+}
+console.log(JSON.stringify({ branch, version: manifest.version, sourceCommit, directory, commit, installTag, changed, pushed: push }));

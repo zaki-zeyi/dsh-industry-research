@@ -26,6 +26,7 @@ import { mkdirSync, openSync, closeSync, readFileSync, unlinkSync, writeFileSync
 import { createHash } from 'node:crypto';
 import { recordTrace, recordRuntimeStart, recordRuntimeStop } from './connection-trace.mjs';
 import { fileURLToPath } from 'node:url';
+const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 export function dataIdentity(path) { return createHash('sha256').update(resolve(path)).digest('hex'); }
 export async function startRuntime({ env = process.env, port = Number(env.PORT ?? 3088), dataDir = resolve(env.DATA_DIR ?? './data'), dist = fileURLToPath(new URL('../dist', import.meta.url)), host, binding, directories, libraryRun, libraryImportRun, analysisRun, publicationRun, queuedDocuments } = {}) {
   dataDir = resolve(dataDir);
@@ -83,14 +84,14 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     void service.topicSchedules.catchUpMissed().catch(() => {});
     if (service.briefingSchedules) void service.briefingSchedules.catchUpMissed().catch(() => {});
 
-    server.on('request', createApp(service, { dist, libraryRun, libraryImportRun, analysisRun, publicationRun, health: { application: 'industry-research', dataIdentity: dataIdentity(dataDir), transport: researcher.transport ?? 'json' } }));
+    server.on('request', createApp(service, { dist, libraryRun, libraryImportRun, analysisRun, publicationRun, health: { application: 'industry-research', version, dataIdentity: dataIdentity(dataDir), transport: researcher.transport ?? 'json' } }));
     terminalSockets = attachTerminalWebSocket(server, terminals);
   } catch (error) {
     recordTrace(store,'runtime.start_failed',{status:'failed'},'error');
     server.close(); await service?.close(); service?.binding?.close(); await terminals?.close(); nativeSessions?.close(); store?.close(); release(); throw error;
   }
   let closing;
-  return { server, service, url: `http://127.0.0.1:${server.address().port}`, close() {
+  return { server, service, dataDir, url: `http://127.0.0.1:${server.address().port}`, close() {
     return closing ??= (async () => { terminalSockets.close(); server.close(); server.closeAllConnections(); await service.close(); service.binding?.close(); await terminals.close(); nativeSessions?.close(); recordRuntimeStop(store); store.close(); release(); })();
   } };
 }

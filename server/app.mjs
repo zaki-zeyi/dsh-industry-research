@@ -31,6 +31,20 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     }
     next();
   });
+  app.use((req, res, next) => {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+    if (service.updating) return res.status(503).json({ error: '工作台正在切换版本，请稍后重试' });
+    service.inFlightWrites = (service.inFlightWrites ?? 0) + 1;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      service.inFlightWrites--;
+    };
+    res.once('finish', release);
+    res.once('close', release);
+    next();
+  });
   app.post('/api/tasks/:id/queued-save', express.json({ limit: '2mb' }), async (req, res, next) => {
     try {
       if (!service.queuedSaves) throw new ServiceError(404, '当前运行模式未启用保存队列');

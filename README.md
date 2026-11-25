@@ -1,5 +1,7 @@
 # dsh-industry-research · 行研工作台
 
+0.13.8：新增插件更新入口与正式发布校验；自动安装默认关闭。详见 [发布说明](docs/release-0.13.8.md)。
+
 0.13.7：专题日报可设置精确到分钟的调研起止时间。专题总报和日报要求将可点击的来源链接放在对应条目正文后。
 
 0.13.6：专题日报可按北京时间配置前 N 个完整自然日，默认 1 天。专题总报和日报的默认 Prompt 要求每条信息附来源链接。
@@ -106,13 +108,19 @@ npm run plugin:pack
 
 ## 安装
 
-当前源码版本为 **0.13.6**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
+当前源码版本为 **0.13.9**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
 Windows、macOS 桌面版以及网页版，均可在 DSH「添加插件」填写：
 
 https://github.com/zaki-zeyi/dsh-industry-research.git#release
 
-该地址显式安装 release 分支的预构建插件；main 为默认开发分支。网页安装发生在 DSH 服务端，服务端必须能够访问 GitHub。
+该地址显式安装 release 分支的预构建插件；main 为默认开发分支。网页安装发生在 DSH 服务端，服务端必须能够访问 GitHub。自动更新需要先安装一次含稳定启动层的 0.13.9 或更新版本：
+
+```text
+git+https://github.com/zaki-zeyi/dsh-industry-research.git#<installCommit>
+```
+
+之后插件检查不可变正式 Release 的清单与摘要，只下载并校验新版完整 TGZ。新版被解压到独立槽位，旧版目录保持可运行；重启 DSH 后，稳定启动层先加载新版并检查服务健康，成功才确认切换，失败则直接加载旧版。下载失败会重试，下载完成后的切换与回退都不依赖网络或 DSH 插件管理器重装。自动更新默认关闭，需在行研工作台开启。失败版本会被隔离，直到出现下一正式版本。稳定启动层与 DSH 客户端入口自身的变更仍需通过 DSH 管理器手动升级。仓库需在 GitHub Settings 的 Releases 中启用 release immutability 后才能发布自动更新版本。详见 [0.13.9 发布说明](docs/release-0.13.9.md)。
 
 也可以下载对应版本的 desktop.zip，解压后在「添加插件」填写包含 package.json 的目录绝对路径。Windows/macOS x64、arm64 共用 ZIP；网页版需填写服务端的目录路径。安装后保留目录，按宿主提示启用或重新加载。
 
