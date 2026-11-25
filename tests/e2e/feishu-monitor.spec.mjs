@@ -15,7 +15,8 @@ test('飞书监测入口、异常定位、筛选、导出和服务异常提示',
   });
   await page.goto('/');
   await expect(page.locator('.industry-sidebar').getByRole('button', { name: '平台日志', exact: true })).toHaveCount(0);
-  await page.locator('.industry-top').getByRole('button', { name: '平台日志', exact: true }).click();
+  await page.locator('.industry-top').getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('tab', { name: '平台日志', exact: true }).click();
   await expect(page.getByRole('heading', {name:'平台日志',exact:true})).toBeVisible();
   await page.getByRole('tab', { name: '飞书连接监测', exact: true }).click();
   const dialog = page.getByRole('region', { name: '飞书连接监测', exact: true });
