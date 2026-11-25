@@ -6,7 +6,8 @@ test('全局飞书环境：未安装时展示官方指引，安装后检测恢�
   page.on('request', r => { if (r.method() !== 'GET' && /feishu-(?:binding|registration|application)/.test(r.url())) writes.push(r.url()); });
   await page.route('**/api/feishu-cli', route => route.fulfill({ json: { install, platform: 'win32', status: ready ? 'ready' : 'missing', version: ready ? '1.2.3' : undefined, message: '未找到飞书 CLI，请安装官方 CLI 后重新检测' } }));
   await page.goto('/');
-  await page.getByRole('button', { name: '平台日志', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('tab', { name: '平台日志', exact: true }).click();
   await page.getByRole('tab', { name: '飞书连接监测', exact: true }).click();
   const setup = page.getByRole('region', { name: '飞书 CLI 环境', exact: true });
   await expect(setup.getByLabel('官方安装命令', { exact: true })).toHaveValue(install.windowsCommand);

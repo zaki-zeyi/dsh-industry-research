@@ -47,6 +47,16 @@ export function apply(ctx, config = {}) {
     if (stopped || !runtime?.service) return;
     updates = new PluginUpdates(runtime.service, () => ctx.get?.('pluginManager'), version,
       { cacheDir: resolve(runtime.dataDir, 'updates'), slotUpdater: config.slotUpdater });
+    runtime.service.pluginUpdates = {
+      token: updateToken,
+      snapshot: () => updateResult(updates.snapshot()),
+      check: async () => updateResult(await updates.check()),
+      automatic: enabled => updateResult(updates.setAutomatic(enabled)),
+      install: () => {
+        void updates.install().catch(error => { updates.state = 'failed'; updates.error = error.message; });
+        return updateResult(updates.snapshot());
+      },
+    };
     updates.start();
   });
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: '/industry-research/status', handler(req, res) {
@@ -98,6 +108,6 @@ export function apply(ctx, config = {}) {
       res.end(JSON.stringify({ error: error.message }));
     }
   } }));
-  ctx.effect(() => async () => { stopped = true; updates?.close(); await updateReady.catch(() => {}); await runtime?.close(); });
+  ctx.effect(() => async () => { stopped = true; updates?.close(); await updateReady.catch(() => {}); if (runtime?.service) delete runtime.service.pluginUpdates; await runtime?.close(); });
   return updateReady;
 }

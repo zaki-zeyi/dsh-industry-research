@@ -54,6 +54,22 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   });
   app.use(express.json({ limit: '32kb' }));
   app.use(traceMiddleware(service.store));
+  app.get('/api/plugin-update', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(service.pluginUpdates?.snapshot() ?? { installedVersion: health.version ?? null, supported: false, eligible: false, automatic: false, state: 'unavailable' });
+  });
+  app.post('/api/plugin-update', async (req, res, next) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      const controller = service.pluginUpdates;
+      if (!controller) return res.status(503).json({ error: '请在 DSH 插件中打开更新设置' });
+      if (req.headers['x-dsh-update-token'] !== controller.token) return res.status(403).json({ error: '更新操作来源无效' });
+      if (req.body?.action === 'check') return res.json(await controller.check());
+      if (req.body?.action === 'automatic' && typeof req.body.enabled === 'boolean') return res.json(controller.automatic(req.body.enabled));
+      if (req.body?.action === 'install') return res.status(202).json(controller.install());
+      return res.status(400).json({ error: '更新操作无效' });
+    } catch (error) { next(error); }
+  });
   app.get('/api/feishu-cli', async (_req, res, next) => { try {
     res.setHeader('Cache-Control', 'no-store');
     res.json(await inspectLarkCli(service.binding?.command, { run: cliRun }));

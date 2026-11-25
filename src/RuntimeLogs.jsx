@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { FeishuMonitor } from './FeishuMonitor.jsx';
 
-export function PlatformLogs() {
+export function PlatformLogs({ embedded = false }) {
   const [tab, setTab] = useState('all');
-  return <section className="industry-content"><div className="industry-heading"><div><h1>平台日志</h1><p>查看平台运行记录，按子栏目定位服务及飞书连接异常。</p></div></div>
+  return <section className={embedded ? 'settings-logs' : 'industry-content'}><div className="industry-heading"><div>{embedded ? <h2>平台日志</h2> : <h1>平台日志</h1>}<p>查看平台运行记录，按子栏目定位服务及飞书连接异常。</p></div></div>
     <div className="industry-library-tabs" role="tablist" aria-label="平台日志栏目" onKeyDown={e => {
       if (!['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) return;
       e.preventDefault(); const next = e.key === 'Home' ? 'all' : e.key === 'End' ? 'feishu' : tab === 'all' ? 'feishu' : 'all';
