@@ -26,6 +26,7 @@ function failureDetails(error, phase, durationMs) {
     : /清单|校验|大小不符|版本不一致|非法路径/.test(message) ? 'INTEGRITY_FAILED'
       : /timeout|超时|aborted/i.test(message) ? 'TIMEOUT'
         : Number.isInteger(httpStatus) && httpStatus >= 100 ? 'HTTP_FAILED'
+          : /fetch failed|network|ECONN|ENET/i.test(message) ? 'NETWORK_FAILED'
           : /任务或写入正在执行/.test(message) ? 'WORKBENCH_BUSY' : 'UPDATE_FAILED';
   return { phase, code, durationMs, ...(Number.isInteger(httpStatus) && httpStatus >= 100 ? { httpStatus } : {}) };
 }
@@ -302,10 +303,10 @@ export class PluginUpdates {
         this.candidate?.archive?.sha256 !== this.saved.staged.candidate.archive?.sha256) {
         this.candidate = null;
         this.packageReady = false;
-        this.state = 'failed';
+        this.state = 'check-failed';
       } else this.state = this.packageReady ? 'available' : 'download-failed';
       this.error = error.message;
-      this.errorPhase = 'download';
+      this.errorPhase = this.state === 'download-failed' ? 'download' : null;
       this.log('check.failed', failureDetails(error, 'check', this.now() - startedAt), 'error');
     } finally {
       this.checking = false;

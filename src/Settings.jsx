@@ -40,6 +40,7 @@ function VersionSettings() {
     finally { setBusy(false); }
   }
   const status = update?.state === 'restart-required' ? '新版已就绪，重启 DSH 后验证并切换'
+    : update?.state === 'check-failed' ? '检查新版本暂时失败；当前版本仍可正常使用'
     : update?.state === 'downloading' ? '正在下载并校验安装包'
       : update?.packageReady ? '新版安装包已下载并校验'
         : update?.candidateVersion ? '发现可用版本' : '当前没有待安装的新版本';
@@ -48,7 +49,9 @@ function VersionSettings() {
     { id: 'health', label: '健康检查阶段', status: 'waiting', percent: 0 },
     { id: 'update', label: '更新阶段', status: 'waiting', percent: 0 },
   ];
-  const failure = error || update?.error;
+  const checkFailure = update?.state === 'check-failed' || update?.state === 'available' && update?.packageReady
+    ? update?.error : '';
+  const failure = error || (checkFailure ? '' : update?.error);
   return <div className="settings-version">
     <section className="settings-card" aria-label="版本信息">
       <div className="settings-card-heading"><div><h2>版本信息</h2><p>当前运行的行研工作台版本</p></div><ShieldCheck size={22}/></div>
@@ -56,6 +59,7 @@ function VersionSettings() {
       {update?.candidateVersion && <p>最新版本：<strong>{update.candidateVersion}</strong></p>}
       {update?.checkedAt && <p>上次检查：{new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'medium', timeStyle: 'short' }).format(new Date(update.checkedAt))}</p>}
       <p role="status">{update ? status : '正在读取版本信息…'}</p>
+      {checkFailure && <p className="settings-error" role="alert">检查新版本失败：{checkFailure}</p>}
     </section>
     <section className="settings-card" aria-label="更新配置">
       <div className="settings-card-heading"><div><h2>更新配置</h2><p>安装包先下载并校验，切换版本时会验证服务健康状态。</p></div><Download size={22}/></div>

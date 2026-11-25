@@ -69,3 +69,21 @@ test('三阶段进度显示下载错误、重试和独立更新日志', async ({
   await expect(page.getByText('发布或安装包校验失败')).toBeVisible();
   await expect(page.getByText('update-123')).toBeVisible();
 });
+
+test('已完成更新后的版本检查异常只出现在版本信息', async ({ page }) => {
+  await page.route('**/api/plugin-update', route => route.fulfill({ json: {
+    installedVersion: '0.13.13', state: 'check-failed', lastResult: 'updated',
+    error: 'fetch failed', automatic: true, eligible: true, actionToken: 'test-token',
+    progress: { percent: 100, phases: [
+      { id: 'download', label: '下载阶段', status: 'complete', percent: 100 },
+      { id: 'health', label: '健康检查阶段', status: 'complete', percent: 100 },
+      { id: 'update', label: '更新阶段', status: 'complete', percent: 100 },
+    ] },
+  } }));
+  await page.goto('/');
+  await page.locator('.industry-top').getByRole('button', { name: '设置', exact: true }).click();
+  await expect(page.getByLabel('版本信息')).toContainText('检查新版本暂时失败');
+  await expect(page.getByLabel('版本信息').getByRole('alert')).toContainText('fetch failed');
+  await expect(page.getByLabel('更新进度').getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('progressbar', { name: '更新总进度' })).toHaveAttribute('aria-valuenow', '100');
+});
