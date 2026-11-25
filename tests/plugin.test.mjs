@@ -41,6 +41,30 @@ test('插件卸载注销路由并关闭自身服务，初始化期间卸载也�
     const next = await connectRuntime({ dataDir, port: 0, mode: 'demo' }); await next.close();
   }
 });
+test('桌面自定义协议的更新写操作使用随机令牌验证', async t => {
+  const cleanups = [], routes = new Map();
+  const ctx = { effect(fn) { cleanups.push(fn()); }, webServer: { register(route) { routes.set(route.path, route); return () => routes.delete(route.path); } } };
+  const dataDir = mkdtempSync(resolve(tmpdir(), 'dsh-research-update-'));
+  t.after(async () => { for (const cleanup of cleanups.reverse()) await cleanup(); rmSync(dataDir, { recursive: true, force: true }); });
+  await apply(ctx, { dataDir, port: 0, mode: 'demo' });
+  const route = routes.get('/industry-research/update');
+  const call = async (method, token) => {
+    let body;
+    const res = { statusCode: 200, setHeader() {}, end(value) { body = JSON.parse(value); } };
+    await route.handler({ method, url: '/industry-research/update?action=automatic&enabled=0',
+      headers: { origin: 'null', host: '127.0.0.1:1234', 'x-dsh-update-token': token } }, res);
+    return { status: res.statusCode, body };
+  };
+  const initial = await call('GET');
+  assert.equal(initial.status, 200);
+  assert.match(initial.body.actionToken, /^[a-f0-9]{64}$/);
+  assert.equal((await call('POST')).status, 403);
+  assert.equal((await call('POST', '0'.repeat(64))).status, 403);
+  const updated = await call('POST', initial.body.actionToken);
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.automatic, false);
+  assert.equal(updated.body.actionToken, initial.body.actionToken);
+});
 test('浏览器插件使用真实 dsh 模块协议，侧栏入口与主面板 key 对应', () => {
   let loaded;
   runInNewContext(readFileSync(new URL('../plugin/client.js', import.meta.url), 'utf8'), { window: { __ModuleLoader__: { load(value) { loaded = value; } } } });
