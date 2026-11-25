@@ -33,4 +33,13 @@ try {
   const desktop = option('--desktop-runtime');
   if (desktop) run(desktop, ['--expose-internals', resolve(root, 'scripts/plugin-acceptance.mjs'), '--package-root', installed], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
   console.log('PASS: 冷缓存 Git 依赖安装、预构建页面与运行时验收通过；未添加 allowBuilds 或降低宿主策略');
-} finally { rmSync(directory, { recursive: true, force: true }); }
+} finally {
+  try {
+    rmSync(directory, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+  } catch (error) {
+    // Windows may still hold pnpm's store briefly after the child process exits.
+    // The installation checks above have already passed; cleanup is best effort on CI.
+    if (process.platform !== 'win32' || !['EBUSY', 'EPERM', 'ENOTEMPTY'].includes(error.code)) throw error;
+    console.warn(`Temporary install directory could not be removed: ${directory} (${error.code})`);
+  }
+}
