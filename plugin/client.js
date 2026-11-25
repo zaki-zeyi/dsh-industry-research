@@ -11,7 +11,7 @@ window.__ModuleLoader__.load({
         try {
           const query = new URLSearchParams({ action });
           if (enabled !== undefined) query.set('enabled', enabled ? '1' : '0');
-          const response = await fetch('/industry-research/update?' + query, { method: 'POST', credentials: 'same-origin' });
+          const response = await fetch('/industry-research/update?' + query, { method: 'POST', credentials: 'same-origin', headers: { 'X-DSH-Update-Token': update.actionToken } });
           const result = await response.json();
           setUpdate(response.ok ? result : current => ({ ...current, state: 'failed', error: result.error }));
         } catch (error) { setUpdate(current => ({ ...current, state: 'failed', error: error.message })); }

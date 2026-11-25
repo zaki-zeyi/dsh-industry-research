@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { startRuntime, dataIdentity } from '../server/runtime.mjs';
 import { PluginUpdates } from './updates.mjs';
 export const name = 'dsh-industry-research';
@@ -27,6 +28,10 @@ export async function connectRuntime(config = {}, host) {
 }
 export function apply(ctx, config = {}) {
   let stopped = false, runtime;
+  const updateToken = randomBytes(32).toString('hex');
+  const updateResult = value => ({ ...value, actionToken: updateToken });
+  const validUpdateToken = value => typeof value === 'string' && value.length === updateToken.length &&
+    timingSafeEqual(Buffer.from(value), Buffer.from(updateToken));
   let status = { state: 'starting', version };
   const ready = connectRuntime(config, ctx).then(async result => {
     runtime = result;
@@ -68,22 +73,23 @@ export function apply(ctx, config = {}) {
       if (config.activationGate && !config.activationGate.approved) throw new Error('更新槽位尚未确认');
       await updateReady;
       if (!updates) throw new Error('更新服务尚未就绪');
-      if (req.method === 'GET') return res.end(JSON.stringify(updates.snapshot()));
-      const origin = req.headers.origin;
-      const expected = `http://${req.headers.host}`;
-      if (req.method !== 'POST' || origin !== expected && origin !== 'dsh-app://app') {
+      if (req.method === 'GET') return res.end(JSON.stringify(updateResult(updates.snapshot())));
+      // Electron can serialize the custom dsh-app origin as "null". A per-run token
+      // obtained through the authenticated same-origin GET protects mutations without
+      // depending on Chromium's Origin serialization.
+      if (req.method !== 'POST' || !validUpdateToken(req.headers['x-dsh-update-token'])) {
         res.statusCode = 403;
         return res.end(JSON.stringify({ error: '更新操作来源无效' }));
       }
       const action = new URL(req.url, 'http://localhost').searchParams;
-      if (action.get('action') === 'check') return res.end(JSON.stringify(await updates.check()));
+      if (action.get('action') === 'check') return res.end(JSON.stringify(updateResult(await updates.check())));
       if (action.get('action') === 'automatic' && ['0', '1'].includes(action.get('enabled'))) {
-        return res.end(JSON.stringify(updates.setAutomatic(action.get('enabled') === '1')));
+        return res.end(JSON.stringify(updateResult(updates.setAutomatic(action.get('enabled') === '1'))));
       }
       if (action.get('action') === 'install') {
         void updates.install().catch(error => { updates.state = 'failed'; updates.error = error.message; });
         res.statusCode = 202;
-        return res.end(JSON.stringify(updates.snapshot()));
+        return res.end(JSON.stringify(updateResult(updates.snapshot())));
       }
       res.statusCode = 400;
       res.end(JSON.stringify({ error: '更新操作无效' }));
