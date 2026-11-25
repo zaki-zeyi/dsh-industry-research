@@ -187,10 +187,13 @@ export class PluginUpdates {
       const spec = `git+https://github.com/zaki-zeyi/dsh-industry-research.git#${candidate.installCommit}`;
       const result = await manager.updateBundle('dsh-industry-research', candidate.version, { spec, requestId: randomUUID() });
       if (this.closed) return;
-      if (!['applied', 'restart-required'].includes(result.application)) {
-        throw new Error(result.error?.diagnostic ?? `DSH 更新失败：${result.application ?? '未知状态'}`);
+      const application = result?.result?.application;
+      if (!['applied', 'restart-required'].includes(application)) {
+        const restored = result?.restore?.application;
+        const detail = result?.result?.error?.diagnostic ?? `DSH 更新失败：${application ?? '未知状态'}`;
+        throw new Error(restored === 'applied' || restored === 'restart-required' ? `${detail}；旧版已恢复` : detail);
       }
-      this.state = result.application === 'restart-required' ? 'restart-required' : 'installed';
+      this.state = application === 'restart-required' ? 'restart-required' : 'installed';
     } catch (error) {
       if (!this.closed) {
         this.saved = { ...this.saved, pending: null, lastResult: 'failed', lastVersion: candidate.version };

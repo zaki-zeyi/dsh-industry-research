@@ -19,7 +19,7 @@ function fixture({ changedDigest = false, busy = false, oldRelease = false } = {
   const calls = [];
   const manager = {
     listBundles: async () => [{ name: 'dsh-industry-research', installed: true, version: installedVersion, update: 'git' }],
-    updateBundle: async (...args) => { calls.push(args); return { application: 'restart-required' }; },
+    updateBundle: async (...args) => { calls.push(args); return { step: 'install', result: { application: 'restart-required' } }; },
   };
   const manifest = JSON.stringify({ schema: 'dsh-industry-research/update/v1', name: 'dsh-industry-research',
     version: nextVersion, sourceCommit, installCommit, installTag: `plugin-install-v${nextVersion}`, archiveSha256: 'c'.repeat(64) });
@@ -59,10 +59,10 @@ test('摘要异常与运行中的任务阻止更新', async () => {
 
 test('安装失败后清理切换状态，重启根据实际加载版本核对结果', async () => {
   const failed = fixture();
-  failed.manager.updateBundle = async () => ({ application: 'failed', error: { diagnostic: '目标安装失败' } });
+  failed.manager.updateBundle = async () => ({ step: 'install', result: { application: 'failed', error: { diagnostic: '目标安装失败' } }, restore: { application: 'applied' } });
   const updates = new PluginUpdates(failed.service, failed.manager, installedVersion, { request: failed.request });
   await updates.check();
-  await assert.rejects(updates.install(), /目标安装失败/);
+  await assert.rejects(updates.install(), /目标安装失败；旧版已恢复/);
   assert.equal(updates.snapshot().lastResult, 'failed');
   assert.equal(failed.settings.get('plugin-update').pending, null);
   assert.equal(failed.service.updating, false);
