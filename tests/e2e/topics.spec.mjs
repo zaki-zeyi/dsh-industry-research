@@ -151,6 +151,39 @@ test('PRD 6004 专题列表置顶显示已完成的日报汇总并打开飞书�
   await expect(link).toBeVisible();
 });
 
+test('PRD 6023 从汇总卡片手动生成，提示日报未齐并在完成后更新文档入口', async ({page}) => {
+  const scope = (await (await page.request.get('/api/config')).json()).topicScope;
+  const date = '2026-11-26';
+  const url = 'https://example.feishu.cn/docx/ManualDigest';
+  let reportsReady = false, finished = false, requests = 0;
+  await page.route(/\/api\/topics(?:\?.*)?$/, route => route.fulfill({ json: {
+    items: [], digest: finished ? {date,url} : null, syncedAt:new Date().toISOString(),
+    digestGeneration: requests > 1 ? {date,status:finished ? 'sent' : 'queued'} : null,
+  } }));
+  await page.route('**/api/topics/digest', route => {
+    expect(route.request().method()).toBe('POST');
+    expect(route.request().postDataJSON()).toEqual({scope});
+    requests++;
+    if (!reportsReady) return route.fulfill({ status:409,json:{error:'今天的专题日报尚未全部生成，请等日报补齐后再试'} });
+    return route.fulfill({ status:202,json:{date,status:'queued'} });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name:'专题调研',exact:true }).click();
+  const card = page.locator('.topic-digest-card');
+  await card.getByRole('button', { name:'生成汇总',exact:true }).click();
+  await expect(card.getByRole('alert')).toContainText('尚未全部生成');
+  reportsReady = true;
+  await card.getByRole('button', { name:'生成汇总',exact:true }).click();
+  await expect(card.getByRole('status')).toContainText('正在生成今天的汇总');
+  await expect(card.getByRole('button', { name:'生成中…',exact:true })).toBeDisabled();
+  await expect(card.getByRole('link')).toHaveCount(0);
+  finished = true;
+  await expect(card.getByRole('status')).toHaveText('今天的汇总已生成并发送飞书通知。', {timeout:10000});
+  await expect(card.getByRole('link', { name:'打开最新日报汇总' })).toHaveAttribute('href',url);
+  await expect(card.getByRole('button', { name:'生成汇总',exact:true })).toBeEnabled();
+  expect(requests).toBe(2);
+});
+
 test('专题列表一键重试保留列表，显示部分提交结果并更新日报状态', async ({page}) => {
  const scope = (await (await page.request.get('/api/config')).json()).topicScope;
  const topic = {topicId:'66666666-6666-4666-8666-666666666666',question:'日报一键重试验收',workflowVersion:468};

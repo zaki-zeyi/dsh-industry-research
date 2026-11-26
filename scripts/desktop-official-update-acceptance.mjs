@@ -5,9 +5,10 @@ import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { chromium, expect } from '@playwright/test';
 
-const [endpoint, version] = process.argv.slice(2);
-if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(endpoint ?? '') || !/^\d+\.\d+\.\d+$/.test(version ?? '')) throw new Error('Usage: <desktop-cdp-url> <published-target-version>');
-const output = resolve('artifacts/official-git-update', version);
+const [endpoint, version, runLabel = ''] = process.argv.slice(2);
+if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(endpoint ?? '') || !/^\d+\.\d+\.\d+$/.test(version ?? '') ||
+  !/^[a-zA-Z0-9.-]{0,64}$/.test(runLabel) || runLabel.includes('..')) throw new Error('Usage: <desktop-cdp-url> <published-target-version> [run-label]');
+const output = resolve('artifacts/official-git-update', version, runLabel);
 mkdirSync(output, { recursive: true });
 function processes() {
   const result = spawnSync('powershell.exe', ['-NoProfile', '-Command',
@@ -33,6 +34,8 @@ try {
   };
   const companiesBefore = await companies(status.url), beforeProcesses = processes();
   assert.equal(beforeProcesses.length, 2, 'One desktop shell and one Host');
+  writeFileSync(resolve(output, 'baseline.json'), JSON.stringify({ beforeVersion: before.installedVersion, runningVersion: status.version,
+    source: before.source, previousOperationId: before.operation?.id, beforeProcesses, companiesBefore }, null, 2));
   async function details() {
     if (await page.getByLabel('行研工作台官方 Git 更新').isVisible()) return;
     await page.getByRole('button', { name: '插件', exact: true }).first().click();
@@ -50,18 +53,26 @@ try {
   await expect(controls.getByRole('button', { name: `更新到 ${version}`, exact: true })).toBeEnabled({ timeout: 45000 });
   await expect(page.getByText('可更新', { exact: true })).toBeVisible();
   await controls.screenshot({ path: resolve(output, 'before.png') });
+  const submitted = page.waitForResponse(response => response.request().method() === 'POST' &&
+    response.url().includes('/industry-research/official-update?action=install'));
   await controls.getByRole('button', { name: `更新到 ${version}`, exact: true }).click();
+  const accepted = await submitted;
+  assert.equal(accepted.status(), 202);
+  const operationId = (await accepted.json()).operation.id;
+  assert.notEqual(operationId, before.operation?.id);
+  writeFileSync(resolve(output, 'submission.json'), JSON.stringify({ operationId, version }, null, 2));
   const deadline = Date.now() + 10 * 60 * 1000;
   let after;
   const phases = new Set();
   while (Date.now() < deadline) {
     try { after = await read('/industry-research/official-update'); } catch { after = null; }
-    if (after?.operation) {
+    if (after?.operation?.id === operationId) {
       phases.add(after.operation.state);
       if (after.operation.version === version && ['updated', 'failed', 'restored', 'restart-required', 'interrupted'].includes(after.operation.state)) break;
     }
     await new Promise(done => setTimeout(done, 1000));
   }
+  writeFileSync(resolve(output, 'observed-result.json'), JSON.stringify(after, null, 2));
   assert.equal(after?.operation?.state, 'updated', JSON.stringify(after));
   assert.equal(after.installedVersion, version); assert.equal(after.runningVersion, version); assert.equal(after.eligible, true);
   assert.match(after.source, /#[a-f0-9]{40}$/);
