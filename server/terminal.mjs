@@ -1,9 +1,9 @@
-import '../scripts/prepare-pty.mjs';
+import { prepareCurrentPty } from '../scripts/prepare-pty.mjs';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as pty from 'node-pty';
 import { dshLaunch } from './dsh-launch.mjs';
 import { resolveCodexLaunch } from './codex-launch.mjs';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -17,6 +17,20 @@ import { prepareLarkAgent } from './lark-agent-files.mjs';
 // PRD default for workbench-owned processes; no global Codex config is modified.
 export const TERMINAL_PERMISSIONS = Object.freeze({ sandbox: 'danger-full-access', approval: 'on-request' });
 
+const require = createRequire(import.meta.url);
+let legacyPty;
+export function loadLegacyPty() {
+  if (legacyPty) return legacyPty;
+  try {
+    prepareCurrentPty();
+    return legacyPty = require('node-pty');
+  } catch (cause) {
+    const error = new ServiceError(503, '旧版交互终端不可用：当前安装缺少兼容的 PTY。请在 DSH 行研工作台使用宿主原生会话。');
+    error.cause = cause;
+    throw error;
+  }
+}
+
 export class TerminalManager {
   get permissions() { return TERMINAL_PERMISSIONS; }
   constructor(store, config = {}) {
@@ -25,6 +39,7 @@ export class TerminalManager {
   }
   get(id) { const meta = this.store.terminal(id); if (!meta) throw new ServiceError(404, '终端不存在'); return meta; }
   create(task, { resumeId, resumeLast = false, collectReport = false } = {}) {
+    loadLegacyPty();
     if (task.terminalId) { const old = this.store.terminal(task.terminalId); if (old && ['created', 'running'].includes(old.status)) return old; }
     const id = newId(), cwd = resolve(this.config.workRoot ?? './data/codex', task.id);
     mkdirSync(cwd, { recursive: true });
@@ -40,6 +55,7 @@ export class TerminalManager {
     this.store.saveTerminal(meta); return meta;
   }
   queueUpload(task, requestId) {
+    loadLegacyPty();
     let meta = task.terminalId ? this.store.terminal(task.terminalId) : null;
     if (meta && this.live.has(meta.id) && !['waiting_input', 'finishing'].includes(meta.activity)) throw new ServiceError(409, '终端正在处理其他要求，请等待本轮结束后再上传飞书');
     if (!meta || !['created', 'running'].includes(meta.status)) {
@@ -136,6 +152,7 @@ export class TerminalManager {
     const notify = [process.execPath, fileURLToPath(new URL('../scripts/terminal-turn-notify.mjs', import.meta.url)), meta.completionPath];
     const args = [...(c.prefixArgs ?? []), ...(meta.resumeId || meta.resumeLast ? ['resume', ...(meta.resumeId ? [meta.resumeId] : ['--last'])] : []), '--no-alt-screen', '--sandbox', meta.permissions.sandbox, '--ask-for-approval', meta.permissions.approval, '--search', '--cd', meta.cwd, '-c', `notify=${JSON.stringify(notify)}`, ...(c.model ? ['--model', c.model] : []), ...(pendingUpload || meta.collectReport || !(meta.resumeId || meta.resumeLast) ? [initial] : [])];
     try {
+      const pty = loadLegacyPty();
       const env = Object.fromEntries(Object.entries({ ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' }).filter(([k]) => !/^(FEISHU_|WORKBENCH_|CODEX_THREAD_ID$)/.test(k)));
       const settings = c.aiSettings?.resolve(meta.aiConfigId) ?? {};
       let launch;

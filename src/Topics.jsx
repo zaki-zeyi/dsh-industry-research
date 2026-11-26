@@ -1,6 +1,6 @@
 import { ChoiceGroup } from './ChoiceGroup.jsx';
 import React, { useEffect, useRef, useState } from 'react';
-import { FileText, FolderOpen, ArrowUpRight, Trash2 } from 'lucide-react';
+import { FileText, FolderOpen, ArrowUpRight, Settings2, Trash2 } from 'lucide-react';
 import { topicPrompt, topicDailyPrompt, withTopicTotalMerge, normalizeTopicPrompt, isFailedTopicDaily } from '../server/topic-defaults.mjs';
 import { topicRangeError, wholeDayTopicRange } from '../server/topic-window.mjs';
 import { createTabStore } from './tab-store.mjs';
@@ -10,6 +10,9 @@ const store=createTabStore({ selectExtra: value => ({
   digest: value?.digest ?? null,
   digestDate: value?.digestDate ?? null,
   generation: value?.digestGeneration ?? null,
+  digestArchivedTaskId: value?.digestArchivedTaskId ?? null,
+  digestPrompt: typeof value?.digestPrompt === 'string' ? value.digestPrompt : null,
+  digestRetryable: value?.digestRetryable === true,
 }) });
 const digestIsActive = generation => ['queued', 'running', 'waiting', 'retrying'].includes(generation?.status);
 async function api(path,options={}){const r=await fetch('/api'+path,{...options,headers:{'Content-Type':'application/json',...options.headers}});const v=await r.json();if(!r.ok){const error=new Error(v.error??'请求失败');error.code=v.code;throw error;}return v;}
@@ -37,10 +40,12 @@ export function Topics({config,onOpen,onRetry,onFixNotification,onRebind}){
  const refresh=()=>store.refresh(key,loaders);
  const total=topic?.totalReport;
  const hasFailedDaily = items.some(group => !group.deletion && group.dailyReports?.some(isFailedTopicDaily));
+ const digestRetryable = state.extra?.digestRetryable;
+ const canRetry = Boolean(config?.topicScope && (hasFailedDaily || digestRetryable));
  const batch = batchRetry?.key === key ? batchRetry : null;
 
  async function retryFailedDailies() {
-   if (batchInFlight.current || !hasFailedDaily || !config?.topicScope) return;
+   if (batchInFlight.current || !canRetry) return;
    batchInFlight.current = true;
    setBatchRetry({key, pending:true});
    try {
@@ -58,51 +63,74 @@ export function Topics({config,onOpen,onRetry,onFixNotification,onRebind}){
    }
  }
  return <section className="industry-content"><p className="industry-eyebrow">INDUSTRY INTELLIGENCE / 05</p>{selected&&<button className="secondary" onClick={()=>select(null)}>← 返回专题列表</button>}<div className="industry-heading"><div><h1>{selected?topic?.topic.question??'正在读取专题…':'专题调研'}</h1><p>{selected?'专题总报与每期日报，分别保留研究成果和对应会话。':'选择一个专题，查看总报与全部专题日报。'}</p></div>{selected&&topic?<button className="primary" onClick={()=>setModal({task:{...topic,topic:{...topic.topic,prompt:undefined}},scheduled:true})}>设置日报</button>:<div>
-   <button type="button" className="secondary" disabled={Boolean(batch?.pending)||!hasFailedDaily||!config?.topicScope} onClick={retryFailedDailies}>
+   <button type="button" className="secondary" disabled={Boolean(batch?.pending)||!canRetry} onClick={retryFailedDailies}>
      {batch?.pending?'正在提交重试…':'日报一键重试'}
    </button>
    <button className="primary" onClick={begin}>启动专题调研</button>
  </div>}</div>{!selected && <TopicDigestCard key={key} digest={state.extra?.digest} digestDate={state.extra?.digestDate}
-    generation={generation} scope={config?.topicScope} onOpen={onOpen} onGenerated={task => {
-      if (currentKey.current !== key) return;
-      void store.reload(key, loaders, { supersede:true });
-      onOpen(task);
+    generation={generation} archivedTaskId={state.extra?.digestArchivedTaskId} digestPrompt={state.extra?.digestPrompt}
+    digestRetryable={digestRetryable} scope={config?.topicScope} onOpen={onOpen} onSettingsSaved={() => {
+      if (currentKey.current === key) void store.reload(key, loaders, { supersede:true });
     }}/> }<div className="topic-storage"><span className="topic-storage-icon" aria-hidden="true"><FolderOpen size={21}/></span><div className="topic-storage-location"><span>存储位置</span><strong>飞书云盘 / {config?.feishuRoot?.rootName??'行研工作台'} / 专题调研{topic?' / '+topic.topic.question:''}</strong><small>{topic?'总报与每期日报按专题归档':'按调研方向归档'}</small></div><div className="topic-storage-sync"><span>上次同步</span><time dateTime={state.syncedAt??undefined}>{state.syncedAt?new Date(state.syncedAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}):'等待同步'}</time></div></div><div className="industry-toolbar">{!selected&&<label className="industry-search"><input aria-label="搜索专题" placeholder="搜索专题" value={query} onChange={e=>setQuery(e.target.value)}/></label>}<button disabled={Boolean(state.syncing)} onClick={refresh}>{state.syncing?'同步中…':'刷新'}</button></div>{(error||state.error||state.syncError)&&<div role="alert" className="industry-error">{error||state.error||state.syncError}<button onClick={refresh}>重试同步</button></div>}
  {!selected&&batch?.error&&<p role="alert" className="industry-error">{batch.error}</p>}
- {!selected&&batch?.accepted!==undefined&&<div className="topic-batch-result">
-   <p role="status">{batch.accepted>0?'已提交 '+batch.accepted+' 份专题日报重试。':batch.rejected.length?'本次未提交任何日报。':'当前没有失败的专题日报。'}{batch.rejected.length>0&&' '+batch.rejected.length+' 份未能提交。'}</p>
-   {batch.rejected.length>0&&<details><summary>查看未提交原因</summary><ul>{batch.rejected.map(report=><li key={report.id}>{report.title}：{report.error}</li>)}</ul></details>}
- </div>}
+ {!selected&&batch?.accepted!==undefined&&<TopicBatchResult result={batch}/>}
  {!selected?<><div className="industry-cards">{items.filter(t=>t.topic.question.includes(query)).map(t=><TopicCard key={t.topic.topicId} task={t} onSelect={()=>select(t.topic.topicId)} onDelete={()=>setDeleting(t)}/>)}</div>{!items.length&&<div className="industry-empty"><h2>{state.status!=='ready'||state.syncing?'正在读取专题调研…':'暂无调研专题'}</h2><p>启动调研后，将按专题分别展示总报与每日动态。</p></div>}</>:topic?<><h2 className="topic-section-heading">专题总报</h2><div className="industry-cards">{total?<TopicReportCard task={total} title="总报" onOpen={onOpen} onRetry={onRetry} onFixNotification={onFixNotification} onUpdated={()=>store.reload(key,loaders)}/>:<div className="industry-empty"><h3>暂无专题总报</h3><button className="secondary" onClick={()=>setModal({task:topic,scheduled:false})}>生成专题总报</button></div>}</div>{topic.schedule?.enabled&&<p className="card-meta">专题日报 · 每天 {topic.schedule.time}（北京时间）</p>}<h2 className="topic-section-heading">专题日报 <small>{topic.dailyReports.length} 份</small></h2><p className="card-meta">存储位置：专题调研 / {topic.topic.question} / 日报</p><div className="industry-cards">{topic.dailyReports.map(t=><TopicReportCard key={t.id} task={t} title={t.topic.window?.display??t.direction} daily onOpen={onOpen} onRetry={onRetry} onFixNotification={onFixNotification} onUpdated={()=>store.reload(key,loaders)}/>)}</div>{!topic.dailyReports.length&&<div className="industry-empty"><h3>暂无专题日报</h3><p>设置专题日报后，每期报告都会独立保留在这里。</p></div>}</>:<div className="industry-empty">{state.status==='ready'?'当前目录没有此专题，请返回专题列表。':'正在读取专题…'}</div>}
  {deleting&&<TopicDeleteModal task={deleting} scope={config?.topicScope} onRebind={()=>{setDeleting(null);onRebind?.();}} onClose={()=>setDeleting(null)} onDeleted={async()=>{setDeleting(null);store.removeItem(key,deleting.id);await store.reload(key,loaders);}}/>}
  {modal&&<TopicModal task={modal.task} scheduled={modal.scheduled} onClose={()=>setModal(null)} onSaved={t=>{setModal(null);store.reload(key,loaders);if(t){select(t.topic.topicId);onOpen(t);}}}/>}</section>;
 }
-const digestDefaultPrompt = '自动聚合所有日报的摘要生成汇总日报的飞书文档。并发送到飞书消息。';
-const digestGeneratingText = '正在生成今天的汇总，完成后会发送飞书通知。';
-const digestStatusText = {
-  queued: digestGeneratingText,
-  running: digestGeneratingText,
-  waiting: '今天的专题日报尚未全部生成，补齐后会继续汇总。',
-  retrying: '汇总或飞书通知暂未完成，系统会重试。',
-  failed: '今天的汇总生成失败，可重试。',
-  interrupted: '今天的汇总生成已中断，可重试。',
-  sent: '今天的汇总已生成并发送飞书通知。',
+function TopicBatchResult({result:{accepted, rejected, digestRetry}}) {
+  const dailyResult = accepted > 0 ? `已提交 ${accepted} 份专题日报重试。`
+    : rejected.length ? '本次未提交任何专题日报。' : '';
+  const digestResult = digestRetry === 'submitted' ? '已提交日报汇总重试。'
+    : digestRetry === 'waiting' ? '日报汇总正在等待日报补齐，全部恢复后将自动重试。' : '';
+  return <div className="topic-batch-result">
+    <p role="status">{[dailyResult, rejected.length ? `${rejected.length} 份未能提交。` : '', digestResult]
+      .filter(Boolean).join(' ') || '当前没有可重试的专题日报或汇总。'}</p>
+    {rejected.length > 0 && <details><summary>查看未提交原因</summary><ul>{rejected.map(report=><li key={report.id}>{report.title}：{report.error}</li>)}</ul></details>}
+  </div>;
+}
+
+const digestStates = {
+  queued: ['排队中', '汇总任务等待处理。', 'active'],
+  running: ['生成中', '完成后会发送飞书通知。', 'active'],
+  waiting: ['等待日报', '专题日报尚未全部生成，补齐后会继续汇总。', 'waiting'],
+  retrying: ['重试中', '汇总或飞书通知暂未完成，系统会继续重试。', 'waiting'],
+  failed: ['失败', '汇总生成失败。', 'failed'],
+  interrupted: ['已中断', '汇总任务已中断。', 'failed'],
+  sent: ['已完成', '汇总已生成并发送飞书通知。', 'done'],
+  archived: ['已完成', '可打开已存档的飞书文档。', 'done'],
+  idle: ['未生成', '本期尚无汇总任务。', 'idle'],
 };
 
-function TopicDigestCard({digest, digestDate, generation, scope, onOpen, onGenerated}) {
-  const [editing, setEditing] = useState(false);
+function DigestStatus({label, date, status, retryable}) {
+  const [text, detail, tone] = digestStates[status] ?? [status, '', 'idle'];
+  return <p className="topic-digest-status">
+    <span>{label}{date && <> · <time dateTime={date}>{date}</time></>}</span>
+    <strong className={'topic-digest-badge '+tone}>{text}</strong>
+    {detail && <span>{detail}{tone === 'failed' && retryable && '可通过上方“日报一键重试”提交。'}</span>}
+  </p>;
+}
+
+function TopicDigestCard({digest, digestDate, generation, archivedTaskId, digestPrompt, digestRetryable, scope, onOpen, onSettingsSaved}) {
+  const [initialPrompt, setInitialPrompt] = useState(null);
+  const [currentPrompt, setCurrentPrompt] = useState(digestPrompt);
+  const [saved, setSaved] = useState(false);
   const [conversation, setConversation] = useState(null);
   const opening = useRef(false), live = useRef(false);
   useEffect(() => {
     live.current = true;
     return () => { live.current = false; };
   }, []);
-  const active = digestIsActive(generation);
-  const completedToday = Boolean(digestDate && digest?.date === digestDate);
-  const canGenerate = Boolean(scope && digestDate && !active && !completedToday);
-  const currentGeneration = Boolean(digestDate && generation?.date === digestDate);
-  const statusText = currentGeneration ? digestStatusText[generation.status] : null;
-  const taskId = generation?.taskId;
+  useEffect(() => { setCurrentPrompt(digestPrompt); }, [digestPrompt]);
+
+  // The document link is the latest archive, not necessarily the output of
+  // the task shown here, even when the dates match.
+  const currentStatus = generation?.date === digestDate ? generation?.status
+    : digest?.url && digest.date === digestDate ? 'archived' : 'idle';
+  const historicalGeneration = generation && generation.date !== digestDate ? generation : null;
+  const taskId = generation?.taskId ?? archivedTaskId;
+  const archiveConversation = taskId && !generation?.taskId && digest?.date
+    ? `打开 ${digest.date} 已存档汇总的 AI 会话` : undefined;
   const request = conversation?.taskId === taskId ? conversation : null;
 
   async function openConversation() {
@@ -118,34 +146,38 @@ function TopicDigestCard({digest, digestDate, generation, scope, onOpen, onGener
       opening.current = false;
     }
   }
+
   const content = <>
     <span className="topic-storage-icon" aria-hidden="true"><FileText size={21}/></span>
     <span className="topic-digest-label">
       <strong>日报汇总</strong>
-      {digest?.url ? <span>发送日 <time dateTime={digest.date}>{digest.date}</time></span> : <span>全部专题日报生成后，汇总会显示在这里。</span>}
+      {digest?.url ? <span>已存档文档 · <time dateTime={digest.date}>{digest.date}</time></span> : <span>全部专题日报生成后，汇总会显示在这里。</span>}
     </span>
     {digest?.url && <ArrowUpRight size={16} aria-hidden="true"/>}
   </>;
   return <div className="topic-digest-card">
     {digest?.url ? <a href={digest.url} target="_blank" rel="noreferrer" className="topic-digest-main" aria-label="打开最新日报汇总">{content}</a>
       : <div className="topic-digest-main">{content}</div>}
-    {(!completedToday || taskId) && <div className="topic-digest-actions">
-      {!completedToday && <button type="button" className="secondary" disabled={!canGenerate} onClick={()=>setEditing(true)}>
-        {active ? '生成中…' : '重试生成汇总'}
-      </button>}
-      {taskId && <button type="button" className="secondary" disabled={request?.pending} onClick={openConversation}>
+    <div className="topic-digest-actions">
+      <button type="button" className="secondary topic-digest-settings" disabled={!scope || currentPrompt == null} onClick={()=>{setSaved(false);setInitialPrompt(currentPrompt);}}>
+        <Settings2 size={16} aria-hidden="true"/>设置汇总 Prompt
+      </button>
+      {taskId && <button type="button" className="secondary" title={archiveConversation} disabled={request?.pending} onClick={openConversation}>
         {request?.pending ? '正在打开会话…' : 'AI 会话详情'}
       </button>}
+    </div>
+    {(digestDate || historicalGeneration) && <div className="topic-digest-state" role="status">
+      {digestDate && currentStatus && <DigestStatus label="本期任务" date={digestDate} status={currentStatus} retryable={digestRetryable}/>}
+      {historicalGeneration && <DigestStatus label="最近任务" date={historicalGeneration.date} status={historicalGeneration.status} retryable={digestRetryable}/>}
     </div>}
-    {statusText && <p className="topic-digest-feedback" role="status">{statusText}</p>}
+    {saved && <p className="topic-digest-feedback" role="status">汇总 Prompt 已保存。</p>}
     {request?.error && <p className="topic-digest-feedback topic-digest-error" role="alert">{request.error}</p>}
-    {editing && <TopicDigestModal scope={scope} canGenerate={canGenerate}
-      initialPrompt={(currentGeneration && generation.prompt) || digestDefaultPrompt} onClose={()=>setEditing(false)}
-      onGenerated={task=>{if (live.current) { setEditing(false); onGenerated(task); } }}/>}
+    {initialPrompt !== null && <TopicDigestModal scope={scope} initialPrompt={initialPrompt} onClose={()=>setInitialPrompt(null)}
+      onSaved={prompt=>{setCurrentPrompt(prompt);setSaved(true);setInitialPrompt(null);onSettingsSaved();}}/>}
   </div>;
 }
 
-function TopicDigestModal({scope, canGenerate, initialPrompt, onClose, onGenerated}) {
+function TopicDigestModal({scope, initialPrompt, onClose, onSaved}) {
   const [prompt, setPrompt] = useState(initialPrompt), [pending, setPending] = useState(false), [error, setError] = useState('');
   const dialog = useRef(null), promptField = useRef(null), inFlight = useRef(false), live = useRef(false);
   useEffect(() => {
@@ -173,13 +205,13 @@ function TopicDigestModal({scope, canGenerate, initialPrompt, onClose, onGenerat
 
   async function submit(event) {
     event.preventDefault();
-    if (inFlight.current || !canGenerate || !prompt.trim()) return;
+    if (inFlight.current || !scope || !prompt.trim()) return;
     inFlight.current = true;
     setPending(true);
     setError('');
     try {
-      const {task} = await api('/topics/digest', { method:'POST', body:JSON.stringify({scope,prompt}) });
-      if (live.current) onGenerated(task);
+      const result = await api('/topics/digest/settings', { method:'PUT', body:JSON.stringify({scope,prompt}) });
+      if (live.current) onSaved(result.prompt);
     } catch (error) {
       if (live.current) setError(error.message);
     } finally {
@@ -188,16 +220,17 @@ function TopicDigestModal({scope, canGenerate, initialPrompt, onClose, onGenerat
     }
   }
 
-  return <div className="industry-modal-backdrop"><section ref={dialog} className="industry-modal topic-digest-modal" role="dialog" aria-modal="true" aria-labelledby="topic-digest-title">
+  return <div className="industry-modal-backdrop"><section ref={dialog} className="industry-modal topic-digest-modal" role="dialog" aria-modal="true" aria-labelledby="topic-digest-title" aria-describedby="topic-digest-settings-help">
     <header><span>日报汇总</span><button type="button" disabled={pending} aria-label="关闭汇总配置" onClick={onClose}>×</button></header>
-    <h2 id="topic-digest-title">重试生成汇总</h2>
+    <h2 id="topic-digest-title">设置汇总 Prompt</h2>
+    <p id="topic-digest-settings-help">用于今后新建的汇总任务。保存不会启动汇总，现有任务重试时仍使用原 Prompt。</p>
     <form onSubmit={submit}>
-      <label className="industry-field">任务 Prompt（可直接编辑）
-        <textarea ref={promptField} className="industry-prompt" required readOnly={pending} value={prompt} onChange={event=>setPrompt(event.target.value)}/>
+      <label className="industry-field">默认汇总 Prompt
+        <textarea ref={promptField} className="industry-prompt" required maxLength={14000} readOnly={pending} value={prompt} onChange={event=>setPrompt(event.target.value)}/>
       </label>
       {error && <p className="industry-error" role="alert">{error}</p>}
       <footer><button type="button" className="secondary" disabled={pending} onClick={onClose}>取消</button>
-        <button type="submit" className="primary" disabled={pending || !canGenerate || !prompt.trim()}>{pending ? '正在启动…' : '启动'}</button>
+        <button type="submit" className="primary" disabled={pending || !scope || !prompt.trim()}>{pending ? '保存中…' : '保存'}</button>
       </footer>
     </form>
   </section></div>;
