@@ -8,19 +8,20 @@
 
 DeepSeek Harness 插件，在独立命名空间内提供公司全量信息库、日报/周报、内部资料、友商分析与专题调研。开发源码位于 `main`；`release` 分支与 `main` 共享同一条历史，内容为源码目录（不含 `.github`）叠加经 CI 验证的预构建安装产物，安装包仍按 `files` 只包含产品代码、页面、文档和运行期脚本。
 
-## 当前版本 · 0.13.16
+## 当前版本 · 0.13.17
 
-[发布说明](docs/release-0.13.16.md) · [下载版本包](https://github.com/zaki-zeyi/dsh-industry-research/releases/tag/v0.13.16)
+[发布说明](docs/release-0.13.17.md) · [下载版本包](https://github.com/zaki-zeyi/dsh-industry-research/releases/tag/v0.13.17)
 
 - **常规更新无需重启 DSH**：在工作台「设置 → 版本与更新」检查更新、安装已校验版本，页面自动连接新版。
+- **切换期间自动恢复页面**：健康检查或版本切换时显示过渡页，短暂断连持续重试，就绪后自动回到原来的页签与任务地址。
 - **更新进度可见**：分别展示下载、健康检查和更新阶段；失败显示错误并支持重试，详细记录见「设置 → 平台日志 → 更新日志」。
 - **空闲时安全切换**：等待正在执行的调研、持久化保存及在途操作结束，健康检查失败时恢复本地旧版；可选择开启「空闲时自动更新」，默认关闭。
 - **保留 DSH 手动更新**：仍可通过宿主插件管理器安装或更新插件。
 
-已在 Windows 桌面 DSH 中通过插件内按钮完成 0.13.15 → 0.13.16 的真实更新验收，DSH 与 Host 进程未重启，页面版本、三个阶段进度及更新日志均已核对。
-
 <details>
 <summary>查看历史版本更新</summary>
+
+0.13.16：已在 Windows 桌面 DSH 中通过插件内按钮完成 0.13.15 → 0.13.16 的真实更新验收，DSH 与 Host 进程未重启，页面版本、三个阶段进度及更新日志均已核对。详见 [发布说明](docs/release-0.13.16.md)。
 
 0.13.8：新增插件更新入口与正式发布校验；自动安装默认关闭。详见 [发布说明](docs/release-0.13.8.md)。
 
@@ -151,7 +152,7 @@ CI 在 [GitHub Actions](https://github.com/zaki-zeyi/dsh-industry-research/actio
 
 ## 安装
 
-当前正式版本为 **0.13.16**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
+当前正式版本为 **0.13.17**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
 建议通过上面的「发现」入口安装，以便后续从 DSH 手动更新。也可继续在 Windows、macOS 桌面版或网页版的 DSH「添加插件」中填写：
 

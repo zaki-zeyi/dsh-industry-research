@@ -2,7 +2,7 @@ export function updateBusy(service) {
   const tasks = service.store.list();
   const terminals = service.store.terminalList?.() ?? [];
   const terminalIds = new Set(tasks.map(task => task.terminalId).filter(Boolean));
-  return Boolean(service.active?.size || service.queue?.length || service.inFlightWrites || service.inFlightRequests ||
+  return Boolean(service.active?.size || service.queue?.length || service.inFlightWrites || service.inFlightRequests || service.topicDigest?.active ||
     tasks.some(task => ['running', 'queued'].includes(task.status) || task.publication?.status === 'publishing') ||
     service.queuedSaves && service.store.saveJobs?.().length || terminals.some(row => terminalIds.has(row.id) && row.activity === 'working') ||
     service.queuedSaves?.running.size || service.queuedSaves?.submissions.size ||

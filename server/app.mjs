@@ -19,6 +19,7 @@ import { prepareInternalMaterial, internalDirectorySchema } from './internal-mat
 import { traceMiddleware, traceFor, withTrace, traceActions } from './connection-trace.mjs';
 import { requireIdleBinding } from './binding-blockers.mjs';
 import { inspectLarkCli } from './lark-setup.mjs';
+import { updateTransition } from './update-transition.mjs';
 
 export function createApp(service, { dist = resolve('dist'), health = {}, libraryRun, libraryImportRun, analysisRun, publicationRun, cliRun } = {}) {
   const app = express(); app.disable('x-powered-by');
@@ -32,17 +33,15 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     next();
   });
   app.use((req, res, next) => {
-    if (service.activationPending && req.path !== '/api/health') return res.status(503).json({ error: '新版正在进行健康检查' });
+    if (updateTransition(service, req, res)) return;
     if (req.path !== '/api/health' && req.path !== '/api/plugin-update' &&
       !req.path.endsWith('/events') && !req.path.endsWith('/stream')) {
-      if (service.updating) return res.status(503).json({ error: '工作台正在切换版本，请稍后重试' });
       service.inFlightRequests = (service.inFlightRequests ?? 0) + 1;
       let released = false;
       const release = () => { if (!released) { released = true; service.inFlightRequests--; } };
       res.once('finish', release); res.once('close', release);
     }
     if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-    if (service.updating) return res.status(503).json({ error: '工作台正在切换版本，请稍后重试' });
     service.inFlightWrites = (service.inFlightWrites ?? 0) + 1;
     let released = false;
     const release = () => {
@@ -309,7 +308,11 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     if (!readFileSync(path).subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new Error('Invalid PNG');
     res.setHeader('Cache-Control', 'no-store'); res.type('png').sendFile(path);
   } catch(e) { next(e instanceof ServiceError ? e : new ServiceError(404, 'Agent 尚未生成可显示的二维码，请在终端查看授权指引')); } });
-  app.get('/api/health', (_req, res) => res.json({ ok: true, ...health }));
+  app.get('/api/health', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ ok: true, ...health, ready: !service.activationPending && !service.updating,
+      state: service.activationPending ? 'checking' : service.updating ? 'switching' : 'ready' });
+  });
   app.get('/api/tasks', (req, res, next) => { try {
     const limit = z.coerce.number().int().min(1).max(100).default(30).parse(req.query.limit);
     let tasks = service.store.list();
