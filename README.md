@@ -139,11 +139,15 @@ CI 在 [GitHub Actions](https://github.com/zaki-zeyi/dsh-industry-research/actio
 
 自动更新使用启用 Release immutability 后发布的不可变正式版本；维护者发布新版本时增加版本号，保留已发布版本及其安装包。
 
+## 从 DSH「插件」页面手动更新
+
+在支持 Git 插件更新的 DSH（0.2.2-rc.2 起）中，可通过「插件 → 发现」安装和更新行研工作台，由 DSH 管理下载、安装和生效。初次使用需要启用「自定义插件索引」并添加本项目的索引；使用 `#release` 或本地包安装的用户需先完成一次来源迁移。操作见 [从 DSH 插件页面安装与更新](docs/plugin-install.md#从-dsh-插件页面安装与更新)。
+
 ## 安装
 
 当前正式版本为 **0.13.16**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
-Windows、macOS 桌面版以及网页版，均可在 DSH「添加插件」填写：
+建议通过上面的「发现」入口安装，以便后续从 DSH 手动更新。也可继续在 Windows、macOS 桌面版或网页版的 DSH「添加插件」中填写：
 
 https://github.com/zaki-zeyi/dsh-industry-research.git#release
 
