@@ -98,3 +98,77 @@ test('槽位状态文件损坏时内置版本仍可启动', async t => {
   await slots.boot(async slot => { mounted.push(slot.version); return {}; });
   assert.deepEqual(mounted, ['0.13.8']);
 });
+
+test('同一宿主连续热切两次，先完全卸载旧实例且每次独立确认', async t => {
+  const one = fixture(t), two = fixture(t, '0.13.10');
+  const slots = new UpdateSlots(one.root, '0.13.8');
+  let owner = null;
+  const events = [];
+  await slots.boot(async slot => {
+    assert.equal(owner, null, '同一时刻只有一个数据目录所有者');
+    owner = slot.version; events.push(`mount ${slot.version}`);
+    return { quiesce() { events.push(`pause ${slot.version}`); },
+      async dispose() { await new Promise(resolve => setTimeout(resolve, 5)); events.push(`dispose ${slot.version}`); owner = null; },
+      confirm() { events.push(`confirm ${slot.version}`); } };
+  });
+  t.after(() => slots.close());
+  const first = slots.waitForActivation();
+  assert.equal((await slots.activate(one.archivePath, one.candidate)).state, 'updated');
+  assert.notEqual(first, slots.waitForActivation());
+  assert.equal((await slots.waitForActivation()).version, '0.13.9');
+  assert.equal((await slots.activate(two.archivePath, two.candidate)).version, '0.13.10');
+  assert.equal(slots.activeVersion, '0.13.10');
+  assert.equal(slots.state.previous.version, '0.13.9');
+  assert.equal(slots.state.pending, null);
+  assert.deepEqual(events, ['mount 0.13.8', 'confirm 0.13.8', 'pause 0.13.8', 'dispose 0.13.8',
+    'mount 0.13.9', 'confirm 0.13.9', 'pause 0.13.9', 'dispose 0.13.9', 'mount 0.13.10', 'confirm 0.13.10']);
+});
+
+test('热切健康失败从本地恢复旧实例，失败版本不成为 active', async t => {
+  const f = fixture(t), slots = new UpdateSlots(f.root, '0.13.8');
+  const events = [];
+  await slots.boot(async slot => {
+    events.push(`mount ${slot.version}`);
+    if (slot.kind === 'slot') throw new Error('health failed');
+    return { dispose() { events.push('dispose old'); } };
+  });
+  t.after(() => slots.close());
+  const result = await slots.activate(f.archivePath, f.candidate, { operationId: 'operation' });
+  assert.equal(result.state, 'restored');
+  assert.equal(slots.activeVersion, '0.13.8');
+  assert.equal(slots.state.lastResult.operationId, 'operation');
+  assert.deepEqual(events, ['mount 0.13.8', 'dispose old', 'mount 0.13.9', 'mount 0.13.8']);
+});
+
+test('任务未空闲时不卸载、不留下待激活更新，稍后可重试', async t => {
+  const f = fixture(t), slots = new UpdateSlots(f.root, '0.13.8');
+  let busy = true, disposals = 0;
+  await slots.boot(async () => ({ quiesce() { if (busy) throw Object.assign(new Error('busy'), { code: 'WORKBENCH_BUSY' }); }, dispose() { disposals++; } }));
+  t.after(() => slots.close());
+  await assert.rejects(slots.activate(f.archivePath, f.candidate), { code: 'WORKBENCH_BUSY' });
+  assert.equal(disposals, 0); assert.equal(slots.state.pending, null);
+  busy = false;
+  assert.equal((await slots.activate(f.archivePath, f.candidate)).state, 'updated');
+});
+
+test('卸载失败时禁止启动新版，避免重复写入者', async t => {
+  const f = fixture(t), slots = new UpdateSlots(f.root, '0.13.8');
+  let mounts = 0;
+  await slots.boot(async () => { mounts++; return { dispose() { throw new Error('close failed'); } }; });
+  await assert.rejects(slots.activate(f.archivePath, f.candidate), /close failed/);
+  assert.equal(mounts, 1);
+  assert.equal(slots.activeVersion, '0.13.8');
+});
+
+test('DSH 手动安装的新版本优先于旧业务槽位', async t => {
+  const f = fixture(t);
+  const before = new UpdateSlots(f.root, '0.13.8');
+  await before.schedule(f.archivePath, f.candidate);
+  await before.boot(async () => ({}));
+  const after = new UpdateSlots(f.root, '0.13.10');
+  const mounted = [];
+  await after.boot(async slot => { mounted.push(slot.version); return {}; });
+  assert.deepEqual(mounted, ['0.13.10']);
+  assert.equal(after.state.active.kind, 'base');
+  assert.equal(after.state.pending, null);
+});

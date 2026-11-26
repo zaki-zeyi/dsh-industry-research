@@ -32,6 +32,15 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     next();
   });
   app.use((req, res, next) => {
+    if (service.activationPending && req.path !== '/api/health') return res.status(503).json({ error: '新版正在进行健康检查' });
+    if (req.path !== '/api/health' && req.path !== '/api/plugin-update' &&
+      !req.path.endsWith('/events') && !req.path.endsWith('/stream')) {
+      if (service.updating) return res.status(503).json({ error: '工作台正在切换版本，请稍后重试' });
+      service.inFlightRequests = (service.inFlightRequests ?? 0) + 1;
+      let released = false;
+      const release = () => { if (!released) { released = true; service.inFlightRequests--; } };
+      res.once('finish', release); res.once('close', release);
+    }
     if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
     if (service.updating) return res.status(503).json({ error: '工作台正在切换版本，请稍后重试' });
     service.inFlightWrites = (service.inFlightWrites ?? 0) + 1;

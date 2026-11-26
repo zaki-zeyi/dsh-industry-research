@@ -5,6 +5,13 @@ import { createReadStream, existsSync, readFileSync, writeFileSync, renameSync, 
 import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 
+function newer(a, b) {
+  if (!/^\d+\.\d+\.\d+$/.test(a ?? '') || !/^\d+\.\d+\.\d+$/.test(b ?? '')) return false;
+  const left = a.split('.').map(Number), right = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] > right[i];
+  return false;
+}
+
 function runTar(args) {
   return new Promise((done, reject) => {
     const child = spawn('tar', args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -36,6 +43,12 @@ export class UpdateSlots {
     this.baseVersion = baseVersion;
     this.base = { kind: 'base', version: baseVersion };
     this.state = this.readState();
+    // A DSH manual upgrade takes precedence over older private payloads.
+    const selected = this.state.pending?.target ?? this.state.active;
+    if (selected && newer(baseVersion, selected.version)) {
+      this.save({ ...this.state, active: this.base, previous: this.state.active, pending: null,
+        lastResult: { state: 'updated', version: baseVersion, reason: 'manual-install' } });
+    }
     this.activation = new Promise(resolve => { this.finishActivation = resolve; });
   }
 
@@ -113,8 +126,15 @@ export class UpdateSlots {
   }
 
   async boot(mount) {
+    this.mount = mount;
+    this.work = this.performBoot(mount);
+    return this.work;
+  }
+
+  async performBoot(mount) {
     const pending = this.state.pending;
-    const target = pending?.target ?? this.state.active ?? this.base;
+    const selected = pending?.target ?? this.state.active ?? this.base;
+    const target = selected.kind === 'base' ? this.base : selected;
     let current, result;
     const healthStartedAt = Date.now();
     try {
@@ -123,10 +143,13 @@ export class UpdateSlots {
         this.save({ ...this.state, active: target, previous: pending.previous, pending: null,
           lastResult: { state: 'updated', version: target.version, healthDurationMs: Date.now() - healthStartedAt } });
       }
+      await current.confirm?.();
+      this.current = current;
       result = { state: pending ? 'updated' : 'current', version: target.version };
     } catch (error) {
       await Promise.resolve(current?.dispose?.()).catch(() => {});
-      const fallback = pending?.previous ?? this.state.previous ?? this.base;
+      const selectedFallback = pending?.previous ?? this.state.previous ?? this.base;
+      const fallback = selectedFallback.kind === 'base' ? this.base : selectedFallback;
       if (target.kind === fallback.kind && target.version === fallback.version && target.sha256 === fallback.sha256) throw error;
       const rollbackStartedAt = Date.now();
       current = await mount(fallback);
@@ -134,11 +157,85 @@ export class UpdateSlots {
         lastResult: { state: 'restored', version: target.version, error: error.message,
           healthDurationMs: rollbackStartedAt - healthStartedAt,
           rollbackDurationMs: Date.now() - rollbackStartedAt } });
+      await current.confirm?.();
+      this.current = current;
       result = { state: 'restored', version: fallback.version, failedVersion: target.version };
     } finally {
       this.finishActivation(result);
     }
     return current;
+  }
+
+  activate(archivePath, candidate, { beforeSwitch = () => {}, operationId } = {}) {
+    if (this.switchWork) {
+      if (candidate.version !== this.switchVersion) return Promise.reject(new Error('已有另一版本正在更新'));
+      return this.switchWork;
+    }
+    this.switchVersion = candidate.version;
+    const promise = this.performActivation(archivePath, candidate, beforeSwitch, operationId);
+    this.switchWork = promise;
+    return promise.finally(() => { if (this.switchWork === promise) this.switchWork = null; });
+  }
+
+  async performActivation(archivePath, candidate, beforeSwitch, operationId) {
+    await this.work;
+    if (this.closed || !this.current || !this.mount) throw new Error('更新协调器已关闭');
+    if (this.state.pending) throw new Error('已有待确认的更新');
+    const target = await this.prepare(archivePath, candidate);
+    const previous = this.state.active ?? this.base;
+    const old = this.current;
+    const resume = old.quiesce?.();
+    let stopped = false, disposing = false, next, result;
+    const startedAt = Date.now();
+    try {
+      await beforeSwitch();
+      this.save({ ...this.state, pending: { target, previous, phase: 'prepared', operationId }, lastResult: null });
+      this.activation = new Promise(resolve => { this.finishActivation = resolve; });
+      this.onSwitch?.(target);
+      this.save({ ...this.state, pending: { ...this.state.pending, phase: 'switching' } });
+      disposing = true;
+      await old.dispose();
+      stopped = true;
+      this.current = null;
+      next = await this.mount(target);
+      this.save({ ...this.state, active: target, previous, pending: null,
+        lastResult: { state: 'updated', version: target.version, operationId,
+          healthDurationMs: Date.now() - startedAt, application: 'applied' } });
+      await next.confirm?.();
+      this.current = next;
+      result = { application: 'applied', state: 'updated', version: target.version };
+      return result;
+    } catch (error) {
+      if (!stopped) {
+        // A disposer that failed may still own the database. Never start a second writer.
+        if (!disposing) {
+          this.save({ ...this.state, pending: null });
+          resume?.();
+        } else this.onFailure?.(error);
+        throw error;
+      }
+      await next?.dispose?.();
+      const rollbackStartedAt = Date.now();
+      const restored = await this.mount(previous);
+      this.save({ ...this.state, active: previous, previous: null, pending: null,
+        lastResult: { state: 'restored', version: target.version, operationId,
+          healthDurationMs: rollbackStartedAt - startedAt, rollbackDurationMs: Date.now() - rollbackStartedAt,
+          error: error.message, application: 'applied' } });
+      await restored.confirm?.();
+      this.current = restored;
+      result = { application: 'applied', state: 'restored', version: previous.version, failedVersion: target.version };
+      return result;
+    } finally {
+      this.finishActivation?.(result);
+    }
+  }
+
+  async close() {
+    this.closed = true;
+    await this.work?.catch(() => {});
+    await this.switchWork?.catch(() => {});
+    await this.current?.dispose?.();
+    this.current = null;
   }
 
   waitForActivation() { return this.activation; }

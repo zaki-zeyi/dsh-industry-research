@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { stageUpdateArchive } from './update-download.mjs';
+import { updateBusy } from './update-busy.mjs';
 
 const releaseUrl = 'https://api.github.com/repos/zaki-zeyi/dsh-industry-research/releases/latest';
 const settingKey = 'plugin-update';
@@ -70,7 +71,7 @@ export class PluginUpdates {
     const completed = this.saved.lastResult === 'updated' && !this.candidate;
     const downloaded = completed || this.packageReady || ['installing', 'restart-required', 'installed'].includes(this.state);
     const healthDone = completed || this.state === 'installed';
-    const healthActive = this.state === 'restart-required';
+    const healthActive = this.state === 'restart-required' || this.state === 'installing' && typeof this.slotUpdater?.activate === 'function';
     const failed = Boolean(this.error);
     const status = (id, done, active) => failed && this.errorPhase === id ? 'error' : done ? 'complete' : active ? 'active' : 'waiting';
     const phases = [
@@ -85,9 +86,16 @@ export class PluginUpdates {
   getManager() { return typeof this.manager === 'function' ? this.manager() : this.manager; }
 
   async reconcile() {
+    if (this.slotUpdater) await this.slotUpdater.waitForActivation();
     const pending = this.saved.pending;
     if (!pending) {
       const verdict = this.slotUpdater?.state.lastResult;
+      if (verdict?.state === 'updated' && verdict.version === this.version && this.saved.lastVersion !== this.version) {
+        this.saved = { ...this.saved, lastResult: 'updated', lastVersion: this.version,
+          staged: newerVersion(this.saved.staged?.candidate?.version, this.version) ? this.saved.staged : null };
+        this.service.store.saveSetting(settingKey, this.saved);
+        this.log('completed', { installedVersion: this.version, phase: 'update' });
+      }
       const failedVersion = verdict?.state === 'restored' ?
         verdict.version ?? (newerVersion(this.saved.lastVersion, this.version) ? this.saved.lastVersion : null) : null;
       if (failedVersion && failedVersion !== this.saved.failedVersion) {
@@ -111,7 +119,7 @@ export class PluginUpdates {
       if (!verdict || (verdict.version !== pending.version && verdict.reason !== 'state-corrupt') ||
         !['updated', 'restored'].includes(verdict.state)) return;
       this.operationId = pending.operationId ?? this.operationId;
-      this.saved = { ...this.saved, pending: null, staged: null,
+      this.saved = { ...this.saved, pending: null, staged: null, installRequested: null,
         failedVersion: verdict.state === 'restored' ? pending.version : null,
         lastResult: verdict.state, lastVersion: pending.version };
       this.service.store.saveSetting(settingKey, this.saved);
@@ -154,6 +162,8 @@ export class PluginUpdates {
   snapshot() {
     return {
       installedVersion: this.version,
+      bootstrapVersion: this.slotUpdater?.baseVersion ?? this.version,
+      liveActivation: typeof this.slotUpdater?.activate === 'function',
       automatic: this.saved.automatic,
       checkedAt: this.saved.checkedAt ?? null,
       candidateVersion: this.candidate?.version ?? null,
@@ -189,7 +199,9 @@ export class PluginUpdates {
 
   start() {
     void this.reconcile().then(() => this.refreshEligibility()).then(() => {
-      if (this.candidate) return this.download();
+      if (this.candidate) return this.download().then(() => {
+        if (this.saved.installRequested?.version === this.candidate?.version) this.armIdleInstall();
+      });
     }).catch(() => { this.eligible = false; });
     this.timer = setInterval(() => {
       if (this.saved.pending && this.state !== 'installing') {
@@ -214,7 +226,18 @@ export class PluginUpdates {
     this.closed = true;
     clearInterval(this.timer);
     clearTimeout(this.firstCheck);
+    clearTimeout(this.idleInstallTimer);
     this.downloadAbort?.abort();
+  }
+
+  armIdleInstall() {
+    clearTimeout(this.idleInstallTimer);
+    this.idleInstallTimer = setTimeout(() => {
+      if (this.closed || this.saved.installRequested?.version !== this.candidate?.version || !this.packageReady) return;
+      if (updateBusy(this.service)) { this.armIdleInstall(); return; }
+      void this.install().catch(() => {});
+    }, 5000);
+    this.idleInstallTimer.unref?.();
   }
 
   setAutomatic(enabled) {
@@ -511,6 +534,20 @@ export class PluginUpdates {
     this.errorPhase = null;
     this.log('install.started', { phase: 'update' });
     try {
+      if (typeof this.slotUpdater.activate === 'function') {
+        await this.slotUpdater.activate(staged.path, candidate, {
+          operationId: this.operationId,
+          beforeSwitch: () => {
+            this.saved = { ...this.saved, pending: { version: candidate.version, previousVersion: this.version,
+              operationId: this.operationId }, lastResult: null };
+            this.service.store.saveSetting(settingKey, this.saved);
+            this.log('slot.prepared', { phase: 'update', candidateVersion: candidate.version,
+              durationMs: this.now() - startedAt });
+            this.log('health.waiting', { phase: 'health', candidateVersion: candidate.version });
+          },
+        });
+        return this.closed ? undefined : this.snapshot();
+      }
       await this.slotUpdater.schedule(staged.path, candidate);
       this.log('slot.prepared', { phase: 'update', candidateVersion: candidate.version,
         durationMs: this.now() - startedAt });
@@ -521,6 +558,18 @@ export class PluginUpdates {
       this.log('health.waiting', { phase: 'health', candidateVersion: candidate.version });
       return this.snapshot();
     } catch (error) {
+      if (this.closed) throw error;
+      if (error.code === 'WORKBENCH_BUSY') {
+        this.state = 'waiting-idle';
+        this.error = '';
+        this.saved = { ...this.saved, installRequested: { version: candidate.version, operationId: this.operationId } };
+        this.service.store.saveSetting(settingKey, this.saved);
+        this.armIdleInstall();
+        this.log('install.deferred', { phase: 'update', code: 'WORKBENCH_BUSY' }, 'warn');
+        return this.snapshot();
+      }
+      this.saved = { ...this.saved, pending: null };
+      this.service.store.saveSetting(settingKey, this.saved);
       this.state = 'failed';
       this.error = error.message;
       this.errorPhase = 'update';

@@ -44,6 +44,10 @@ jobs:
         env:
           DSH_CLI_PATH: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
         run: node scripts/ota-host-acceptance.mjs
+      - if: matrix.os == 'windows-latest'
+        env:
+          DSH_CLI_PATH: ${{ runner.temp }}/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js
+        run: node scripts/hot-update-host-acceptance.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -11,7 +11,8 @@ import { prepareLarkAgent } from './lark-agent-files.mjs';
 
 // The host owns model credentials, tools, message history and Agent lifetime.
 export class NativeSessions {
-  constructor(store, host, { workRoot, pollMs = 200 } = {}) {
+  constructor(store, host, { workRoot, pollMs = 200, paused = false } = {}) {
+    this.paused = paused;
     this.store = store; this.host = host; this.workRoot = workRoot; this.bySession = new Map(); this.closed = false;
     for (const meta of store.terminalList()) if (meta.agent === 'dsh-native') this.bySession.set(meta.sessionId, meta.id);
     this.disposeEvent = host.on('session/event', (session, event) => this.observeEvent(String(session.id), event));
@@ -105,6 +106,7 @@ export class NativeSessions {
   }
   cancel(id) { this.host.sessionController.cancel({ sessionId: this.get(id).sessionId }); }
   observeEvent(sessionId, event) {
+    if (this.paused) return;
     const id = this.bySession.get(sessionId); if (!id || this.closed) return;
     const meta = this.get(id);
     if (event.type === 'turn/start') {
@@ -155,6 +157,7 @@ export class NativeSessions {
     void this.send(id, `请读取 ${path}，按照该文件中的用户上传要求执行。本次只上传已有报告，不重新调研。`).catch(() => this.onDelivery?.(meta.taskId, id, { requestId: meta.deliveryRequestId, status: 'failed', error: '宿主会话未接受上传指令，报告已保留，请重试。' }));
   }
   observeDeliveries(completedId) {
+    if (this.paused) return;
     for (const id of this.bySession.values()) {
       const meta = this.get(id); if (!meta.deliveryRequestId || !meta.deliveryPath) continue;
       let receipt; try { const text = readFileSync(meta.deliveryPath, 'utf8'); if (text.length > 524288) continue; receipt = parseAgentDelivery(text); } catch { continue; }
