@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 
-const digestDefaultPrompt = '自动聚合所有日报的摘要生成汇总日报并发布到【存储位置】飞书文档，并发送到飞书消息。【汇总规则】每个章节一个专题题目和摘要，附带每个日报链接。';
+const digestDefaultPrompt = '聚合所有日报的摘要生成汇总日报，发布飞书文档到【存储位置】，并发送到飞书消息。【汇总规则】每个章节一个专题题目和摘要，附带每个日报链接。';
 test('FR05 专题调研创建、可编辑提示、续聊、独立日报与页签隔离',async({page})=>{
  await page.goto('/');await page.getByRole('button',{name:'专题调研',exact:true}).click();
  await expect(page.getByRole('heading',{name:'专题调研',exact:true})).toBeVisible();
@@ -229,6 +229,103 @@ test('PRD6264 保存汇总默认 Prompt，现有任务不变，重载后仍保�
   expect(mutations).toEqual([['PUT','/api/topics/digest/settings'],['PUT','/api/topics/digest/settings']]);
 });
 
+for (const startStatus of [202, 200]) test(`PRD6282 日报齐备时手动生成汇总并进入原生会话（${startStatus}），同日存档后不可再生成`, async ({page}) => {
+  const scope = (await (await page.request.get('/api/config')).json()).topicScope;
+  const date = '2026-01-02', url = 'https://example.feishu.cn/docx/ManualDigest';
+  const topic = {topicId:'62820000-0000-4000-8000-000000000002',question:'已发布的专题日报'};
+  const daily = {id:'ready-daily',topic:{...topic,window:{display:date}},status:'ready',
+    publication:{status:'published',url:'https://example.feishu.cn/docx/ReadyDaily'}};
+  const task = {id:'62820000-0000-4000-8000-000000000001',direction:'专题日报汇总 · '+date,
+    status:startStatus === 202 ? 'queued' : 'running',createdAt:date+'T01:00:00Z',nativeSession:true,
+    nativeSessionId:'manual-digest-native-session'};
+  const gate = Promise.withResolvers();
+  let phase = 'waiting', requests = 0;
+  await page.route(/\/api\/topics(?:\?.*)?$/, route => route.fulfill({json:{
+    items:[{id:'ready-topic',topic,status:'ready',dailyReports:[phase === 'waiting' ? {...daily,status:'running',publication:{status:'pending'}} : daily]}],
+    digestDate:date, digestPrompt:digestDefaultPrompt, digestCanCreate:phase === 'ready',
+    digest:phase === 'archived' ? {date,url} : null,
+    digestGeneration:phase === 'waiting' ? {date,status:'waiting'} : phase === 'ready' ? null
+      : {date,status:phase === 'archived' ? 'sent' : task.status,taskId:task.id},
+  }}));
+  await page.route('**/api/topics/digest/start', async route => {
+    expect(route.request().method()).toBe('POST');
+    expect(route.request().postDataJSON()).toEqual({scope});
+    requests++;
+    await gate.promise;
+    phase = 'active';
+    const returnedTask = startStatus === 202 ? {...task,nativeSessionId:undefined} : task;
+    await route.fulfill({status:startStatus,json:{date,status:task.status,task:returnedTask}});
+  });
+  await page.route('**/api/tasks/'+task.id, route => route.fulfill({json:{task}}));
+  await page.goto('/');
+  await page.getByRole('button',{name:'专题调研',exact:true}).click();
+  const card = page.locator('.topic-digest-card');
+  const create = card.getByRole('button',{name:'生成汇总',exact:true});
+  await expect(card.getByRole('heading',{name:'日报汇总',exact:true})).toBeVisible();
+  await expect(card.getByRole('status')).toContainText('等待日报');
+  await expect(create).toHaveCount(0);
+  phase = 'ready';
+  await page.getByRole('button',{name:'刷新',exact:true}).click();
+  await expect(create).toBeEnabled();
+  await create.dblclick();
+  await expect(card.getByRole('button',{name:'正在提交…',exact:true})).toBeDisabled();
+  await expect.poll(()=>requests).toBe(1);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  gate.resolve();
+  await expect(page).toHaveURL(new RegExp('#'+task.id+'$'));
+  await expect(page.getByRole('heading',{name:task.direction,exact:true})).toBeVisible();
+  await expect(page.getByRole('region',{name:'DSH 原生会话'})).toBeVisible();
+
+  phase = 'archived';
+  await page.getByRole('button',{name:'← 返回工作台'}).click();
+  await expect(card.getByRole('link',{name:'打开最新日报汇总'})).toHaveAttribute('href',url);
+  await expect(card.getByRole('status')).toContainText('已完成');
+  await expect(create).toHaveCount(0);
+  expect(requests).toBe(1);
+});
+
+test('PRD6282 会话准备与启动失败不指向旧会话，提交错误显示在汇总卡片', async ({page}) => {
+  const date = '2026-01-02', archive = {date:'2026-01-01',url:'https://example.feishu.cn/docx/PriorManualDigest'};
+  const startIssue = '暂时无法核对飞书存储位置';
+  const authError = '请先绑定飞书再生成日报汇总';
+  const eligibilityError = '今天的专题日报尚未全部生成，请等日报补齐后再试';
+  let status = 'preparing', requests = 0;
+  await page.route(/\/api\/topics(?:\?.*)?$/, route => route.fulfill({json:{
+    items:[], digest:archive, digestArchivedTaskId:'62820000-0000-4000-8000-000000000003', digestDate:date,
+    digestPrompt:digestDefaultPrompt, digestCanCreate:status === 'start_failed',
+    digestGeneration:{date,status,...(status === 'start_failed' && {startIssue})},
+  }}));
+  await page.route('**/api/topics/digest/start', route => {
+    if (++requests === 1) return route.fulfill({status:428,json:{error:authError}});
+    status = 'waiting';
+    return route.fulfill({status:409,json:{error:eligibilityError}});
+  });
+  await page.goto('/');
+  await page.getByRole('button',{name:'专题调研',exact:true}).click();
+  const listUrl = page.url(), card = page.locator('.topic-digest-card');
+  const create = card.getByRole('button',{name:'生成汇总',exact:true});
+  const details = card.getByRole('button',{name:'AI 会话详情',exact:true});
+  await expect(card.getByRole('status')).toContainText('正在准备 AI 会话');
+  await expect(card.getByRole('link',{name:'打开最新日报汇总'})).toHaveAttribute('href',archive.url);
+  await expect(create).toHaveCount(0);
+  await expect(details).toHaveCount(0);
+  status = 'start_failed';
+  await page.getByRole('button',{name:'刷新',exact:true}).click();
+  await expect(card.getByRole('status')).toContainText('会话尚未创建');
+  await expect(card.getByRole('status')).toContainText(startIssue);
+  await expect(details).toHaveCount(0);
+  await create.click();
+  await expect(card.getByRole('alert')).toHaveText(authError);
+  await expect(page).toHaveURL(listUrl);
+  await create.click();
+  await expect(card.getByRole('alert')).toHaveText(eligibilityError);
+  await expect(card.getByRole('status')).toContainText('等待日报');
+  await expect(create).toHaveCount(0);
+  await expect(page).toHaveURL(listUrl);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(requests).toBe(2);
+});
+
 test('PRD6264 同日存档文档与失败任务状态同时可见，仍可打开现有会话', async ({page}) => {
   const date = '2026-01-02', url = 'https://example.feishu.cn/docx/SameDayArchive';
   const task = {id:'62640000-0000-4000-8000-000000000002',direction:'失败的汇总日报',status:'failed',
@@ -265,11 +362,14 @@ test('PRD6264 同日存档文档与失败任务状态同时可见，仍可打开
   await expect(page.getByRole('region', {name:'DSH 原生会话'})).toBeVisible();
 });
 
-test('PRD6264 仅汇总失败也可从顶部重试，留在列表并刷新任务状态', async ({page}) => {
+test('PRD6264 / PRD6282 仅汇总失败可从顶部重试，重试中可以打开本期原生会话', async ({page}) => {
   const scope = (await (await page.request.get('/api/config')).json()).topicScope;
   const date = '2026-01-02', previousDate = '2026-01-01', taskId = '62640000-0000-4000-8000-000000000003';
   const url = 'https://example.feishu.cn/docx/CompletedDigest', previousUrl = 'https://example.feishu.cn/docx/PreviousDigest';
-  let status = 'failed';
+  const archivedTaskId = '62640000-0000-4000-8000-000000000005';
+  const task = {id:taskId,direction:'正在重试的汇总日报',status:'running',
+    createdAt:date+'T01:00:00Z',nativeSession:true,nativeSessionId:'retrying-digest-native-session'};
+  let status = 'failed', archivedReads = 0;
   const mutations = [];
   page.on('request', request => {
     const path = new URL(request.url()).pathname;
@@ -278,8 +378,14 @@ test('PRD6264 仅汇总失败也可从顶部重试，留在列表并刷新任务
   await page.route(/\/api\/topics(?:\?.*)?$/, route => route.fulfill({json:{
     items:[], digestDate:date, digestPrompt:digestDefaultPrompt, digestRetryable:status === 'failed',
     digest:status === 'sent' ? {date,url} : {date:previousDate,url:previousUrl},
-    digestGeneration:{date,status,taskId}, syncedAt:new Date().toISOString(),
+    digestArchivedTaskId:status === 'sent' ? taskId : archivedTaskId,
+    digestGeneration:status === 'retrying' ? {status,taskId} : {date,status,taskId}, syncedAt:new Date().toISOString(),
   }}));
+  await page.route('**/api/tasks/'+taskId, route => route.fulfill({json:{task}}));
+  await page.route('**/api/tasks/'+archivedTaskId, route => {
+    archivedReads++;
+    return route.fulfill({status:404,json:{error:'误打开之前存档的汇总会话'}});
+  });
   await page.route('**/api/topics/retry-failed-dailies', route => {
     expect(route.request().postDataJSON()).toEqual({scope});
     status = 'queued';
@@ -303,8 +409,19 @@ test('PRD6264 仅汇总失败也可从顶部重试，留在列表并刷新任务
   await expect(link).toHaveAttribute('href',previousUrl);
   await expect(page).toHaveURL(listUrl);
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  status = 'running';
+  status = 'retrying';
   await page.getByRole('button', {name:'刷新',exact:true}).click();
+  await expect(taskStatus).toContainText('本期任务 · '+date);
+  await expect(taskStatus).toContainText('重试中');
+  await expect(link).toHaveAttribute('href',previousUrl);
+  await expect(page).toHaveURL(listUrl);
+  await card.getByRole('button',{name:'AI 会话详情',exact:true}).click();
+  await expect(page).toHaveURL(new RegExp('#'+taskId+'$'));
+  await expect(page.getByRole('heading',{name:task.direction,exact:true})).toBeVisible();
+  await expect(page.getByRole('region',{name:'DSH 原生会话'})).toBeVisible();
+  expect(archivedReads).toBe(0);
+  status = 'running';
+  await page.getByRole('button',{name:'← 返回工作台'}).click();
   await expect(taskStatus).toContainText('生成中');
   status = 'sent';
   await expect(taskStatus).toContainText('已完成', {timeout:10000});

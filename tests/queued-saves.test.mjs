@@ -135,10 +135,11 @@ async function runtimeFor(dataDir, fixture, host, payloads, ended) {
   return runtime;
 }
 
-test('PRD 6264 saves the automatic prompt and batch-retries the original digest session only after daily reports recover', async () => {
+test('PRD 6282 automatic and manual digest creation share readiness, saved prompt and the retry session', async () => {
   const dataDir = mkdtempSync(resolve(tmpdir(), 'digest-native-'));
   const fixture = cliFixture(), host = mockHost(), notices = [];
   const appId = 'cli_digest';
+  let directoryReadError, waitBeforeTurn;
   const binding = { applicationSnapshot: () => app, requireBound: async () => ({ openId:app.ownerOpenId, appId }), close() {},
     async json(args) {
       if (args[0] === 'auth') return { appId, identities:{user:{openId:app.ownerOpenId,available:true,verified:true},bot:{available:true,verified:true}} };
@@ -150,6 +151,7 @@ test('PRD 6264 saves the automatic prompt and batch-retries the original digest 
     if (parent === 'topics-folder' && name === '汇总日报') return 'digest-folder';
     throw new Error('unexpected folder');
   }, async list(_, parent) {
+    if (directoryReadError) throw directoryReadError;
     if (parent === root.folderToken) return [{type:'folder',name:'专题调研',token:'topics-folder'}];
     if (parent === 'topics-folder') return [{type:'folder',name:'汇总日报',token:'digest-folder'}];
     return fixture.adapter.files(app, parent);
@@ -164,11 +166,13 @@ test('PRD 6264 saves the automatic prompt and batch-retries the original digest 
     const scope = topicScope(root, app), topicsApi = runtime.url + '/api/topics';
     const request = (path, method, body) => fetch(topicsApi + path, { method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
     const generate = prompt => request('/digest', 'POST', {scope,prompt});
+    const createDigest = (scopeArg = scope) => request('/digest/start', 'POST', {scope:scopeArg});
     const settings = (scope, prompt) => request('/digest/settings', 'PUT', {scope,prompt});
     const retry = () => request('/retry-failed-dailies', 'POST', {scope});
     const card = async () => (await fetch(topicsApi)).json();
     const prompt = '请先比较两项结论，再聚合全部专题日报摘要。';
-    assert.match((await card()).digestPrompt, /每个章节一个专题题目和摘要/);
+    assert.equal((await card()).digestPrompt, '聚合所有日报的摘要生成汇总日报，发布飞书文档到【存储位置】，并发送到飞书消息。【汇总规则】每个章节一个专题题目和摘要，附带每个日报链接。');
+    assert.equal((await createDigest('other-scope')).status,409);
     assert.equal((await settings('outdated-scope', prompt)).status,409);
     assert.deepEqual(await (await settings(scope, prompt)).json(), {prompt});
     assert.equal((await card()).digestPrompt,prompt);
@@ -188,6 +192,7 @@ test('PRD 6264 saves the automatic prompt and batch-retries the original digest 
     const prompts = [];
     host.sessionController.prompt = async request => {
       host.emit(request.sessionId, 'turn/start');
+      if (waitBeforeTurn) await waitBeforeTurn;
       const current = store.list().find(candidate => candidate.nativeSessionId === request.sessionId);
       const meta = store.terminal(current.terminalId);
       prompts.push({id:request.sessionId,text:readFileSync(meta.promptPath,'utf8')});
@@ -226,7 +231,7 @@ test('PRD 6264 saves the automatic prompt and batch-retries the original digest 
     assert.deepEqual(await (await retry()).json(), {accepted:0,rejected:[],digestRetry:null});
     await digest.tick();
     assert.equal(prompts.length,3);
-    assert.equal((await card()).digestGeneration.status,'waiting');
+    assert.deepEqual((await card()).digestGeneration, {date:day,status:'waiting',taskId:failed.id,prompt});
     assert.equal(service.queue.shift().id,task.id);
     store.save(task);
     service.drain = drain;
@@ -246,7 +251,9 @@ test('PRD 6264 saves the automatic prompt and batch-retries the original digest 
     assert.equal(finished.publication.url,digestUrl);
     assert.equal(notices.length, 1);
     assert.equal((await generate('当天汇总已存在，不应创建另一份文档。')).status, 409);
-    const {digest:archived,digestGeneration,digestDate,digestRetryable} = await card();
+    assert.equal((await createDigest()).status,409);
+    const {digest:archived,digestGeneration,digestDate,digestRetryable,digestCanCreate} = await card();
+    assert.equal(digestCanCreate,false);
     assert.deepEqual(archived,{date:day,url:digestUrl});
     assert.equal(digestDate,day);
     assert.equal(digestGeneration.taskId,finished.id);
@@ -257,6 +264,45 @@ test('PRD 6264 saves the automatic prompt and batch-retries the original digest 
     assert.equal((await generate('飞书已经归档，不应启动另一个汇总会话。')).status, 409);
     assert.equal(host.created, 1);
     assert.equal(notices.length, 1);
+
+    const nextDate = new Date(time.getTime() + 86_400_000), nextDay = topicScheduleDate(nextDate);
+    now = nextDate.getTime();
+    const nextReport = { ...task, id:'next-source-report', status:'failed', scheduled:{...task.scheduled,scheduledFor:nextDate.toISOString()} };
+    store.save(nextReport);
+    store.saveRequest(topicScheduleRequestKey(scope,topicId,nextDay), '', nextReport.id);
+    digest.expect(scope, nextDay, topicId);
+    assert.equal((await card()).digestCanCreate,false);
+    assert.equal((await createDigest()).status,409);
+    store.save({...nextReport,status:'ready'});
+    assert.equal((await card()).digestCanCreate,true);
+
+    directoryReadError = Object.assign(new Error('fixture must not leak'), {code:'FOLDER_LIST_INCOMPLETE'});
+    assert.equal((await createDigest()).ok,false);
+    assert.deepEqual((await card()).digestGeneration,{date:nextDay,status:'start_failed',startIssue:'飞书目录未读取完整，请检查连接后重试。'});
+    assert.equal(host.created,1);
+    directoryReadError = null;
+
+    const gate = Promise.withResolvers();
+    waitBeforeTurn = gate.promise;
+    let created;
+    try {
+      const launched = await createDigest();
+      assert.equal(launched.status,202);
+      ({task:created} = await launched.json());
+      assert.equal(created.prompt,'供下次自动汇总使用的新默认提示词。');
+      const rejoin = await createDigest();
+      assert.equal(rejoin.status,200);
+      assert.equal((await rejoin.json()).task.id,created.id);
+      await digest.tick();
+      assert.equal((await card()).digestCanCreate,false);
+      const active = await card();
+      assert.equal(active.digestGeneration.taskId,created.id);
+      assert.ok(!active.digestGeneration.startIssue);
+    } finally { gate.resolve(); }
+    await until(async () => { await digest.tick(); return digest.manualStatus(scope)?.status === 'sent'; });
+    assert.equal(host.created,2);
+    assert.equal(notices.length,2);
+    assert.equal((await createDigest()).status,409);
   } finally { await runtime.close(); rmSync(dataDir,{recursive:true,force:true}); }
 });
 
