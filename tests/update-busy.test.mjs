@@ -31,3 +31,17 @@ test('候选服务健康确认前不执行恢复工作，确认后正常接收�
   assert.equal((await fetch(runtime.url + '/api/tasks')).status, 200);
   assert.equal(runtime.service.activationPending, false);
 });
+
+test('任务已失败但旧 CLI 写操作仍未确认时继续阻止热切换', () => {
+  const s = service();
+  s.store.list = () => [{ id: 'failed-task', status: 'failed' }];
+  s.store.terminalList = () => [{ id: 'old-terminal', taskId: 'failed-task', activity: 'idle' }];
+  s.store.setting = () => 'cloud-write-operations:scope';
+  let pending = true;
+  s.cloudWrites = { locks: new Map(), completedOperations: (_task, key) => {
+    assert.equal(key, 'cloud-write-operations:scope'); return pending ? [{ operationId: 'in-flight' }] : [];
+  } };
+  assert.equal(updateBusy(s), true);
+  assert.throws(() => pauseForUpdate(s), { code: 'WORKBENCH_BUSY' });
+  pending = false; assert.equal(updateBusy(s), false);
+});

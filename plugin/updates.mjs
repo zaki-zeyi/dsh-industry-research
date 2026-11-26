@@ -538,6 +538,7 @@ export class PluginUpdates {
         await this.slotUpdater.activate(staged.path, candidate, {
           operationId: this.operationId,
           beforeSwitch: () => {
+            if (updateBusy(this.service)) throw Object.assign(new Error('工作台仍有任务或写入正在执行，稍后自动重试'), { code: 'WORKBENCH_BUSY' });
             this.saved = { ...this.saved, pending: { version: candidate.version, previousVersion: this.version,
               operationId: this.operationId }, lastResult: null };
             this.service.store.saveSetting(settingKey, this.saved);
