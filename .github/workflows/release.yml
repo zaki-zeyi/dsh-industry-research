@@ -107,3 +107,5 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Public GitHub installation failed' }
           gh release create "v$version" artifacts/*.tgz artifacts/*desktop.zip artifacts/*.sha256 artifacts/plugin-release.json artifacts/update-manifest.json --target '${{ github.sha }}' --title "v$version" --notes-file $notes
           if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed' }
+          node scripts/publish-dsh-plugin-index.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'DSH plugin index publication failed' }
