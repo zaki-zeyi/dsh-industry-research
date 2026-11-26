@@ -81,7 +81,9 @@ ctx.effect(()=>()=>{globalThis.fetch=original;});}`);
   const url = initial.url;
   const snapshot = () => fetch(url + '/api/plugin-update').then(r => r.json());
   async function update(expected, result) {
-    const token = (await snapshot()).actionToken;
+    // Packaging blocks this test process long enough for pooled HTTP sockets to
+    // expire. Reconnect read-only probes before judging the next activation.
+    const token = (await until(snapshot, s => Boolean(s.actionToken), 'update controller ready')).actionToken;
     const act = action => fetch(url + '/api/plugin-update', { method: 'POST', headers: { 'Content-Type': 'application/json',
       'X-DSH-Update-Token': token }, body: JSON.stringify({ action }) });
     await act('check');
