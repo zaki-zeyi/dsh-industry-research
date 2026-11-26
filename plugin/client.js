@@ -3,6 +3,98 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const React = require('react'), h = React.createElement;
     let hostContext, lastTask = '';
+    const updateListeners = new Set();
+    let updateState = {}, updateTimer, updateStopped = false, updateChecking = false;
+    const emitUpdate = value => { updateState = { ...updateState, ...value }; for (const listener of updateListeners) listener(); };
+    const updateEndpoint = '/industry-research/official-update';
+    async function readUpdate() {
+      const response = await fetch(updateEndpoint, { cache: 'no-store', credentials: 'same-origin' });
+      if (!response.ok) throw new Error('更新服务正在重新连接');
+      const value = await response.json(); emitUpdate({ ...value, connectionError: '' }); return value;
+    }
+    async function updateAction(action, version) {
+      try {
+        emitUpdate({ connectionError: '', submitting: true });
+        const status = await readUpdate();
+        const response = await fetch(`${updateEndpoint}?action=${action}${version ? `&version=${encodeURIComponent(version)}` : ''}`, {
+          method: 'POST', credentials: 'same-origin', headers: { 'X-DSH-Update-Token': status.actionToken },
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? '更新请求未完成');
+        emitUpdate(result);
+      } catch (error) { emitUpdate({ connectionError: error.message }); }
+      finally { emitUpdate({ submitting: false }); }
+    }
+    function useUpdates() {
+      const state = React.useSyncExternalStore(callback => { updateListeners.add(callback); return () => updateListeners.delete(callback); }, () => updateState);
+      React.useEffect(() => {
+        if (updateTimer || updateStopped) return;
+        const poll = async () => {
+          try { await readUpdate(); } catch (error) { emitUpdate({ connectionError: error.message }); }
+          if (!updateStopped && updateListeners.size) updateTimer = setTimeout(poll, 1500); else updateTimer = null;
+        };
+        updateTimer = setTimeout(poll, 0);
+        if (!updateChecking) { updateChecking = true; void updateAction('check'); }
+      }, []);
+      return state;
+    }
+    const updateButtonStyle = { border: '1px solid #d9dedb', borderRadius: 10, padding: '10px 16px', cursor: 'pointer', font: 'inherit' };
+    const ours = subject => subject?.kind === 'bundle' && subject.pkg.name === 'dsh-industry-research';
+    function UpdateActions({ subject }) { return ours(subject) ? h(OwnUpdateActions) : null; }
+    function OwnUpdateActions() {
+      const state = useUpdates();
+      const busy = state.busy || state.submitting;
+      return h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' }, 'aria-label': '行研工作台官方 Git 更新' },
+        h('button', { type: 'button', style: { ...updateButtonStyle, background: '#111216', color: '#fff', opacity: busy ? 0.6 : 1 },
+          disabled: Boolean(busy || state.candidateVersion && !state.eligible),
+          onClick: () => updateAction(state.candidateVersion ? 'install' : 'check', state.candidateVersion),
+          title: state.unavailableReason ?? '由 DSH 官方插件管理器安装并热加载' },
+        busy ? '正在更新…' : state.candidateVersion ? `更新到 ${state.candidateVersion}` : '检查更新'),
+        state.candidateVersion && h('button', { type: 'button', style: updateButtonStyle, disabled: Boolean(busy), onClick: () => updateAction('check') }, '重新检查'));
+    }
+    function UpdateBadge({ subject }) { return ours(subject) ? h(OwnUpdateBadge) : null; }
+    function OwnUpdateBadge() {
+      const state = useUpdates();
+      return state.candidateVersion ? h('span', { style: { color: '#315bb5', background: '#edf2ff', borderRadius: 12, padding: '3px 10px', fontSize: 13 } }, '可更新') : null;
+    }
+    const phaseLabel = { checking: '检查更新', removing: '切换旧版', installing: '安装新版', restoring: '恢复原版本', updated: '更新完成',
+      failed: '更新失败', restored: '已恢复原版本', 'restart-required': '等待宿主重启', interrupted: '更新已中断' };
+    function UpdateSection({ subject }) { return ours(subject) ? h(OwnUpdateSection) : null; }
+    function OwnUpdateSection() {
+      const state = useUpdates(), operation = state.operation;
+      const [local, setLocal] = React.useState(null), [localError, setLocalError] = React.useState(''), [localWorking, setLocalWorking] = React.useState(false);
+      async function localAction(action) {
+        setLocalWorking(true); setLocalError('');
+        try {
+          const read = await fetch('/industry-research/update', { cache: 'no-store' });
+          if (!read.ok) throw new Error('工作台更新服务正在连接');
+          const current = await read.json();
+          const response = action ? await fetch(`/industry-research/update?action=${action}`, { method: 'POST', headers: { 'X-DSH-Update-Token': current.actionToken } }) : null;
+          const next = response ? await response.json() : current;
+          if (response && !response.ok) throw new Error(next.error ?? '更新未完成');
+          setLocal(next);
+        } catch (error) { setLocalError(error.message); } finally { setLocalWorking(false); }
+      }
+      React.useEffect(() => { void localAction(); }, [state.runningVersion]);
+      const error = state.connectionError || state.error || operation?.error;
+      return h('section', { 'aria-label': '行研工作台更新服务', style: { marginTop: 24, padding: 24, border: '1px solid #d9dedb', borderRadius: 12 } },
+        h('h3', null, '行研工作台更新'),
+        h('p', null, `宿主安装版本 ${state.installedVersion ?? '读取中'} · 工作台运行版本 ${state.runningVersion ?? '读取中'}`),
+        h('p', null, '详情页按钮由行研工作台提供，通过 DSH 官方 Git 更新流程安装完整插件。'),
+        state.unavailableReason && h('p', { role: 'status' }, state.unavailableReason),
+        operation && h('p', { role: 'status' }, `${phaseLabel[operation.state] ?? operation.state}${operation.version ? ` · ${operation.version}` : ''}`),
+        error && h('div', { role: 'alert', style: { color: '#b42318' } }, error,
+          !state.busy && h('button', { style: { ...updateButtonStyle, marginLeft: 12 }, onClick: () => updateAction(state.candidateVersion ? 'install' : 'check', state.candidateVersion) }, '重试更新')),
+        h('details', { style: { marginTop: 16 } }, h('summary', null, '本地安装包更新'),
+          h('p', null, '保留工作台内的自动下载与本地切换。安装包完整下载并校验后，可在离线时安装。'),
+          local && h('p', null, local.packageReady ? `已缓存 ${local.candidateVersion}` : local.state === 'downloading' ? '正在下载安装包' : '尚无待安装的本地包'),
+          h('button', { style: updateButtonStyle, disabled: Boolean(state.busy || localWorking), onClick: () => localAction('check') }, '检查安装包'), ' ',
+          h('button', { style: updateButtonStyle, disabled: Boolean(state.busy || localWorking), onClick: () => localAction() }, '刷新下载状态'), ' ',
+          h('button', { style: updateButtonStyle, disabled: Boolean(!local?.packageReady || state.busy || localWorking), onClick: () => localAction('install') }, '安装已校验版本'),
+          localError && h('p', { role: 'alert', style: { color: '#b42318' } }, localError)),
+        operation?.events?.length > 0 && h('details', { style: { marginTop: 16 } }, h('summary', null, '本次更新记录'),
+          h('ul', null, operation.events.map((event, index) => h('li', { key: index }, `${new Date(event.at).toLocaleString()} · ${phaseLabel[event.state] ?? event.state}${event.error ? ` · ${event.error}` : ''}`)))));
+    }
     function Panel({ SessionProvider, renderSlot }) {
       const frame = React.useRef(null), reference = React.useRef(null), revision = React.useRef(0), frameSource = React.useRef(null), pending = React.useRef(null), resumeSettings = React.useRef(false);
       const [status, setStatus] = React.useState({ state: 'starting' }), [conversation, setConversation] = React.useState(null), [startupAttempt, setStartupAttempt] = React.useState(0);
@@ -128,6 +220,10 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'layout', 'sessions', 'uiSession'],
       apply(ctx) {
         hostContext = ctx;
+        ctx.effect?.(() => () => { updateStopped = true; clearTimeout(updateTimer); updateListeners.clear(); });
+        for (const [name, component] of [['plugins.detail.actions', UpdateActions], ['plugins.detail.badge', UpdateBadge], ['plugins.detail.section', UpdateSection]]) {
+          ctx.slots.inject(name, () => ctx.slots.register({ name, id: 'dsh-industry-research-update', order: 40 }, component));
+        }
         ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'dsh-industry-research', children: { 'industry-research.session': { kind: 'single', scope: 'session' } } }, Panel));
         ctx.slots.inject('industry-research.session', () => ctx.slots.register({ name: 'industry-research.session' }, ({ renderFactorySlot }) => renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false })));
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'dsh-industry-research', label: '行研工作台', order: 50 }, ({ size = 20 }) => h('span', { style: { fontSize: size }, 'aria-hidden': true }, '▤')));
