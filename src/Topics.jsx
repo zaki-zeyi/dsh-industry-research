@@ -1,12 +1,12 @@
 import { ChoiceGroup } from './ChoiceGroup.jsx';
 import React, { useEffect, useRef, useState } from 'react';
-import { FolderOpen, ArrowUpRight, Trash2 } from 'lucide-react';
+import { FileText, FolderOpen, ArrowUpRight, Trash2 } from 'lucide-react';
 import { topicPrompt, topicDailyPrompt, withTopicTotalMerge, normalizeTopicPrompt, isFailedTopicDaily } from '../server/topic-defaults.mjs';
 import { topicRangeError, wholeDayTopicRange } from '../server/topic-window.mjs';
 import { createTabStore } from './tab-store.mjs';
 import { useTabEntry, useTabPolling } from './use-tab-store.js';
 import { NotificationRetry } from './NotificationRetry.jsx';
-const store=createTabStore();
+const store=createTabStore({ selectExtra: value => value?.digest ?? null });
 async function api(path,options={}){const r=await fetch('/api'+path,{...options,headers:{'Content-Type':'application/json',...options.headers}});const v=await r.json();if(!r.ok){const error=new Error(v.error??'请求失败');error.code=v.code;throw error;}return v;}
 const selectedTopics=new Map();
 const taskStatus=t=>t.status==='running'&&t.stage==='waiting_save'?'等待保存':t.status==='running'&&t.stage==='saving'?'正在保存':({ready:'已完成',queued:'排队中',running:'调研中',failed:'失败',interrupted:'已中断'})[t.status]??t.status;
@@ -56,7 +56,7 @@ export function Topics({config,onOpen,onRetry,onFixNotification,onRebind}){
      {batch?.pending?'正在提交重试…':'日报一键重试'}
    </button>
    <button className="primary" onClick={begin}>启动专题调研</button>
- </div>}</div><div className="topic-storage"><span className="topic-storage-icon" aria-hidden="true"><FolderOpen size={21}/></span><div className="topic-storage-location"><span>存储位置</span><strong>飞书云盘 / {config?.feishuRoot?.rootName??'行研工作台'} / 专题调研{topic?' / '+topic.topic.question:''}</strong><small>{topic?'总报与每期日报按专题归档':'按调研方向归档'}</small></div><div className="topic-storage-sync"><span>上次同步</span><time dateTime={state.syncedAt??undefined}>{state.syncedAt?new Date(state.syncedAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}):'等待同步'}</time></div></div><div className="industry-toolbar">{!selected&&<label className="industry-search"><input aria-label="搜索专题" placeholder="搜索专题" value={query} onChange={e=>setQuery(e.target.value)}/></label>}<button disabled={Boolean(state.syncing)} onClick={refresh}>{state.syncing?'同步中…':'刷新'}</button></div>{(error||state.error||state.syncError)&&<div role="alert" className="industry-error">{error||state.error||state.syncError}<button onClick={refresh}>重试同步</button></div>}
+ </div>}</div>{!selected && <TopicDigestCard digest={state.extra}/>}<div className="topic-storage"><span className="topic-storage-icon" aria-hidden="true"><FolderOpen size={21}/></span><div className="topic-storage-location"><span>存储位置</span><strong>飞书云盘 / {config?.feishuRoot?.rootName??'行研工作台'} / 专题调研{topic?' / '+topic.topic.question:''}</strong><small>{topic?'总报与每期日报按专题归档':'按调研方向归档'}</small></div><div className="topic-storage-sync"><span>上次同步</span><time dateTime={state.syncedAt??undefined}>{state.syncedAt?new Date(state.syncedAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}):'等待同步'}</time></div></div><div className="industry-toolbar">{!selected&&<label className="industry-search"><input aria-label="搜索专题" placeholder="搜索专题" value={query} onChange={e=>setQuery(e.target.value)}/></label>}<button disabled={Boolean(state.syncing)} onClick={refresh}>{state.syncing?'同步中…':'刷新'}</button></div>{(error||state.error||state.syncError)&&<div role="alert" className="industry-error">{error||state.error||state.syncError}<button onClick={refresh}>重试同步</button></div>}
  {!selected&&batch?.error&&<p role="alert" className="industry-error">{batch.error}</p>}
  {!selected&&batch?.accepted!==undefined&&<div className="topic-batch-result">
    <p role="status">{batch.accepted>0?'已提交 '+batch.accepted+' 份专题日报重试。':batch.rejected.length?'本次未提交任何日报。':'当前没有失败的专题日报。'}{batch.rejected.length>0&&' '+batch.rejected.length+' 份未能提交。'}</p>
@@ -66,6 +66,20 @@ export function Topics({config,onOpen,onRetry,onFixNotification,onRebind}){
  {deleting&&<TopicDeleteModal task={deleting} scope={config?.topicScope} onRebind={()=>{setDeleting(null);onRebind?.();}} onClose={()=>setDeleting(null)} onDeleted={async()=>{setDeleting(null);store.removeItem(key,deleting.id);await store.reload(key,loaders);}}/>}
  {modal&&<TopicModal task={modal.task} scheduled={modal.scheduled} onClose={()=>setModal(null)} onSaved={t=>{setModal(null);store.reload(key,loaders);if(t){select(t.topic.topicId);onOpen(t);}}}/>}</section>;
 }
+function TopicDigestCard({digest}) {
+  const content = <>
+    <span className="topic-storage-icon" aria-hidden="true"><FileText size={21}/></span>
+    <span className="topic-digest-label">
+      <strong>日报汇总</strong>
+      {digest?.url ? <span>发送日 <time dateTime={digest.date}>{digest.date}</time></span> : <span>全部专题日报生成后，汇总会显示在这里。</span>}
+    </span>
+    {digest?.url && <ArrowUpRight size={16} aria-hidden="true"/>}
+  </>;
+  const className = 'topic-digest-card';
+  return digest?.url ? <a href={digest.url} target="_blank" rel="noreferrer" className={className} aria-label="打开最新日报汇总">{content}</a>
+    : <div className={className}>{content}</div>;
+}
+
 function TopicCard({task, onSelect, onDelete}) {
   const {question} = task.topic;
   const dailyReports = task.dailyReports ?? [];

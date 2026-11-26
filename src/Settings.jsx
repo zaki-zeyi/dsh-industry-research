@@ -28,7 +28,8 @@ function VersionSettings() {
         if (!response.ok) throw new Error(value.error ?? '无法读取更新状态');
         if (live) {
           if (runningVersion.current && value.installedVersion !== runningVersion.current) {
-            const url = new URL(location.href); url.searchParams.set('view', 'settings'); location.replace(url.href); return;
+            const url = new URL(location.href); url.searchParams.set('view', 'settings');
+            window.history.replaceState(null, '', url.href); location.reload(); return;
           }
           runningVersion.current = value.installedVersion;
           setUpdate(value); setError('');

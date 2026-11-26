@@ -368,5 +368,5 @@ export class ResearchService {
     }
     for (const id of notificationsToRetry) void this.notifications?.send(id).catch(() => {});
   }
-  async close() { this.closed = true; this.cloudWrites.close(); const jobs = [...this.active.values()]; for (const j of jobs) j.controller.abort(); await Promise.allSettled([...jobs.map(j => j.promise), this.queuedSaves?.close()]); await this.notifications?.close(); await this.internalNotifications?.close(); await this.topicDeletions?.close(); await this.internalReconciliation?.close(); await this.documentDeletions?.close(); this.bus.removeAllListeners(); }
+  async close() { this.closed = true; this.cloudWrites.close(); const jobs = [...this.active.values()]; for (const j of jobs) j.controller.abort(); await Promise.allSettled([...jobs.map(j => j.promise), this.queuedSaves?.close(), this.topicDigest?.close()]); await this.notifications?.close(); await this.internalNotifications?.close(); await this.topicDeletions?.close(); await this.internalReconciliation?.close(); await this.documentDeletions?.close(); this.bus.removeAllListeners(); }
 }

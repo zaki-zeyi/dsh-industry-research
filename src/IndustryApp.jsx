@@ -38,7 +38,8 @@ export function IndustryApp({ BindingModal, RootModal, Conversation }) {
         const value = await response.json();
         if (!active || !value.installedVersion) return;
         if (version && version !== value.installedVersion) {
-          const url = new URL(location.href); url.searchParams.set('view', currentTab.current); location.replace(url.href); return;
+          const url = new URL(location.href); url.searchParams.set('view', currentTab.current);
+          window.history.replaceState(null, '', url.href); location.reload(); return;
         }
         version = value.installedVersion;
       } catch {}

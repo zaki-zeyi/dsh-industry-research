@@ -9,7 +9,7 @@ if (!/^http:\/\/127\.0\.0\.1:\d+\/?$/.test(url ?? '') || !/^\d+\.\d+\.\d+$/.test
   throw new Error('Usage: node scripts/desktop-hot-update-acceptance.mjs <running-plugin-url> <published-target-version>');
 }
 const root = url.replace(/\/$/, '');
-const output = resolve('artifacts/desktop-hot-update'); mkdirSync(output, { recursive: true });
+const output = resolve('artifacts/desktop-hot-update', targetVersion); mkdirSync(output, { recursive: true });
 function processes() {
   const result = spawnSync('powershell.exe', ['-NoProfile', '-Command',
     "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'DeepSeek Harness.exe' -and ($_.CommandLine -match '--expose-internals' -or $_.CommandLine -notmatch ' --') } | Select-Object ProcessId,CreationDate | ConvertTo-Json -Compress"],
@@ -27,11 +27,11 @@ try {
     if (!response.ok()) throw new Error(`GET ${path} returned ${response.status()}`);
     return response.json();
   };
-  async function poll(predicate, label, timeout = 180000) {
+  async function poll(predicate, label, timeout = 180000, path = '/api/plugin-update') {
     const deadline = Date.now() + timeout;
     let value;
     while (Date.now() < deadline) {
-      try { value = await read('/api/plugin-update'); if (predicate(value)) return value; } catch {}
+      try { value = await read(path); if (predicate(value)) return value; } catch {}
       await new Promise(done => setTimeout(done, 500));
     }
     throw new Error(`${label}: ${value?.state} ${value?.error ?? ''}`);
@@ -44,11 +44,25 @@ try {
   await page.getByRole('button', { name: '检查更新', exact: true }).click();
   await poll(s => s.candidateVersion === targetVersion && s.packageReady, 'verified download');
   await expect(page.getByRole('button', { name: '安装已校验版本', exact: true })).toBeEnabled({ timeout: 20000 });
+  const reconnect = await browser.newPage({ viewport: { width: 1280, height: 850 } });
   await page.getByRole('button', { name: '安装已校验版本', exact: true }).click();
+  const candidateHealth = await poll(h => h.version === targetVersion, 'candidate listener', 90000, '/api/health');
+  const transitionObserved = candidateHealth.ready === false;
+  if (transitionObserved) {
+    const response = await reconnect.goto(root + '/?view=settings#reconnect-acceptance');
+    assert.equal(response.status(), 503);
+    await expect(reconnect.getByLabel('工作台更新过渡页')).toBeVisible();
+    await reconnect.screenshot({ path: resolve(output, 'transition.png') });
+  }
   const updated = await poll(s => s.installedVersion === targetVersion && s.lastResult === 'updated' && s.progress.percent === 100,
     'in-process activation');
-  await expect(page.getByLabel('版本信息')).toContainText(targetVersion, { timeout: 30000 });
-  await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
+  await expect(page.locator('.settings-version-number')).toHaveText(targetVersion, { timeout: 30000 });
+  await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100', { timeout: 30000 });
+  if (transitionObserved) {
+    await expect(reconnect.locator('.settings-version-number')).toHaveText(targetVersion, { timeout: 30000 });
+    await expect(reconnect).toHaveURL(root + '/?view=settings#reconnect-acceptance');
+    await reconnect.screenshot({ path: resolve(output, 'reconnected.png') });
+  }
   await page.waitForTimeout(500);
   await page.screenshot({ path: resolve(output, 'version.png') });
   const afterProcesses = processes(); assert.deepEqual(afterProcesses, beforeProcesses, 'DSH shell and Host did not restart');
@@ -61,7 +75,7 @@ try {
   await page.getByRole('tab', { name: '更新日志', exact: true }).click();
   await page.getByText('更新完成', { exact: true }).first().waitFor();
   await page.screenshot({ path: resolve(output, 'logs.png') });
-  const evidence = { beforeVersion: before.installedVersion, installedVersion: updated.installedVersion,
+  const evidence = { beforeVersion: before.installedVersion, installedVersion: updated.installedVersion, transitionObserved,
     bootstrapVersion: updated.bootstrapVersion, progress: updated.progress, lastResult: updated.lastResult,
     beforeProcesses, afterProcesses, companyCount: companiesAfter.length,
     operationId: logs.items.find(item => item.event === 'update.completed' && item.details.installedVersion === targetVersion)?.details.operationId };
