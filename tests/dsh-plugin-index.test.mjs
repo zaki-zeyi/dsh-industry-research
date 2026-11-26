@@ -25,6 +25,7 @@ test('DSH Discover gets the verified installer commit, not a branch, tag or sour
   const index = createDshPluginIndex(release, manifest, ref);
   assert.equal(index.format, 1);
   assert.equal(index.plugins[0].name, 'dsh-industry-research');
+  assert.deepEqual(index.plugins[0].title, { zh: '行研工作台', en: 'Industry Research Workbench' });
   assert.deepEqual(index.plugins[0].versions, [{ version: '0.13.16', publishTimestamp: Date.parse(published) / 1000,
     source: { type: 'git', url: 'https://github.com/zaki-zeyi/dsh-industry-research', commit: installer } }]);
 });

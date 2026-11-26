@@ -1,18 +1,18 @@
 {
   "format": 1,
   "title": {
-    "zh-cn": "行研工作台",
+    "zh": "行研工作台",
     "en": "Industry Research Workbench"
   },
   "plugins": [
     {
       "name": "dsh-industry-research",
       "title": {
-        "zh-cn": "行研工作台",
+        "zh": "行研工作台",
         "en": "Industry Research Workbench"
       },
       "description": {
-        "zh-cn": "公司信息库、专题调研与日报周报",
+        "zh": "公司信息库、专题调研与日报周报",
         "en": "Company research, topic reports and scheduled digests"
       },
       "repository": {

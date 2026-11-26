@@ -32,11 +32,11 @@ export function createDshPluginIndex(release, manifestBytes, installerRef) {
 
   return {
     format: 1,
-    title: { 'zh-cn': '行研工作台', en: 'Industry Research Workbench' },
+    title: { zh: '行研工作台', en: 'Industry Research Workbench' },
     plugins: [{
       name,
-      title: { 'zh-cn': '行研工作台', en: 'Industry Research Workbench' },
-      description: { 'zh-cn': '公司信息库、专题调研与日报周报', en: 'Company research, topic reports and scheduled digests' },
+      title: { zh: '行研工作台', en: 'Industry Research Workbench' },
+      description: { zh: '公司信息库、专题调研与日报周报', en: 'Company research, topic reports and scheduled digests' },
       repository: { url: repository },
       versions: [{
         version,
