@@ -67,10 +67,21 @@ test('本地安装与官方更新互斥，重复点击不会发起第二次安�
 
 test('同名 npm 包、其他 Git 仓库、浮动分支和本地来源不能进入官方 Git 更新', async t => {
   for (const source of ['^1.0.0', 'https://github.com/PerryLink/dsh-industry-research.git#' + 'a'.repeat(40), `${repository}#release`, 'link:C:/plugin']) {
-    const f = fixture(t, { source }); assert.equal((await f.updater.snapshot()).eligible, false);
+    const f = fixture(t, { source });
+    const status = await f.updater.snapshot();
+    assert.equal(status.eligible, false);
+    assert.match(status.unavailableReason, /插件 → 发现/);
     f.updater.start('1.1.0'); await f.updater.work; assert.equal(f.calls.length, 0);
   }
   assert.equal(trustedGitSource('git+ssh://git@github.com/zaki-zeyi/dsh-industry-research.git#' + 'a'.repeat(40)), true);
+});
+
+test('不支持 Git 更新的宿主提示先升级 DSH', async t => {
+  const f = fixture(t);
+  delete f.manager.updateBundle;
+  const status = await f.updater.snapshot();
+  assert.equal(status.eligible, false);
+  assert.match(status.unavailableReason, /请先升级 DSH/);
 });
 
 test('拒绝运行版本降级，允许把宿主基础包同步到已运行的槽位版本', async t => {

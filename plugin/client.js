@@ -16,7 +16,7 @@ window.__ModuleLoader__.load({
     async function updateAction(action, version) {
       const epoch = updateEpoch;
       try {
-        emitUpdate({ connectionError: '', submitting: true, pendingAction: action });
+        emitUpdate({ actionError: '', connectionError: '', submitting: true, pendingAction: action });
         const status = await readUpdate();
         if (updateStopped || epoch !== updateEpoch) return;
         const response = await fetch(`${updateEndpoint}?action=${action}${version ? `&version=${encodeURIComponent(version)}` : ''}`, {
@@ -25,7 +25,7 @@ window.__ModuleLoader__.load({
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? '更新请求未完成');
         if (!updateStopped && epoch === updateEpoch) emitUpdate(result);
-      } catch (error) { if (!updateStopped && epoch === updateEpoch) emitUpdate({ connectionError: error.message }); }
+      } catch (error) { if (!updateStopped && epoch === updateEpoch) emitUpdate({ actionError: error.message }); }
       finally { if (!updateStopped && epoch === updateEpoch) emitUpdate({ submitting: false, pendingAction: null }); }
     }
     function useUpdates() {
@@ -49,21 +49,21 @@ window.__ModuleLoader__.load({
     function OwnUpdateActions() {
       const state = useUpdates();
       const busy = state.busy || state.submitting;
-      const error = state.connectionError || state.error || state.operation?.error;
+      const target = state.eligible ? state.candidateVersion : null;
+      const error = state.actionError || state.connectionError || state.error || state.operation?.error;
       return h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }, 'aria-label': '行研工作台官方 Git 更新' },
         h('button', { type: 'button', style: { ...updateButtonStyle, background: '#111216', color: '#fff', opacity: busy ? 0.6 : 1 },
-          disabled: Boolean(busy || state.candidateVersion && !state.eligible),
-          onClick: () => updateAction(state.candidateVersion ? 'install' : 'check', state.candidateVersion),
-          title: state.unavailableReason ?? '由 DSH 官方插件管理器安装并热加载' },
-        busy ? state.pendingAction === 'check' && !state.busy ? '正在检查…' : '正在更新…' : state.candidateVersion ? `更新到 ${state.candidateVersion}` : '检查更新'),
-        state.candidateVersion && h('button', { type: 'button', style: updateButtonStyle, disabled: Boolean(busy), onClick: () => updateAction('check') }, '重新检查'),
+          disabled: Boolean(busy), onClick: () => updateAction(target ? 'install' : 'check', target) },
+        busy ? state.pendingAction === 'check' && !state.busy ? '正在检查…' : '正在更新…' : target ? `更新到 ${target}` : '检查更新'),
+        target && h('button', { type: 'button', style: updateButtonStyle, disabled: Boolean(busy), onClick: () => updateAction('check') }, '重新检查'),
+        state.unavailableReason && h('span', { role: 'status', style: { maxWidth: 280, fontSize: 13 } }, state.unavailableReason),
         (error || state.operation) && h('span', { role: error ? 'alert' : 'status', style: { color: error ? '#b42318' : '#315b43', maxWidth: 280, fontSize: 13 } },
           error || phaseLabel[state.operation.state] || state.operation.state));
     }
     function UpdateBadge({ subject }) { return ours(subject) ? h(OwnUpdateBadge) : null; }
     function OwnUpdateBadge() {
       const state = useUpdates();
-      return state.candidateVersion ? h('span', { style: { color: '#315bb5', background: '#edf2ff', borderRadius: 12, padding: '3px 10px', fontSize: 13 } }, '可更新') : null;
+      return state.eligible && state.candidateVersion ? h('span', { style: { color: '#315bb5', background: '#edf2ff', borderRadius: 12, padding: '3px 10px', fontSize: 13 } }, '可更新') : null;
     }
     const phaseLabel = { checking: '检查更新', removing: '切换旧版', installing: '安装新版', restoring: '恢复原版本', updated: '更新完成',
       failed: '更新失败', restored: '已恢复原版本', 'restart-required': '等待宿主重启', interrupted: '更新已中断' };
@@ -84,7 +84,8 @@ window.__ModuleLoader__.load({
         } catch (error) { setLocalError(error.message); } finally { setLocalWorking(false); }
       }
       React.useEffect(() => { void localAction(); }, [state.runningVersion]);
-      const error = state.connectionError || state.error || operation?.error;
+      const error = state.actionError || state.connectionError || state.error || operation?.error;
+      const target = state.eligible ? state.candidateVersion : null;
       return h('section', { 'aria-label': '行研工作台更新服务', style: { marginTop: 24, padding: 24, border: '1px solid #d9dedb', borderRadius: 12 } },
         h('h3', null, '行研工作台更新'),
         h('p', null, `宿主安装版本 ${state.installedVersion ?? '读取中'} · 工作台运行版本 ${state.runningVersion ?? '读取中'}`),
@@ -92,7 +93,7 @@ window.__ModuleLoader__.load({
         state.unavailableReason && h('p', { role: 'status' }, state.unavailableReason),
         operation && h('p', { role: 'status' }, `${phaseLabel[operation.state] ?? operation.state}${operation.version ? ` · ${operation.version}` : ''}`),
         error && h('div', { role: 'alert', style: { color: '#b42318' } }, error,
-          !state.busy && h('button', { style: { ...updateButtonStyle, marginLeft: 12 }, onClick: () => updateAction(state.candidateVersion ? 'install' : 'check', state.candidateVersion) }, '重试更新')),
+          !state.busy && h('button', { style: { ...updateButtonStyle, marginLeft: 12 }, onClick: () => updateAction(target ? 'install' : 'check', target) }, target ? '重试更新' : '重新检查')),
         h('details', { style: { marginTop: 16 } }, h('summary', null, '本地安装包更新'),
           h('p', null, '保留工作台内的自动下载与本地切换。安装包完整下载并校验后，可在离线时安装。'),
           local && h('p', null, local.packageReady ? `已缓存 ${local.candidateVersion}` : local.state === 'downloading' ? '正在下载安装包' : '尚无待安装的本地包'),
