@@ -4,33 +4,38 @@ window.__ModuleLoader__.load({
     const React = require('react'), h = React.createElement;
     let hostContext, lastTask = '';
     const updateListeners = new Set();
-    let updateState = {}, updateTimer, updateStopped = false, updateChecking = false;
+    let updateState = {}, updateTimer, updateStopped = false, updateChecking = false, updateEpoch = 0;
     const emitUpdate = value => { updateState = { ...updateState, ...value }; for (const listener of updateListeners) listener(); };
     const updateEndpoint = '/industry-research/official-update';
     async function readUpdate() {
+      const epoch = updateEpoch;
       const response = await fetch(updateEndpoint, { cache: 'no-store', credentials: 'same-origin' });
       if (!response.ok) throw new Error('更新服务正在重新连接');
-      const value = await response.json(); emitUpdate({ ...value, connectionError: '' }); return value;
+      const value = await response.json(); if (!updateStopped && epoch === updateEpoch) emitUpdate({ ...value, connectionError: '' }); return value;
     }
     async function updateAction(action, version) {
+      const epoch = updateEpoch;
       try {
         emitUpdate({ connectionError: '', submitting: true });
         const status = await readUpdate();
+        if (updateStopped || epoch !== updateEpoch) return;
         const response = await fetch(`${updateEndpoint}?action=${action}${version ? `&version=${encodeURIComponent(version)}` : ''}`, {
           method: 'POST', credentials: 'same-origin', headers: { 'X-DSH-Update-Token': status.actionToken },
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? '更新请求未完成');
-        emitUpdate(result);
-      } catch (error) { emitUpdate({ connectionError: error.message }); }
-      finally { emitUpdate({ submitting: false }); }
+        if (!updateStopped && epoch === updateEpoch) emitUpdate(result);
+      } catch (error) { if (!updateStopped && epoch === updateEpoch) emitUpdate({ connectionError: error.message }); }
+      finally { if (!updateStopped && epoch === updateEpoch) emitUpdate({ submitting: false }); }
     }
     function useUpdates() {
       const state = React.useSyncExternalStore(callback => { updateListeners.add(callback); return () => updateListeners.delete(callback); }, () => updateState);
       React.useEffect(() => {
         if (updateTimer || updateStopped) return;
+        const epoch = updateEpoch;
         const poll = async () => {
-          try { await readUpdate(); } catch (error) { emitUpdate({ connectionError: error.message }); }
+          try { await readUpdate(); } catch (error) { if (!updateStopped && epoch === updateEpoch) emitUpdate({ connectionError: error.message }); }
+          if (epoch !== updateEpoch) return;
           if (!updateStopped && updateListeners.size) updateTimer = setTimeout(poll, 1500); else updateTimer = null;
         };
         updateTimer = setTimeout(poll, 0);
@@ -223,7 +228,8 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'layout', 'sessions', 'uiSession'],
       apply(ctx) {
         hostContext = ctx;
-        ctx.effect?.(() => () => { updateStopped = true; clearTimeout(updateTimer); updateListeners.clear(); });
+        updateEpoch++; updateStopped = false; updateTimer = null; updateChecking = false; updateState = {};
+        ctx.effect?.(() => () => { updateEpoch++; updateStopped = true; clearTimeout(updateTimer); updateTimer = null; updateListeners.clear(); });
         for (const [name, component] of [['plugins.detail.actions', UpdateActions], ['plugins.detail.badge', UpdateBadge], ['plugins.detail.section', UpdateSection]]) {
           ctx.slots.inject(name, () => ctx.slots.register({ name, id: 'dsh-industry-research-update', order: 40 }, component));
         }

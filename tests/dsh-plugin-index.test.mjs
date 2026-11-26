@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { createDshPluginIndex } from '../scripts/write-dsh-plugin-index.mjs';
+import { publishIndex } from '../scripts/publish-dsh-plugin-index.mjs';
 
 const installer = 'a'.repeat(40);
 const source = 'b'.repeat(40);
@@ -46,4 +47,32 @@ test('a mismatched manifest, moved installer tag or unpinned commit cannot repla
     const candidate = fixture(invalid);
     assert.throws(() => createDshPluginIndex(candidate.release, candidate.manifest, ref), /same plugin version and commit/);
   }
+});
+
+test('index publication retries SHA conflicts and never overwrites a newer version', async () => {
+  const f = fixture(); f.release.assets[0].browser_download_url = 'https://example.invalid/manifest';
+  let reads = 0, writes = 0, currentVersion = '0.13.15';
+  const api = async (path, options) => {
+    if (path.startsWith('/releases/')) return f.release;
+    if (path.startsWith('/git/')) return f.ref;
+    if (!options) { reads++; return { sha: `sha-${reads}`, content: Buffer.from(JSON.stringify({ plugins: [{ name: 'dsh-industry-research', versions: [{ version: currentVersion }] }] })).toString('base64') }; }
+    writes++; assert.equal(options.body.sha, `sha-${reads}`); assert.equal(options.body.branch, 'main');
+    if (writes === 1) throw Object.assign(new Error('conflict'), { status: 409 });
+    return { commit: { sha: 'published' } };
+  };
+  const result = await publishIndex('0.13.16', async () => new Response(f.manifest), api);
+  assert.equal(result.changed, true); assert.equal(reads, 2); assert.equal(writes, 2);
+  currentVersion = '0.13.17';
+  assert.equal((await publishIndex('0.13.16', async () => new Response(f.manifest), api)).changed, false);
+  assert.equal(writes, 2);
+});
+
+test('unverified release never starts an index write', async () => {
+  const f = fixture(); f.release.immutable = false;
+  f.release.assets[0].browser_download_url = 'https://example.invalid/manifest';
+  await assert.rejects(publishIndex('0.13.16', async () => new Response(f.manifest), async path => {
+    if (path.startsWith('/releases/')) return f.release;
+    if (path.startsWith('/git/')) return f.ref;
+    assert.fail('Index must not be accessed for an invalid release');
+  }), /immutable/);
 });

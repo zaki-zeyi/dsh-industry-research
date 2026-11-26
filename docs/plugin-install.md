@@ -1,6 +1,6 @@
 # 安装与发布
 
-插件包名 `dsh-industry-research`，页签「行研工作台」。当前源码版本 0.13.18。
+插件包名 `dsh-industry-research`，页签「行研工作台」。当前源码版本 0.13.19。
 
 ## 用户安装
 
@@ -60,7 +60,7 @@ dsh plugin --profile <profile> add <tgz绝对路径>
 4. 把安装目录写成 release 分支的发布提交：父提交同时指向上一发布提交和产出该产物的源码提交，内容为源码目录叠加验证产物，使用普通 push 保留历史，不强制覆盖。
 5. 冷缓存安装显式带 #release 的公开 GitHub 链接，断言安装版本等于源码版本并运行安装包验收。
 6. 创建与源码提交绑定的版本标签和 GitHub Release，上传版本包、校验文件及来源清单。
-7. 确认正式 Release 已不可变后，用 `node scripts/write-dsh-plugin-index.mjs`（需要已登录的 `gh`）生成索引，提交 `dsh-plugin-index.json` 并合入 `main`。脚本校验发布清单摘要及安装标签指向的固定提交；失败时不会覆盖索引。DSH「发现」只会在索引合入后看到新版，不会直接追踪 `release` 分支。
+7. 正式 Release 发布后，CI 自动运行 `publish-dsh-plugin-index.mjs`，校验不可变发布并更新主分支的官方插件索引；遇到并发修改会重读并重试，不覆盖更高版本。需要手工补发时，用 `node scripts/write-dsh-plugin-index.mjs`（需要已登录的 `gh`）生成索引，提交 `dsh-plugin-index.json` 并合入 `main`。脚本校验发布清单摘要及安装标签指向的固定提交；失败时不会覆盖索引。DSH「发现」只会在索引合入后看到新版，不会直接追踪 `release` 分支。
 
 已有同名正式版本时停止，必须先增加版本号。CI 失败不能当作成功发布；release 分支已同步但 Release 创建失败时，检查日志，修复后补齐同一版本资产。仓库默认分支可以保持 main；安装与冷缓存验收均显式指定 #release，避免安装开发源码。
 
@@ -79,7 +79,7 @@ npm run plugin:pack
 npm run plugin:check-pack
 node scripts/release-acceptance.mjs
 node scripts/publish-git-plugin.mjs --output <新的临时目录>   # 不加 --push 时只在本地生成安装提交
-node scripts/git-install-acceptance.mjs --pnpm-cli <宿主pnpm入口> --expected-version 0.13.18
+node scripts/git-install-acceptance.mjs --pnpm-cli <宿主pnpm入口> --expected-version 0.13.19
 ```
 
 macOS CI 运行包安装及浏览器验收，不等同于真实 macOS 桌面应用点击验收。真实飞书授权、模型调研、音视频转写和机器人消息需要实际环境单独验收。
