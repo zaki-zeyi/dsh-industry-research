@@ -76,16 +76,19 @@ ctx.effect(()=>()=>{globalThis.fetch=original;});}`);
     '--no-open', '--port', String(port)], { env: { ...process.env, DSH_HOME: temp }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { log = (log + chunk).slice(-10000); });
   const host = `http://127.0.0.1:${port}`, pid = child.pid;
-  const status = () => fetch(host + '/industry-research/status').then(r => r.json());
+  const status = () => fetch(host + '/industry-research/status', { headers: { Connection: 'close' } }).then(r => r.json());
   const initial = await until(status, s => s.state === 'ready' && s.version === base, 'base ready');
   const url = initial.url;
-  const snapshot = () => fetch(url + '/api/plugin-update').then(r => r.json());
+  const snapshot = () => fetch(url + '/api/plugin-update', { headers: { Connection: 'close' } }).then(r => r.json());
   async function update(expected, result) {
     // Packaging blocks this test process long enough for pooled HTTP sockets to
     // expire. Reconnect read-only probes before judging the next activation.
     const token = (await until(snapshot, s => Boolean(s.actionToken), 'update controller ready')).actionToken;
-    const act = action => fetch(url + '/api/plugin-update', { method: 'POST', headers: { 'Content-Type': 'application/json',
-      'X-DSH-Update-Token': token }, body: JSON.stringify({ action }) });
+    const act = async action => {
+      const response = await fetch(url + '/api/plugin-update', { method: 'POST', headers: { 'Content-Type': 'application/json',
+        Connection: 'close', 'X-DSH-Update-Token': token }, body: JSON.stringify({ action }) });
+      const value = await response.json(); assert.equal(response.ok, true, JSON.stringify(value)); return value;
+    };
     await act('check');
     await until(snapshot, s => s.packageReady, 'download ready');
     assert.equal((await snapshot()).liveActivation, true);
