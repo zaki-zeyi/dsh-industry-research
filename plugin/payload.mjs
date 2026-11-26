@@ -23,7 +23,7 @@ export async function connectRuntime(config = {}, host) {
     }
   }
   const env = { ...process.env, RESEARCH_MODE: host && config.mode !== 'demo' ? 'native' : config.mode ?? 'codex', CODEX_MODEL: config.model ?? process.env.CODEX_MODEL, CODEX_COMMAND: config.command ?? process.env.CODEX_COMMAND };
-  const runtime = await startRuntime({ env, port, dataDir, host });
+  const runtime = await startRuntime({ env, port, dataDir, host, deferActivation: Boolean(config.activationGate) });
   return { ...runtime, owned: true };
 }
 export function apply(ctx, config = {}) {
@@ -63,7 +63,7 @@ export function apply(ctx, config = {}) {
     };
     updates.start();
   });
-  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: '/industry-research/status', handler(req, res) {
+  if (!config.managedStatus) ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: '/industry-research/status', handler(req, res) {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
     res.end(JSON.stringify(config.activationGate && !config.activationGate.approved ?

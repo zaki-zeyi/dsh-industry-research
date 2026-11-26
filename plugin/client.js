@@ -4,7 +4,7 @@ window.__ModuleLoader__.load({
     const React = require('react'), h = React.createElement;
     let hostContext, lastTask = '';
     function Panel({ SessionProvider, renderSlot }) {
-      const frame = React.useRef(null), reference = React.useRef(null), revision = React.useRef(0), frameSource = React.useRef(null), pending = React.useRef(null);
+      const frame = React.useRef(null), reference = React.useRef(null), revision = React.useRef(0), frameSource = React.useRef(null), pending = React.useRef(null), resumeSettings = React.useRef(false);
       const [status, setStatus] = React.useState({ state: 'starting' }), [conversation, setConversation] = React.useState(null), [startupAttempt, setStartupAttempt] = React.useState(0);
       const disposeLease = lease => { if (lease && !lease.released) { lease.released = true; lease.value?.release(); } };
       const release = () => { disposeLease(reference.current); reference.current = null; };
@@ -15,7 +15,7 @@ window.__ModuleLoader__.load({
       };
       React.useEffect(() => {
         let stopped = false, timer, controller, requestTimer;
-        const deadline = Date.now() + 20000;
+        let deadline = Date.now() + 20000, wasReady = false;
         setStatus({ state: 'starting' });
         async function poll() {
           controller = new AbortController();
@@ -31,9 +31,12 @@ window.__ModuleLoader__.load({
               new Promise((_, reject) => { requestTimer = setTimeout(() => { controller.abort(); reject(new Error('连接宿主超时，请重试；若其他宿主功能也未加载，请刷新页面或使用启动时生成的完整链接重新打开')); }, Math.min(8000, Math.max(1, deadline - Date.now()))); }),
             ]);
             if (stopped) return;
-            if (!next || !['ready', 'starting', 'error'].includes(next.state)) throw new Error('宿主返回的启动状态无效，请重试');
-            if (next.state === 'starting' && Date.now() >= deadline) throw new Error('调研服务启动超时，请检查宿主服务后重试');
-            setStatus(next); if (next.state === 'starting') timer = setTimeout(poll, 500);
+            if (!next || !['ready', 'starting', 'switching', 'error'].includes(next.state)) throw new Error('宿主返回的启动状态无效，请重试');
+            if (next.state === 'switching' && wasReady) { deadline = Date.now() + 60000; wasReady = false; }
+            if (['starting', 'switching'].includes(next.state) && Date.now() >= deadline) throw new Error('调研服务启动超时，请检查宿主服务后重试');
+            if (next.state === 'ready') { deadline = Date.now() + 20000; wasReady = true; }
+            setStatus(current => { if (next.state === 'ready' && (next.url !== current.url || next.version !== current.version)) frameSource.current = null; return next; });
+            if (next.state !== 'error') timer = setTimeout(poll, next.state === 'ready' ? 2000 : 500);
           } catch (error) { if (!stopped) setStatus({ state: 'error', message: error.message }); }
           finally { clearTimeout(requestTimer); }
         }
@@ -46,6 +49,7 @@ window.__ModuleLoader__.load({
         const receive = async event => {
           if (event.origin !== status.url || event.source !== frame.current?.contentWindow) return;
           const message = event.data;
+          if (message?.type === 'industry-research:update-started') { resumeSettings.current = true; return; }
           if (['industry-research:pick-file','industry-research:cancel-file-picker'].includes(message?.type)) {
             if (typeof message.requestId !== 'string' || !/^[a-f0-9-]{36}$/.test(message.requestId)) return;
             if (message.type === 'industry-research:cancel-file-picker') { filePickers.get(message.requestId)?.({cancelled:true}); return; }
@@ -99,14 +103,14 @@ window.__ModuleLoader__.load({
         }, 2000);
         return () => { disposed = true; clearInterval(timer); };
       }, [conversation?.taskId]);
-      if (status.state !== 'ready') return h('div', { style: { padding: 32 }, role: status.state === 'error' ? 'alert' : 'status' }, h('p', null, status.state === 'error' ? `调研服务连接失败：${status.message}` : '正在启动行研工作台…'), status.state === 'error' && h('button', { onClick: () => { frameSource.current = null; setStartupAttempt(value => value + 1); } }, '重新连接工作台'));
+      if (status.state !== 'ready') return h('div', { style: { padding: 32 }, role: status.state === 'error' ? 'alert' : 'status' }, h('p', null, status.state === 'error' ? `调研服务连接失败：${status.message}` : status.state === 'switching' ? '正在应用工作台新版…' : '正在启动行研工作台…'), status.state === 'error' && h('button', { onClick: () => { frameSource.current = null; setStartupAttempt(value => value + 1); } }, '重新连接工作台'));
       if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(status.url)) return h('div', null, '调研服务地址无效');
-      if (!frameSource.current) frameSource.current = `${status.url}/?embed=dsh&hostOrigin=${encodeURIComponent(window.location.protocol === 'dsh-app:' ? 'dsh-app://app' : window.location.origin)}${lastTask ? `#${lastTask}` : ''}`;
+      if (!frameSource.current) frameSource.current = `${status.url}/?embed=dsh&hostOrigin=${encodeURIComponent(window.location.protocol === 'dsh-app:' ? 'dsh-app://app' : window.location.origin)}${resumeSettings.current ? '&view=settings' : ''}${lastTask ? `#${lastTask}` : ''}`;
       const button = (label, onClick, selected, disabled = false) => h('button', { onClick, disabled, 'aria-current': selected ? 'page' : undefined }, label);
       const stateLabel = conversation?.publicationStatus === 'awaiting_authorization' ? '待飞书授权' : conversation?.publicationStatus === 'published' ? '已保存飞书' : conversation?.publicationStatus === 'publishing' ? '正在保存飞书' : conversation?.publicationStatus === 'failed' ? '飞书保存待处理' : conversation?.reportReady ? '报告已生成' : conversation?.status === 'failed' ? '调研失败' : conversation?.status === 'interrupted' ? '已中断' : '调研中';
       const created = conversation?.createdAt ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai', hour12: false }).format(new Date(conversation.createdAt)) : '';
       return h('div', { style: { display: 'flex', flexDirection: 'column', width: '100%', height: '100%', minHeight: 0, overflow: 'hidden' } },
-        h('iframe', { title: '行研工作台', ref: frame, src: frameSource.current, style: { width: '100%', height: '100%', minHeight: 400, border: 0, display: conversation ? 'none' : 'block', flex: 1 }, allow: 'clipboard-write' }),
+        h('iframe', { key: status.version, title: '行研工作台', ref: frame, src: frameSource.current, style: { width: '100%', height: '100%', minHeight: 400, border: 0, display: conversation ? 'none' : 'block', flex: 1 }, allow: 'clipboard-write' }),
         conversation && h('section', { className: 'rw-workspace', 'aria-label': '行研工作台原生对话', style: { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'auto' } },
           h('header', { className: 'rw-topbar' }, h('div', { className: 'rw-breadcrumb' }, '工作空间', h('span', null, '/'), h('strong', null, '行研工作台'), h('span', null, '/'), h('span', null, '调研详情')), h('span', { className: 'rw-host-label' }, 'DSH 原生会话')),
           h('div', { className: 'rw-detail', style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },

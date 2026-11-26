@@ -52,6 +52,7 @@ export class ResearchService {
     if (!task.feishuRoot.folderUrl) this.store.saveSetting(folderCacheKey(task.feishuRoot), { folderToken: delivery.folderToken });
   }
   async createAuthorized(input, key, metadata = {}) {
+    if (this.updating) throw new ServiceError(503, '工作台正在切换版本，请稍后重试');
     const bound = this.cloudOnly ? await this.binding.requireBound() : null;
     const task = this.create(input, key, creationPermit, metadata);
     if ((task.briefing || task.internal || task.topic?.window) && !task.notificationRecipient && bound?.openId) {
@@ -62,6 +63,7 @@ export class ResearchService {
     return task;
   }
   create(input, key, permit, metadata = {}) {
+    if (this.updating) throw new ServiceError(503, '工作台正在切换版本，请稍后重试');
     if (this.cloudOnly && permit !== creationPermit) throw new ServiceError(428, '请先绑定飞书再启动调研');
     const data = createSchema.parse(input); const serialized = JSON.stringify(data);
     assertTopicAvailable(this,data.topic);
@@ -81,7 +83,7 @@ export class ResearchService {
   }
   enqueue(id, stage) { if (this.closed) return; if(this.active.has(id)||this.queue.some(j=>j.id===id))return; this.queue.push({ id, stage }); queueMicrotask(() => this.drain()); }
   drain() {
-    if(this.closed)return;
+    if(this.closed || this.updating)return;
     while(this.queue.length){
       const {id,stage}=this.queue.shift();if(this.active.has(id))continue;
       const controller=new AbortController();this.active.set(id,{controller,promise:null});

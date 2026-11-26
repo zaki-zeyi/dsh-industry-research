@@ -237,7 +237,7 @@ export class QueuedSaves {
   }
 
   pump() {
-    if (this.closed) return;
+    if (this.closed || this.service.updating) return;
     const byTask = new Map();
     const reserved = new Set([...this.running.values()].flatMap(run => this.keys(run.job)));
     for (const job of this.store.saveJobs()) {

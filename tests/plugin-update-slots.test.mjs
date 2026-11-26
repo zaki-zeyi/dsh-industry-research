@@ -39,7 +39,7 @@ function fixture(t, initial = {}) {
   const updates = new PluginUpdates(service, () => { throw new Error('DSH manager must not be used'); }, version,
     { request, cacheDir, slotUpdater, now: () => Date.parse('2026-11-24T00:00:00Z') });
   t.after(() => updates.close());
-  return { updates, requests, settings, scheduled, slotUpdater };
+  return { updates, requests, settings, scheduled, slotUpdater, service };
 }
 
 test('自动更新只下载新版包并安排槽位切换，不调用 DSH 安装器', async t => {
@@ -82,4 +82,22 @@ test('已确认的新版在后续启动失败，回退后同样隔离坏版本',
   assert.equal(f.settings.get('plugin-update').failedVersion, next);
   await f.updates.check();
   assert.equal(f.updates.snapshot().candidateVersion, null);
+});
+
+test('手动安装遇忙后持久化意图，即使自动更新关闭也在空闲后继续', async t => {
+  const f = fixture(t);
+  await f.updates.check(); await f.updates.download();
+  let count = 0;
+  f.slotUpdater.activate = async () => {
+    count++;
+    if (count === 1) throw Object.assign(new Error('busy'), { code: 'WORKBENCH_BUSY' });
+  };
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await f.updates.install();
+  assert.equal(f.updates.snapshot().state, 'waiting-idle');
+  assert.equal(f.settings.get('plugin-update').installRequested.version, next);
+  t.mock.timers.tick(5000);
+  t.mock.timers.reset();
+  for (let attempt = 0; attempt < 100 && count < 2; attempt++) await new Promise(done => setTimeout(done, 10));
+  assert.equal(count, 2);
 });

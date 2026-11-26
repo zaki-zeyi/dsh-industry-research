@@ -87,3 +87,35 @@ test('已完成更新后的版本检查异常只出现在版本信息', async ({
   await expect(page.getByLabel('更新进度').getByRole('alert')).toHaveCount(0);
   await expect(page.getByRole('progressbar', { name: '更新总进度' })).toHaveAttribute('aria-valuenow', '100');
 });
+
+test('热更新后重载工作台资源并回到设置，运行版本与启动层版本分别展示', async ({ page }) => {
+  let installed = false, installing = false;
+  await page.route('**/api/plugin-update', async route => {
+    if (route.request().method() === 'POST' && route.request().postDataJSON().action === 'install') {
+      installing = true; setTimeout(() => { installed = true; }, 500);
+    }
+    await route.fulfill({ json: { installedVersion: installed ? '0.13.16' : '0.13.15', bootstrapVersion: '0.13.15',
+      liveActivation: true, state: installed ? 'idle' : installing ? 'installing' : 'available',
+      candidateVersion: installed ? null : '0.13.16', lastResult: installed ? 'updated' : null,
+      eligible: true, supported: true, packageReady: true, actionToken: 'test-token' } });
+  });
+  await page.goto('/?view=settings');
+  await expect(page.getByLabel('版本信息')).toContainText('0.13.15');
+  await page.getByRole('button', { name: '安装已校验版本' }).click();
+  await expect(page.getByLabel('版本信息')).toContainText('0.13.16');
+  await expect(page.getByLabel('版本信息')).toContainText('启动层版本：0.13.15');
+  await expect(page.getByRole('tab', { name: '版本与更新' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText(/重启 DSH/)).toHaveCount(0);
+});
+
+test('停留在公司资料页时也检测运行版本变化并重新加载资源', async ({ page }) => {
+  let version = '0.13.15';
+  await page.route('**/api/plugin-update', route => route.fulfill({ json: { installedVersion: version } }));
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: '全量信息库', exact: true })).toBeVisible();
+  const loaded = page.waitForEvent('load');
+  version = '0.13.16';
+  await loaded;
+  await expect(page).toHaveURL(/view=library/);
+  await expect(page.getByRole('heading', { name: '全量信息库', exact: true })).toBeVisible();
+});

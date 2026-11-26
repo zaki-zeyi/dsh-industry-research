@@ -28,7 +28,7 @@ import { recordTrace, recordRuntimeStart, recordRuntimeStop } from './connection
 import { fileURLToPath } from 'node:url';
 const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 export function dataIdentity(path) { return createHash('sha256').update(resolve(path)).digest('hex'); }
-export async function startRuntime({ env = process.env, port = Number(env.PORT ?? 3088), dataDir = resolve(env.DATA_DIR ?? './data'), dist = fileURLToPath(new URL('../dist', import.meta.url)), host, binding, directories, libraryRun, libraryImportRun, analysisRun, publicationRun, queuedDocuments } = {}) {
+export async function startRuntime({ env = process.env, port = Number(env.PORT ?? 3088), dataDir = resolve(env.DATA_DIR ?? './data'), dist = fileURLToPath(new URL('../dist', import.meta.url)), host, binding, directories, libraryRun, libraryImportRun, analysisRun, publicationRun, queuedDocuments, deferActivation = false } = {}) {
   dataDir = resolve(dataDir);
   mkdirSync(dataDir, { recursive: true });
   const lock = resolve(dataDir, '.runtime.lock');
@@ -41,7 +41,20 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
   }
   writeFileSync(fd, String(process.pid)); closeSync(fd);
   const server = createServer();
-  let store, terminals, service, terminalSockets, nativeSessions;
+  let store, terminals, service, terminalSockets, nativeSessions, activated = false;
+  async function activate() {
+    if (activated) return;
+    if (nativeSessions) await nativeSessions.reconcileWorkspace();
+    service.activationPending = false;
+    service.updating = false;
+    if (nativeSessions) nativeSessions.paused = false;
+    activated = true;
+    service.recover();
+    service.cloudWrites.start();
+    service.queuedSaves?.start();
+    void service.topicSchedules.catchUpMissed().catch(() => {});
+    void service.briefingSchedules.catchUpMissed().catch(() => {});
+  }
   const release = () => { try { unlinkSync(lock); } catch {} };
   try {
     await new Promise((done, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', done); });
@@ -51,10 +64,12 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     recordRuntimeStart(store);
     const aiSettings = new AISettings(dataDir);
     terminals = new TerminalManager(store, { aiSettings, dshCommand: env.DSH_COMMAND, command: env.CODEX_COMMAND, workRoot: env.CODEX_WORK_ROOT ?? resolve(dataDir, 'codex'), model: env.CODEX_MODEL });
-    if (mode === 'native') { if (!host?.sessionController || !host?.permissionPresets) throw new Error('原生会话模式需要在宿主 DSH 插件中运行'); nativeSessions = new NativeSessions(store, host, { workRoot: resolve(dataDir, 'sessions') }); }
+    if (mode === 'native') { if (!host?.sessionController || !host?.permissionPresets) throw new Error('原生会话模式需要在宿主 DSH 插件中运行'); nativeSessions = new NativeSessions(store, host, { workRoot: resolve(dataDir, 'sessions'), paused: deferActivation }); }
     const researcher = mode === 'native' ? new NativeResearcher(nativeSessions, { legacy: new CodexTerminalResearcher(terminals) }) : mode === 'codex' ? new CodexTerminalResearcher(terminals, { timeoutMs: Number(env.CODEX_TIMEOUT_MS ?? 600000) }) : mode === 'demo' ? new DemoResearcher() : new HarnessResearcher({ command: env.HARNESS_COMMAND, args: env.HARNESS_ARGS ? JSON.parse(env.HARNESS_ARGS) : undefined, home: env.HARNESS_HOME, provider: env.HARNESS_PROVIDER, model: env.HARNESS_MODEL, timeoutMs: Number(env.HARNESS_TIMEOUT_MS ?? 600000) });
     const publisher = mode === 'demo' ? new DemoPublisher(store) : new AgentPublisher(store, terminals);
     service = new ResearchService(store, researcher, publisher, { mode });
+    service.activationPending = deferActivation;
+    service.updating = deferActivation;
     service.cloudOnly = mode === 'native'; service.binding = binding ?? new FeishuBinding({ command: env.LARK_CLI_COMMAND, store });
     terminals.config.larkCommand = service.binding.command;
     if (nativeSessions) nativeSessions.larkCommand = service.binding.command;
@@ -76,13 +91,8 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     service.internalNotifications = new InternalMaterialNotifications(service);
     service.internalReconciliation = new InternalReconciliation(service);
     service.documentDeletions = new DocumentDeletions(service,{publicationRun});
-    if (nativeSessions) await nativeSessions.reconcileWorkspace();
     recordTrace(store,'runtime.started',{status:'ready',phase:service.mode});
-    service.recover();
-    service.cloudWrites.start();
-    service.queuedSaves?.start();
-    void service.topicSchedules.catchUpMissed().catch(() => {});
-    if (service.briefingSchedules) void service.briefingSchedules.catchUpMissed().catch(() => {});
+    if (!deferActivation) await activate();
 
     server.on('request', createApp(service, { dist, libraryRun, libraryImportRun, analysisRun, publicationRun, health: { application: 'industry-research', version, dataIdentity: dataIdentity(dataDir), transport: researcher.transport ?? 'json' } }));
     terminalSockets = attachTerminalWebSocket(server, terminals);
@@ -91,7 +101,7 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     server.close(); await service?.close(); service?.binding?.close(); await terminals?.close(); nativeSessions?.close(); store?.close(); release(); throw error;
   }
   let closing;
-  return { server, service, dataDir, url: `http://127.0.0.1:${server.address().port}`, close() {
-    return closing ??= (async () => { terminalSockets.close(); server.close(); server.closeAllConnections(); await service.close(); service.binding?.close(); await terminals.close(); nativeSessions?.close(); recordRuntimeStop(store); store.close(); release(); })();
+  return { server, service, dataDir, activate, url: `http://127.0.0.1:${server.address().port}`, close() {
+    return closing ??= (async () => { terminalSockets.close(); const stopped = new Promise((done, reject) => server.close(error => error ? reject(error) : done())); server.closeAllConnections(); await stopped; await service.close(); service.binding?.close(); await terminals.close(); nativeSessions?.close(); recordRuntimeStop(store); store.close(); release(); })();
   } };
 }

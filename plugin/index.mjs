@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { UpdateSlots } from './update-slots.mjs';
+import { pauseForUpdate } from './update-busy.mjs';
 import * as basePayload from './payload.mjs';
 
 export const name = 'dsh-industry-research';
@@ -14,7 +15,14 @@ export function apply(ctx, config = {}) {
   if (typeof ctx.plugin !== 'function') return basePayload.apply(ctx, config);
   const dataDir = resolve(config.dataDir ?? resolve(process.env.DSH_HOME ?? resolve(homedir(), '.dsh'), 'industry-research'));
   const slots = new UpdateSlots(dataDir, baseVersion);
-  let current;
+  let status = { state: 'starting', version: baseVersion }, port = config.port ?? 0;
+  slots.onSwitch = slot => { status = { state: 'switching', version: slot.version }; };
+  slots.onFailure = error => { status = { state: 'error', message: error.message }; };
+  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: '/industry-research/status', handler(_req, res) {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(JSON.stringify({ ...status, bootstrapVersion: baseVersion }));
+  } }));
   const mounted = slots.boot(async slot => {
     const entry = slots.pathFor(slot);
     const payload = slot.kind === 'base' ? basePayload : await import(pathToFileURL(entry).href);
@@ -24,7 +32,7 @@ export function apply(ctx, config = {}) {
       fiber = await ctx.plugin({
         name: `dsh-industry-research-payload-${slot.version}`,
         inject: payload.inject,
-        apply: child => payload.apply(child, { ...config, slotUpdater: slots, activationGate,
+        apply: child => payload.apply(child, { ...config, port, slotUpdater: slots, activationGate, managedStatus: true,
           onRuntime: value => { runtime = value; } }),
       });
       if (!runtime?.service) throw new Error('更新槽位未启动工作台服务');
@@ -34,13 +42,21 @@ export function apply(ctx, config = {}) {
         health.dataIdentity !== (await import('../server/runtime.mjs')).dataIdentity(dataDir)) {
         throw new Error(`更新槽位健康检查失败：${slot.version}`);
       }
-      activationGate.approved = true;
-      return fiber;
+      port = Number(new URL(runtime.url).port);
+      return {
+        quiesce: () => pauseForUpdate(runtime.service),
+        dispose: async () => { await fiber.dispose(); },
+        confirm: async () => {
+          activationGate.approved = true;
+          await runtime.activate?.();
+          status = { state: 'ready', url: runtime.url, version: slot.version, owned: runtime.owned };
+        },
+      };
     } catch (error) {
       await Promise.resolve(fiber?.dispose?.()).catch(() => {});
       throw error;
     }
-  }).then(fiber => { current = fiber; return fiber; });
-  ctx.effect(() => async () => { await mounted.catch(() => {}); await current?.dispose(); });
+  }).catch(error => { status = { state: 'error', message: error.message }; throw error; });
+  ctx.effect(() => async () => { await slots.close(); });
   return mounted;
 }
