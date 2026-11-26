@@ -131,8 +131,17 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     const local = service.topicDigest?.latest(scope);
     const cloud = service.topicDigest ? service.topicDigest.remoteVisible(scope, remote.digest) : remote.digest;
     const digest = !cloud || (local?.date ?? '') >= cloud.date ? local ?? null : cloud;
-    res.json({...remote,items,digest});
+    const digestGeneration = service.topicDigest?.manualStatus(scope) ?? null;
+    res.json({...remote,items,digest,digestGeneration});
   }catch(e){next(e);}});
+  app.post('/api/topics/digest', async (req, res, next) => {
+    try {
+      const {scope} = z.object({scope:z.string().min(1).max(4000)}).strict().parse(req.body);
+      if (!service.topicDigest) throw new ServiceError(409, '请在宿主 DSH 中生成专题日报汇总');
+      const result = await service.topicDigest.generate(scope);
+      res.status(result.status === 'sent' ? 200 : 202).json(result);
+    } catch (error) { next(error); }
+  });
   app.post('/api/topics',async(req,res,next)=>{try{
     const key=req.headers['idempotency-key'];if(key)z.string().min(1).max(100).parse(key);
     const input=topicInput.parse(req.body),prior=key&&service.store.request(key);

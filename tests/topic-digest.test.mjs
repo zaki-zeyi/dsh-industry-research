@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createApp } from '../server/app.mjs';
 import { Store } from '../server/store.mjs';
 import { TopicDigest } from '../server/topic-digest.mjs';
 import { TopicSchedules } from '../server/topic-schedules.mjs';
@@ -113,6 +114,82 @@ test('PRD 6004 waits for later slots and failed reports, then writes all summari
   await f.worker().tick();
   assert.equal(f.control.notices.length, 1);
   assert.equal(f.control.creates.length, 1);
+});
+
+test('PRD 6023 HTTP manual generation waits for all reports and shares one document and notification with automation', async t => {
+  const f = fixture(t);
+  const worker = f.service.topicDigest;
+  const server = createApp(f.service).listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  const url = `http://127.0.0.1:${server.address().port}/api/topics`;
+  const generate = (scope = f.scope) => fetch(url + '/digest', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({scope}),
+  });
+  const read = async () => (await fetch(url)).json();
+  let releaseRead;
+  const gate = new Promise(resolve => { releaseRead = resolve; });
+  try {
+    assert.equal((await generate('old-scope')).status, 409);
+    const first = await f.trigger(0);
+    f.record(first, 'First', '## 摘要\n第一份已完成。');
+    const second = await f.trigger(1);
+    f.record(second, 'Second', '## 摘要\n第二份已完成。', 'failed');
+    const waiting = await generate();
+    assert.equal(waiting.status, 409);
+    assert.match((await waiting.json()).error, /尚未全部生成/);
+    assert.equal((await read()).digestGeneration, null);
+    assert.equal(f.control.creates.length, 0);
+    assert.equal(f.control.notices.length, 0);
+
+    f.record(second, 'Second', '## 摘要\n第二份已完成。');
+    f.control.onSourceRead = () => gate;
+    for (const response of await Promise.all([generate(), generate()])) {
+      assert.equal(response.status, 202);
+      assert.deepEqual(await response.json(), { date:DATE, status:'queued' });
+    }
+    const active = worker.active;
+    assert.equal(worker.tick(), active); // no second writer from automation
+    assert.deepEqual((await read()).digestGeneration, { date:DATE, status:'queued' });
+    releaseRead();
+    await active;
+    const ready = await read();
+    assert.deepEqual(ready.digest, { date:DATE, url:digestUrl });
+    assert.deepEqual(ready.digestGeneration, { date:DATE, status:'sent' });
+    assert.equal(f.control.creates.length, 1);
+    assert.equal(f.control.notices.length, 1);
+    assert.ok(f.control.notices[0].includes(APP.ownerOpenId));
+
+    const repeat = await generate();
+    assert.equal(repeat.status, 200);
+    assert.deepEqual(await repeat.json(), { date:DATE, status:'sent' });
+    assert.equal(f.control.creates.length, 1);
+    assert.equal(f.control.notices.length, 1);
+  } finally {
+    releaseRead();
+    await worker.close();
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('manual generation retries an unconfirmed notice without creating a new digest', async t => {
+  const f = fixture(t);
+  f.record(await f.trigger(0), 'First', '## 摘要\n第一份。');
+  f.record(await f.trigger(1), 'Second', '## 摘要\n第二份。');
+  f.control.loseNotificationReply = true;
+  const worker = f.service.topicDigest;
+  await worker.generate(f.scope);
+  await worker.active;
+  assert.deepEqual(worker.manualStatus(f.scope), { date:DATE, status:'retrying' });
+  assert.deepEqual(worker.latest(), { date:DATE, url:digestUrl });
+  f.control.loseNotificationReply = false;
+  await worker.generate(f.scope);
+  await worker.active;
+  assert.deepEqual(worker.manualStatus(f.scope), { date:DATE, status:'sent' });
+  assert.equal(f.control.creates.length, 1);
+  assert.deepEqual(f.control.notices[0], f.control.notices[1]);
+  f.control.now = slot('00:00', '2026-11-27');
+  assert.equal(worker.manualStatus(f.scope), null);
 });
 
 test('uncertain create and message recover across workers without another document or another notification key', async t => {
