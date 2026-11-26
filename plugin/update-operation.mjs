@@ -1,17 +1,56 @@
 import { resolve } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, linkSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 
-// A full DSH update unloads this package. The operation must outlive its Cordis
-// context and be visible to the replacement package in the same Host process.
-const key = Symbol.for('dsh-industry-research.update-operations.v1');
-const operations = globalThis[key] ??= new Map();
+// HMR can give the replacement module a different global object. The on-disk
+// lease is authoritative; this map only retains the owner's mutable record.
+const operations = new Map();
 const identity = directory => process.platform === 'win32' ? resolve(directory).toLowerCase() : resolve(directory);
+const read = file => { try { return JSON.parse(readFileSync(file, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
+const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; } };
+function atomicWrite(file, value) {
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  writeFileSync(temporary, JSON.stringify(value));
+  try { renameSync(temporary, file); } finally { try { unlinkSync(temporary); } catch {} }
+}
 
-export function activeUpdate(directory) { return directory ? operations.get(identity(directory)) : undefined; }
+export function activeUpdate(directory) {
+  if (!directory) return undefined;
+  const id = identity(directory), file = resolve(id, 'operation-lock.json');
+  const lease = read(file);
+  if (!lease) return undefined;
+  if (!Number.isInteger(lease.pid) || lease.pid <= 0 || !lease.id) throw new Error('更新互斥记录无效');
+  if (!alive(lease.pid)) { unlinkSync(file); return undefined; }
+  const local = operations.get(id);
+  return local?.id === lease.id ? local : lease;
+}
 
 export function claimUpdate(directory, kind) {
-  const id = identity(directory);
-  if (operations.has(id)) throw Object.assign(new Error('另一个更新正在执行，请完成后重试'), { code: 'UPDATE_BUSY' });
-  const operation = { kind, startedAt: new Date().toISOString() };
-  operations.set(id, operation);
-  return { operation, release() { if (operations.get(id) === operation) operations.delete(id); } };
+  const directoryId = identity(directory);
+  if (activeUpdate(directoryId)) throw Object.assign(new Error('另一个更新正在执行，请完成后重试'), { code: 'UPDATE_BUSY' });
+  mkdirSync(directoryId, { recursive: true });
+  const operation = { id: randomUUID(), pid: process.pid, kind, startedAt: new Date().toISOString() };
+  const file = resolve(directoryId, 'operation-lock.json'), temporary = `${file}.${operation.id}.tmp`;
+  writeFileSync(temporary, JSON.stringify(operation));
+  try { linkSync(temporary, file); }
+  catch (error) { if (error.code === 'EEXIST') throw Object.assign(new Error('另一个更新正在执行，请完成后重试'), { code: 'UPDATE_BUSY' }); throw error; }
+  finally { unlinkSync(temporary); }
+  operations.set(directoryId, operation);
+  return { operation, release() {
+    if (read(file)?.id === operation.id) unlinkSync(file);
+    if (operations.get(directoryId) === operation) operations.delete(directoryId);
+  } };
+}
+
+export function confirmUpdateRuntime(directory, version) {
+  let record;
+  try { record = read(resolve(directory, 'official-update.json')); } catch { return; }
+  if (!record?.id || record.version !== version || !['checking', 'installing', 'removing'].includes(record.state)) return;
+  atomicWrite(resolve(directory, 'official-ready.json'), { id: record.id, version, pid: process.pid, at: new Date().toISOString() });
+}
+
+export function confirmedUpdateRuntime(directory, record) {
+  let ready;
+  try { ready = read(resolve(directory, 'official-ready.json')); } catch { return false; }
+  return Boolean(ready && ready.id === record.id && ready.version === record.version && ready.pid === process.pid && ready.at >= record.startedAt);
 }

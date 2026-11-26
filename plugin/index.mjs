@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { UpdateSlots } from './update-slots.mjs';
 import { pauseForUpdate } from './update-busy.mjs';
 import * as basePayload from './payload.mjs';
-import { activeUpdate } from './update-operation.mjs';
+import { confirmUpdateRuntime } from './update-operation.mjs';
 
 export const name = 'dsh-industry-research';
 export const inject = basePayload.inject;
@@ -50,8 +50,7 @@ export function apply(ctx, config = {}) {
         confirm: async () => {
           activationGate.approved = true;
           await runtime.activate?.();
-          const operation = activeUpdate(resolve(dataDir, 'updates'));
-          if (operation?.kind === 'official') operation.runningVersion = slot.version;
+          confirmUpdateRuntime(resolve(dataDir, 'updates'), slot.version);
           status = { state: 'ready', url: runtime.url, version: slot.version, owned: runtime.owned };
         },
       };

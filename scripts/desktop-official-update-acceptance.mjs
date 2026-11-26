@@ -34,7 +34,12 @@ try {
   const companiesBefore = await companies(status.url), beforeProcesses = processes();
   assert.equal(beforeProcesses.length, 2, 'One desktop shell and one Host');
   async function details() {
+    if (await page.getByLabel('行研工作台官方 Git 更新').isVisible()) return;
     await page.getByRole('button', { name: '插件', exact: true }).first().click();
+    if (!await page.getByRole('button', { name: '查看 dsh-industry-research', exact: true }).count() &&
+      await page.getByRole('button', { name: '插件', exact: true }).count() > 1) {
+      await page.getByRole('button', { name: '插件', exact: true }).last().click();
+    }
     await page.getByRole('button', { name: '查看 dsh-industry-research', exact: true }).click();
     await expect(page.getByLabel('行研工作台官方 Git 更新')).toBeVisible({ timeout: 30000 });
   }
