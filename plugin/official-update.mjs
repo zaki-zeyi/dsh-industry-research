@@ -1,25 +1,27 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { activeUpdate, claimUpdate } from './update-operation.mjs';
+import { activeUpdate, claimUpdate, confirmedUpdateRuntime } from './update-operation.mjs';
 import { pauseForUpdate } from './update-busy.mjs';
 import { newerVersion, packageName, readVerifiedRelease, repository, trustedGitSource } from './update-release.mjs';
 
 const terminal = new Set(['updated', 'failed', 'restored', 'restart-required', 'interrupted']);
 
 export class OfficialGitUpdates {
-  constructor(service, manager, version, { cacheDir, request = fetch } = {}) {
+  constructor(service, manager, version, { cacheDir, request = fetch, confirmationTimeout = 15_000 } = {}) {
     this.service = service; this.manager = manager; this.version = version;
     this.cacheDir = cacheDir; this.request = request;
+    this.confirmationTimeout = confirmationTimeout;
     this.file = resolve(cacheDir, 'official-update.json');
     this.candidate = null; this.error = ''; this.checkedAt = null;
   }
 
   record() {
     const live = activeUpdate(this.cacheDir);
-    if (live?.kind === 'official') return live.record;
+    if (live?.kind === 'official' && live.record) return live.record;
     try {
       const record = JSON.parse(readFileSync(this.file, 'utf8'));
+      if (live?.kind === 'official' && live.id === record.id) return record;
       if (!terminal.has(record.state)) return { ...record, state: 'interrupted', error: '上次更新被中断，请检查当前版本后重试' };
       return record;
     } catch { return null; }
@@ -43,7 +45,16 @@ export class OfficialGitUpdates {
     const eligible = supported && installed?.installed === true && installed.update === 'git' && trustedGitSource(installed.source);
     const candidate = this.candidate && newerVersion(this.candidate.version, installed?.version) &&
       !newerVersion(this.version, this.candidate.version) ? this.candidate : null;
-    const operation = this.record();
+    let operation = this.record();
+    // Recover only the legacy acknowledgement failure, with a receipt emitted
+    // by this boot after the new runtime passed health and activation checks.
+    if (operation?.state === 'failed' && operation.error === 'DSH 已完成安装，但工作台新版健康状态尚未确认' &&
+      operation.version === this.version && installed?.version === this.version && eligible &&
+      confirmedUpdateRuntime(this.cacheDir, operation)) {
+      const reconciled = { record: operation };
+      this.save(reconciled, 'updated', { installedVersion: installed.version, error: '', confirmation: 'runtime-health-receipt' });
+      operation = reconciled.record;
+    }
     // Transfer the durable audit into the platform log after a full plugin replacement.
     if (operation && terminal.has(operation.state)) {
       try {
@@ -81,7 +92,7 @@ export class OfficialGitUpdates {
     if (!target || target.version !== version) throw new Error('版本信息已变化，请重新检查更新');
     const lease = claimUpdate(this.cacheDir, 'official');
     const operation = lease.operation;
-    operation.record = { id: randomUUID(), version: target.version, startedAt: operation.startedAt, events: [] };
+    operation.record = { id: operation.id, version: target.version, installCommit: target.installCommit, startedAt: operation.startedAt, events: [] };
     try { this.save(operation, 'checking'); }
     catch (error) { lease.release(); throw error; }
     // DSH owns updateBundle: do not await it from a disposer or a request whose
@@ -110,7 +121,11 @@ export class OfficialGitUpdates {
       if (application === 'restart-required' && matches) {
         this.save(operation, 'restart-required', { error: 'DSH 已安装新版，当前宿主需要重启后生效' });
       } else if (application === 'applied' && matches) {
-        if (operation.runningVersion !== target.version) throw new Error('DSH 已完成安装，但工作台新版健康状态尚未确认');
+        const deadline = Date.now() + this.confirmationTimeout;
+        while (!confirmedUpdateRuntime(this.cacheDir, operation.record) && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if (!confirmedUpdateRuntime(this.cacheDir, operation.record)) throw new Error('新版运行健康确认超时，请检查工作台状态后重试');
         this.save(operation, 'updated', { installedVersion: current.version, error: '' });
       } else {
         const restored = result?.restore?.application === 'applied' && current?.version === installed.version;
