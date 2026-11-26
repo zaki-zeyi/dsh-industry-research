@@ -73,7 +73,8 @@ export class OfficialGitUpdates {
       supported, eligible, candidateVersion: candidate?.version ?? null, checkedAt: this.checkedAt,
       checking: Boolean(this.checking), error: this.error, operation,
       busy: Boolean(activeUpdate(this.cacheDir) || operation && !terminal.has(operation.state)),
-      unavailableReason: !supported ? '当前 DSH 不支持官方 Git 更新' : !eligible ? '请通过 DSH 安装固定 Git 提交的版本后使用此入口' : null };
+      unavailableReason: !supported ? '当前 DSH 不支持官方 Git 更新，请先升级 DSH' :
+        !eligible ? '当前安装来源不支持原地更新，请从 DSH「插件 → 发现」安装固定 Git 提交的版本' : null };
   }
 
   async check() {

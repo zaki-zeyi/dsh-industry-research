@@ -158,13 +158,9 @@ CI 在 [GitHub Actions](https://github.com/zaki-zeyi/dsh-industry-research/actio
 
 ## 安装
 
-当前正式版本为 **0.13.17**。正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
+正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
-建议通过上面的「发现」入口安装，以便后续从 DSH 手动更新。也可继续在 Windows、macOS 桌面版或网页版的 DSH「添加插件」中填写：
-
-https://github.com/zaki-zeyi/dsh-industry-research.git#release
-
-该地址显式安装 release 分支的预构建插件；main 为默认开发分支。网页安装发生在 DSH 服务端，服务端必须能够访问 GitHub。
+建议通过上面的「发现」入口安装，以便后续从 DSH 手动更新。若使用「添加插件」，请从 [官方索引](dsh-plugin-index.json) 取得 `source.commit`，填写 `https://github.com/zaki-zeyi/dsh-industry-research.git#<安装提交>`。不要填写浮动的 `#release`，或使用 `main` 的源码提交。网页安装发生在 DSH 服务端，服务端必须能够访问 GitHub。
 
 已安装用户进入「设置 → 版本与更新」，点击「检查更新」，下载校验完成后点击「安装已校验版本」；也可开启「空闲时自动更新」。安装含动态切换启动层的 0.13.15 或更新版本后，常规业务更新在当前 DSH 中直接生效。更早版本用户先通过 DSH 插件管理器更新一次。
 
@@ -175,7 +171,7 @@ https://github.com/zaki-zeyi/dsh-industry-research.git#release
 命令行安装：
 
 ```sh
-dsh plugin --profile <profile> add https://github.com/zaki-zeyi/dsh-industry-research.git#release
+dsh plugin --profile <profile> add 'https://github.com/zaki-zeyi/dsh-industry-research.git#<安装提交>'
 # 或者安装已下载的版本包
 dsh plugin --profile <profile> add <tgz绝对路径>
 ```
