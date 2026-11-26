@@ -13,8 +13,9 @@ const store=createTabStore({ selectExtra: value => ({
   digestArchivedTaskId: value?.digestArchivedTaskId ?? null,
   digestPrompt: typeof value?.digestPrompt === 'string' ? value.digestPrompt : null,
   digestRetryable: value?.digestRetryable === true,
+  digestCanCreate: value?.digestCanCreate === true,
 }) });
-const digestIsActive = generation => ['queued', 'running', 'waiting', 'retrying'].includes(generation?.status);
+const digestIsActive = generation => ['preparing', 'start_failed', 'queued', 'running', 'waiting', 'retrying'].includes(generation?.status);
 async function api(path,options={}){const r=await fetch('/api'+path,{...options,headers:{'Content-Type':'application/json',...options.headers}});const v=await r.json();if(!r.ok){const error=new Error(v.error??'请求失败');error.code=v.code;throw error;}return v;}
 const selectedTopics=new Map();
 const taskStatus=t=>t.status==='running'&&t.stage==='waiting_save'?'等待保存':t.status==='running'&&t.stage==='saving'?'正在保存':({ready:'已完成',queued:'排队中',running:'调研中',failed:'失败',interrupted:'已中断'})[t.status]??t.status;
@@ -69,8 +70,9 @@ export function Topics({config,onOpen,onRetry,onFixNotification,onRebind}){
    <button className="primary" onClick={begin}>启动专题调研</button>
  </div>}</div>{!selected && <TopicDigestCard key={key} digest={state.extra?.digest} digestDate={state.extra?.digestDate}
     generation={generation} archivedTaskId={state.extra?.digestArchivedTaskId} digestPrompt={state.extra?.digestPrompt}
-    digestRetryable={digestRetryable} scope={config?.topicScope} onOpen={onOpen} onSettingsSaved={() => {
-      if (currentKey.current === key) void store.reload(key, loaders, { supersede:true });
+    digestRetryable={digestRetryable} digestCanCreate={state.extra?.digestCanCreate} scope={config?.topicScope}
+    onOpen={onOpen} onChanged={() => {
+      if (currentKey.current === key) return store.reload(key, loaders, { supersede:true });
     }}/> }<div className="topic-storage"><span className="topic-storage-icon" aria-hidden="true"><FolderOpen size={21}/></span><div className="topic-storage-location"><span>存储位置</span><strong>飞书云盘 / {config?.feishuRoot?.rootName??'行研工作台'} / 专题调研{topic?' / '+topic.topic.question:''}</strong><small>{topic?'总报与每期日报按专题归档':'按调研方向归档'}</small></div><div className="topic-storage-sync"><span>上次同步</span><time dateTime={state.syncedAt??undefined}>{state.syncedAt?new Date(state.syncedAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}):'等待同步'}</time></div></div><div className="industry-toolbar">{!selected&&<label className="industry-search"><input aria-label="搜索专题" placeholder="搜索专题" value={query} onChange={e=>setQuery(e.target.value)}/></label>}<button disabled={Boolean(state.syncing)} onClick={refresh}>{state.syncing?'同步中…':'刷新'}</button></div>{(error||state.error||state.syncError)&&<div role="alert" className="industry-error">{error||state.error||state.syncError}<button onClick={refresh}>重试同步</button></div>}
  {!selected&&batch?.error&&<p role="alert" className="industry-error">{batch.error}</p>}
  {!selected&&batch?.accepted!==undefined&&<TopicBatchResult result={batch}/>}
@@ -91,6 +93,8 @@ function TopicBatchResult({result:{accepted, rejected, digestRetry}}) {
 }
 
 const digestStates = {
+  preparing: ['正在准备 AI 会话', '', 'active'],
+  start_failed: ['会话尚未创建', '', 'failed'],
   queued: ['排队中', '汇总任务等待处理。', 'active'],
   running: ['生成中', '完成后会发送飞书通知。', 'active'],
   waiting: ['等待日报', '专题日报尚未全部生成，补齐后会继续汇总。', 'waiting'],
@@ -102,21 +106,24 @@ const digestStates = {
   idle: ['未生成', '本期尚无汇总任务。', 'idle'],
 };
 
-function DigestStatus({label, date, status, retryable}) {
+function DigestStatus({label, date, status, retryable, startIssue}) {
   const [text, detail, tone] = digestStates[status] ?? [status, '', 'idle'];
+  const note = [status === 'start_failed' ? startIssue : detail,
+    tone === 'failed' && retryable && '可通过上方“日报一键重试”提交。'].filter(Boolean).join(' ');
   return <p className="topic-digest-status">
     <span>{label}{date && <> · <time dateTime={date}>{date}</time></>}</span>
     <strong className={'topic-digest-badge '+tone}>{text}</strong>
-    {detail && <span>{detail}{tone === 'failed' && retryable && '可通过上方“日报一键重试”提交。'}</span>}
+    {note && <span>{note}</span>}
   </p>;
 }
 
-function TopicDigestCard({digest, digestDate, generation, archivedTaskId, digestPrompt, digestRetryable, scope, onOpen, onSettingsSaved}) {
+function TopicDigestCard({digest, digestDate, generation, archivedTaskId, digestPrompt, digestRetryable, digestCanCreate, scope, onOpen, onChanged}) {
   const [initialPrompt, setInitialPrompt] = useState(null);
   const [currentPrompt, setCurrentPrompt] = useState(digestPrompt);
   const [saved, setSaved] = useState(false);
   const [conversation, setConversation] = useState(null);
-  const opening = useRef(false), live = useRef(false);
+  const [startPending, setStartPending] = useState(false), [startError, setStartError] = useState('');
+  const opening = useRef(false), starting = useRef(false), live = useRef(false);
   useEffect(() => {
     live.current = true;
     return () => { live.current = false; };
@@ -125,13 +132,36 @@ function TopicDigestCard({digest, digestDate, generation, archivedTaskId, digest
 
   // The document link is the latest archive, not necessarily the output of
   // the task shown here, even when the dates match.
-  const currentStatus = generation?.date === digestDate ? generation?.status
-    : digest?.url && digest.date === digestDate ? 'archived' : 'idle';
-  const historicalGeneration = generation && generation.date !== digestDate ? generation : null;
-  const taskId = generation?.taskId ?? archivedTaskId;
+  const sameDayArchive = Boolean(digest?.url && digest.date === digestDate);
+  const historicalGeneration = generation?.date && digestDate && generation.date !== digestDate ? generation : null;
+  const currentGeneration = historicalGeneration ? null : generation;
+  const currentStatus = currentGeneration?.status ?? (sameDayArchive ? 'archived' : 'idle');
+  const canCreate = Boolean(scope && digestCanCreate && !sameDayArchive);
+  // A preflight state has no conversation. Keep the previous document link,
+  // but do not present the archived conversation as this attempt's session.
+  const preSession = ['preparing', 'start_failed'].includes(generation?.status);
+  const taskId = preSession ? null : generation?.taskId ?? archivedTaskId;
   const archiveConversation = taskId && !generation?.taskId && digest?.date
     ? `打开 ${digest.date} 已存档汇总的 AI 会话` : undefined;
   const request = conversation?.taskId === taskId ? conversation : null;
+
+  async function startDigest() {
+    if (!canCreate || starting.current) return;
+    starting.current = true;
+    setStartPending(true);
+    setStartError('');
+    try {
+      const {task} = await api('/topics/digest/start', { method:'POST', body:JSON.stringify({scope}) });
+      if (!task?.id) throw new Error('未能取得汇总会话，请刷新专题列表后再试');
+      if (live.current) onOpen(task);
+    } catch (error) {
+      if (live.current) setStartError(error.message);
+    } finally {
+      await onChanged();
+      starting.current = false;
+      if (live.current) setStartPending(false);
+    }
+  }
 
   async function openConversation() {
     if (!taskId || opening.current) return;
@@ -149,10 +179,10 @@ function TopicDigestCard({digest, digestDate, generation, archivedTaskId, digest
 
   const content = <>
     <span className="topic-storage-icon" aria-hidden="true"><FileText size={21}/></span>
-    <span className="topic-digest-label">
-      <strong>日报汇总</strong>
+    <div className="topic-digest-label">
+      <h2>日报汇总</h2>
       {digest?.url ? <span>已存档文档 · <time dateTime={digest.date}>{digest.date}</time></span> : <span>全部专题日报生成后，汇总会显示在这里。</span>}
-    </span>
+    </div>
     {digest?.url && <ArrowUpRight size={16} aria-hidden="true"/>}
   </>;
   return <div className="topic-digest-card">
@@ -165,15 +195,21 @@ function TopicDigestCard({digest, digestDate, generation, archivedTaskId, digest
       {taskId && <button type="button" className="secondary" title={archiveConversation} disabled={request?.pending} onClick={openConversation}>
         {request?.pending ? '正在打开会话…' : 'AI 会话详情'}
       </button>}
+      {(canCreate || startPending) && <button type="button" className="primary" disabled={startPending} onClick={startDigest}>
+        {startPending ? '正在提交…' : '生成汇总'}
+      </button>}
     </div>
-    {(digestDate || historicalGeneration) && <div className="topic-digest-state" role="status">
-      {digestDate && currentStatus && <DigestStatus label="本期任务" date={digestDate} status={currentStatus} retryable={digestRetryable}/>}
-      {historicalGeneration && <DigestStatus label="最近任务" date={historicalGeneration.date} status={historicalGeneration.status} retryable={digestRetryable}/>}
+    {(digestDate || generation) && <div className="topic-digest-state" role="status">
+      {(digestDate || currentGeneration) && <DigestStatus label="本期任务" date={digestDate ?? currentGeneration?.date} status={currentStatus}
+        retryable={digestRetryable} startIssue={currentGeneration?.startIssue}/>}
+      {historicalGeneration && <DigestStatus label="最近任务" date={historicalGeneration.date} status={historicalGeneration.status}
+        retryable={digestRetryable} startIssue={historicalGeneration.startIssue}/>}
     </div>}
     {saved && <p className="topic-digest-feedback" role="status">汇总 Prompt 已保存。</p>}
+    {startError && <p className="topic-digest-feedback topic-digest-error" role="alert">{startError}</p>}
     {request?.error && <p className="topic-digest-feedback topic-digest-error" role="alert">{request.error}</p>}
     {initialPrompt !== null && <TopicDigestModal scope={scope} initialPrompt={initialPrompt} onClose={()=>setInitialPrompt(null)}
-      onSaved={prompt=>{setCurrentPrompt(prompt);setSaved(true);setInitialPrompt(null);onSettingsSaved();}}/>}
+      onSaved={prompt=>{setCurrentPrompt(prompt);setSaved(true);setInitialPrompt(null);onChanged();}}/>}
   </div>;
 }
 

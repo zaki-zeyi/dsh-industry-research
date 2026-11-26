@@ -406,9 +406,10 @@
 .topic-storage-icon{display:grid;place-items:center;flex-shrink:0;width:44px;height:44px;border-radius:10px;background:#eef3eb;color:#66825c}
 .topic-digest-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px 14px;margin-bottom:14px;padding:12px 18px;border:1px solid #dce7d7;border-radius:10px;background:#f8fbf6}
 .topic-digest-main{display:flex;align-items:center;gap:14px;min-width:0;color:#294f3c;text-decoration:none}
-a.topic-digest-main:hover .topic-digest-label>strong{text-decoration:underline}
+a.topic-digest-main:hover .topic-digest-label>h2{text-decoration:underline}
 .topic-digest-main:focus-visible{outline:2px solid #406655;outline-offset:2px}
 .topic-digest-label{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}
+.topic-digest-label>h2{margin:0;color:inherit;font-size:20px;line-height:1.35}
 .topic-digest-label>span{color:#526c56;font-size:12px;line-height:1.5}
 .topic-digest-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
 .topic-digest-actions button{white-space:nowrap}
