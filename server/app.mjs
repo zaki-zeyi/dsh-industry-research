@@ -136,8 +136,17 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     res.json({...remote,items,digest,digestGeneration,digestDate:service.topicDigest?.date() ?? topicScheduleDate(new Date()),
       digestPrompt:service.topicDigest?.prompt(scope) ?? defaultDigestPrompt,
       digestRetryable:service.topicDigest?.retryable(scope) ?? false,
+      digestCanCreate:service.topicDigest?.canCreate(scope, digest) ?? false,
       digestArchivedTaskId:service.topicDigest?.archivedTaskId(scope, digest) ?? null});
   }catch(e){next(e);}});
+  app.post('/api/topics/digest/start', async (req, res, next) => {
+    try {
+      const {scope} = z.object({scope:z.string().min(1).max(4000)}).strict().parse(req.body);
+      if (!service.topicDigest) throw new ServiceError(409, '请在宿主 DSH 中生成专题日报汇总');
+      const result = await service.topicDigest.startManual(scope);
+      res.status(result.existing ? 200 : 202).json(result);
+    } catch (error) { next(error); }
+  });
   app.put('/api/topics/digest/settings', async (req, res, next) => {
     try {
       const {scope,prompt} = z.object({scope:z.string().min(1).max(4000),prompt:z.string().trim().min(10).max(14000)}).strict().parse(req.body);
