@@ -42,9 +42,10 @@ export class NativeSessions {
     if (!workspace.sessionIds.includes(sessionId)) await workspace.attachSession(sessionId);
     return workspace;
   }
-  async createHostSession() {
+  async createHostSession(onCreated) {
     const workspace = await this.workspace();
     const created = await this.host.sessionController.create({ workspaceId: workspace.id, agentPreset: 'standard' });
+    onCreated?.(created.sessionId);
     await this.bindSession(created.sessionId);
     return { ...created, workspaceId: workspace.id };
   }
@@ -79,8 +80,13 @@ export class NativeSessions {
   async create(task) {
     const prior = task.terminalId ? this.store.terminal(task.terminalId) : null;
     const id = newId(), cwd = resolve(this.workRoot, task.id); mkdirSync(cwd, { recursive: true });
-    const created = prior?.agent === 'dsh-native' ? null : await this.createHostSession();
-    const sessionId = created ? created.sessionId : prior.sessionId;
+    const retained = prior?.agent === 'dsh-native' ? prior.sessionId : task.topicDigest && task.nativeSessionId;
+    const created = retained ? null : await this.createHostSession(task.topicDigest ? sessionId => {
+      // Keep the link even if subsequent host binding or agent setup fails.
+      task.nativeSessionId = sessionId;
+      this.store.save(task);
+    } : undefined);
+    const sessionId = created?.sessionId ?? retained;
     const workspace = await this.bindSession(sessionId);
     const resolved = await this.host.sessionController.resolveAgent(sessionId);
     if (!resolved.agent) throw new ServiceError(503, '无法恢复宿主 DSH 会话，历史记录已保留');
@@ -178,11 +184,12 @@ export class NativeSessions {
 export class NativeResearcher {
   transport = 'dsh-native';
   constructor(sessions, { timeoutMs = RESEARCH_TIMEOUT_MS, legacy } = {}) { this.sessions = sessions; this.timeoutMs = timeoutMs; this.legacy = legacy; }
-  async run(task, { signal, terminal, session, checkpoint }) {
+  async run(task, { signal, terminal, session, checkpoint, beforePrompt }) {
     if (!task.nativeSession && this.legacy) return this.legacy.run(task, { signal, terminal, session, checkpoint });
     const meta = await this.sessions.create(task); terminal(meta.id); session(meta.sessionId);
     const cancel = () => { try { this.sessions.cancel(meta.id); } catch {} }; signal.addEventListener('abort', cancel, { once: true });
     try {
+      if (beforePrompt) await beforePrompt();
       signal.throwIfAborted(); await this.sessions.send(meta.id, `请读取 ${meta.promptPath}，按照该文件中的本次用户${task.internal ? '内部资料解析' : '调研'}任务执行。`);
       if (task.cloudOnly) return await waitCloudDelivery(this.sessions, meta, { signal, timeoutMs: this.timeoutMs });
       const start = Date.now(); let previous, invalid, report;

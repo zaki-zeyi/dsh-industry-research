@@ -410,7 +410,10 @@ a.topic-digest-main:hover .topic-digest-label>strong{text-decoration:underline}
 .topic-digest-main:focus-visible{outline:2px solid #406655;outline-offset:2px}
 .topic-digest-label{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}
 .topic-digest-label>span{color:#526c56;font-size:12px;line-height:1.5}
-.topic-digest-generate{white-space:nowrap}
+.topic-digest-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.topic-digest-actions button{white-space:nowrap}
+.topic-digest-modal{max-width:620px}
+@media(max-width:760px){.topic-digest-card{grid-template-columns:minmax(0,1fr)}.topic-digest-actions{justify-content:flex-start}}
 .topic-digest-card .topic-digest-feedback{grid-column:1/-1;margin:0;color:#526c56;font-size:13px;line-height:1.5}
 .topic-digest-card .topic-digest-error{color:#a24e3b}
 .topic-storage-location{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}

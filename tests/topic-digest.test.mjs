@@ -194,7 +194,8 @@ test('manual generation retries an unconfirmed notice without creating a new dig
 
 test('uncertain create and message recover across workers without another document or another notification key', async t => {
   const f = fixture(t);
-  f.record(await f.trigger(0), 'First', '# 标题\n原报告没有独立摘要。');
+  const first = await f.trigger(0);
+  f.record(first, 'First', '# 标题\n原报告没有独立摘要。');
   f.record(await f.trigger(1), 'Second', '## 摘要\n第二份已完成。');
   f.control.loseCreateReply = true;
   await f.service.topicDigest.tick();
@@ -205,6 +206,10 @@ test('uncertain create and message recover across workers without another docume
   assert.equal(f.control.notices.length, 0);
   f.control.loseCreateReply = false;
   f.control.loseNotificationReply = true;
+  // The stored write intent is authoritative after the remote create, even
+  // if a source becomes unavailable before restarting and confirming it.
+  f.record(first, 'First', '已不可用', 'failed');
+  f.documents.reports.delete(reportUrl('First'));
   f.control.now += 16_000;
   await f.worker().tick();
   assert.equal(f.control.creates.length, 1);

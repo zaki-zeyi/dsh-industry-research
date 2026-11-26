@@ -1,7 +1,7 @@
 import { documentKind, documentDeletionInput } from './document-deletions.mjs';
 import { documentScope, documentOperationKey, documentRemoved, taskDocumentRemoved } from './document-deletion-state.mjs';
 import { topicDeletionInput } from './topic-deletions.mjs';
-import { TOPIC_DIGEST_FOLDER, topicTask, topicScope, topicDocumentKey, topicCards, topicInput, assertTopicAvailable } from './topics.mjs';
+import { TOPIC_DIGEST_FOLDER, topicTask, topicScope, topicDocumentKey, topicCards, topicInput, assertTopicAvailable, topicScheduleDate } from './topics.mjs';
 import { isFailedTopicDaily } from './topic-defaults.mjs';
 import { cloudPublications, mergePublicationCards, publicationCacheKey } from './cloud-publications.mjs';
 import { createScopedSync } from './sync-once.mjs';
@@ -132,13 +132,14 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     const cloud = service.topicDigest ? service.topicDigest.remoteVisible(scope, remote.digest) : remote.digest;
     const digest = !cloud || (local?.date ?? '') >= cloud.date ? local ?? null : cloud;
     const digestGeneration = service.topicDigest?.manualStatus(scope) ?? null;
-    res.json({...remote,items,digest,digestGeneration});
+    res.json({...remote,items,digest,digestGeneration,digestDate:service.topicDigest?.date() ?? topicScheduleDate(new Date())});
   }catch(e){next(e);}});
   app.post('/api/topics/digest', async (req, res, next) => {
     try {
-      const {scope} = z.object({scope:z.string().min(1).max(4000)}).strict().parse(req.body);
+      const {scope,prompt} = z.object({scope:z.string().min(1).max(4000),prompt:z.string().trim().min(10).max(14000).optional()}).strict().parse(req.body);
       if (!service.topicDigest) throw new ServiceError(409, '请在宿主 DSH 中生成专题日报汇总');
-      const result = await service.topicDigest.generate(scope);
+      const remote = prompt === undefined ? null : await cloudPublications(service, 'topic');
+      const result = await service.topicDigest.generate(scope, prompt, remote?.digest);
       res.status(result.status === 'sent' ? 200 : 202).json(result);
     } catch (error) { next(error); }
   });
