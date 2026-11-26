@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { startRuntime, dataIdentity } from '../server/runtime.mjs';
 import { PluginUpdates } from './updates.mjs';
+import { OfficialGitUpdates } from './official-update.mjs';
 export const name = 'dsh-industry-research';
 const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 // Retain the existing storage namespace and health protocol for upgrades.
@@ -42,11 +43,14 @@ export function apply(ctx, config = {}) {
     status = { state: 'error', message: error.message, version };
     throw error;
   });
-  let updates;
+  let updates, official;
   const updateReady = ready.then(() => {
     if (stopped || !runtime?.service) return;
     updates = new PluginUpdates(runtime.service, () => ctx.get?.('pluginManager'), version,
       { cacheDir: resolve(runtime.dataDir, 'updates'), slotUpdater: config.slotUpdater });
+    official = new OfficialGitUpdates(runtime.service, () => ctx.get?.('pluginManager'), version,
+      { cacheDir: resolve(runtime.dataDir, 'updates') });
+    ctx.on?.('plugin-manager/update-state', progress => official.progress(progress));
     runtime.service.pluginUpdates = {
       token: updateToken,
       snapshot: () => updateResult(updates.snapshot()),
@@ -63,6 +67,26 @@ export function apply(ctx, config = {}) {
     };
     updates.start();
   });
+  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: '/industry-research/official-update', async handler(req, res) {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      if (config.activationGate && !config.activationGate.approved) throw new Error('更新服务正在启动');
+      await updateReady;
+      if (!official) throw new Error('更新服务尚未就绪');
+      if (req.method === 'GET') return res.end(JSON.stringify(updateResult(await official.snapshot())));
+      if (req.method !== 'POST' || !validUpdateToken(req.headers['x-dsh-update-token'])) {
+        res.statusCode = 403; return res.end(JSON.stringify({ error: '更新操作来源无效' }));
+      }
+      const query = new URL(req.url, 'http://localhost').searchParams;
+      if (query.get('action') === 'check') return res.end(JSON.stringify(updateResult(await official.check())));
+      if (query.get('action') === 'install') {
+        const operation = official.start(query.get('version'));
+        res.statusCode = 202; return res.end(JSON.stringify({ operation }));
+      }
+      res.statusCode = 400; res.end(JSON.stringify({ error: '更新操作无效' }));
+    } catch (error) { res.statusCode = error.code === 'UPDATE_BUSY' ? 409 : 503; res.end(JSON.stringify({ error: error.message })); }
+  } }));
   if (!config.managedStatus) ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: '/industry-research/status', handler(req, res) {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
@@ -117,6 +141,6 @@ export function apply(ctx, config = {}) {
       res.end(JSON.stringify({ error: error.message }));
     }
   } }));
-  ctx.effect(() => async () => { stopped = true; updates?.close(); await updateReady.catch(() => {}); if (runtime?.service) delete runtime.service.pluginUpdates; await runtime?.close(); });
+  ctx.effect(() => async () => { stopped = true; if (official) official.disposed = true; updates?.close(); await updateReady.catch(() => {}); if (runtime?.service) delete runtime.service.pluginUpdates; await runtime?.close(); });
   return updateReady;
 }
