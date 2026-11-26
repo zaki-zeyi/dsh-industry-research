@@ -19,7 +19,8 @@ function summaryLines(markdown) {
   const heading = /^(#{1,6})\s+/;
   const summary = /^(#{1,6})\s+(?:日报摘要|内容摘要|更新摘要|执行摘要|核心摘要|摘要)(?:[：:]\s*|\s*$)(.*)$/;
   const start = lines.findIndex(line => summary.test(line));
-  const clean = line => line.replace(/<[^>]*>/g, '').replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+  const clean = line => line.replace(/<\/?(?:title|p|b|strong|em|br|a|span)(?:\s+[^>]*)?\s*\/?>/gi, '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/^\s*(?:[-+*]\s+|\d+[.)]\s+|>\s*)/, '').replace(/\*\*|__/g, '').trim();
   if (start >= 0) {
     const [, level, inline] = summary.exec(lines[start]);

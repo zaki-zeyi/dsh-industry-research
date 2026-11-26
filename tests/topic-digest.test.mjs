@@ -83,7 +83,7 @@ function fixture(t) {
 test('PRD 6004 waits for later slots and failed reports, then writes all summaries with original links', async t => {
   const f = fixture(t);
   const first = await f.trigger(0);
-  f.record(first, 'First', '## 摘要\n- 首份摘要 <b>保留</b>\n## 详情\n不属于摘要');
+  f.record(first, 'First', '## 摘要\n- 首份摘要 <b>保留</b>，功耗 < 10 W 而产量 > 100 件。\n## 详情\n不属于摘要');
   await f.service.topicDigest.tick();
   assert.equal(f.service.topicDigest.latest(), null);
   assert.deepEqual(f.control.paths, []); // The second slot has not yet started.
@@ -101,7 +101,7 @@ test('PRD 6004 waits for later slots and failed reports, then writes all summari
   const [{ folder, name, content }] = f.control.creates;
   assert.equal(folder, 'DigestFolder');
   assert.equal(name, '汇总日报 · ' + DATE);
-  assert.match(content, /<h2>测试成本 &amp; 供应<\/h2><p>首份摘要 保留<\/p>/);
+  assert.match(content, /<h2>测试成本 &amp; 供应<\/h2><p>首份摘要 保留，功耗 &lt; 10 W 而产量 &gt; 100 件。<\/p>/);
   assert.match(content, /<h2>测试替代路线<\/h2><p>本日无更新。<\/p>/);
   assert.doesNotMatch(content, /详情|不属于摘要|<b>/);
   for (const id of ['First', 'Second']) assert.ok(content.includes(`href="${reportUrl(id)}"`));
