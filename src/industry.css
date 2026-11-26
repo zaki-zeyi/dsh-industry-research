@@ -412,6 +412,14 @@ a.topic-digest-main:hover .topic-digest-label>strong{text-decoration:underline}
 .topic-digest-label>span{color:#526c56;font-size:12px;line-height:1.5}
 .topic-digest-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
 .topic-digest-actions button{white-space:nowrap}
+.topic-digest-settings{display:inline-flex;align-items:center;gap:6px}
+.topic-digest-state{grid-column:1/-1;display:grid;gap:8px;border-top:1px solid #dce7d7;padding-top:10px;margin-top:3px}
+.topic-digest-status{display:flex;flex-wrap:wrap;align-items:center;gap:5px 9px;margin:0;color:#526653;font-size:13px;line-height:1.5}
+.topic-digest-badge{border-radius:5px;padding:2px 8px;font-size:12px;line-height:1.5;background:#eef1ec;color:#4e604e}
+.topic-digest-badge.active{background:#e6eff8;color:#2f587b}
+.topic-digest-badge.waiting{background:#f8edda;color:#79551f}
+.topic-digest-badge.failed{background:#fae9e3;color:#913e2c}
+.topic-digest-badge.done{background:#e3f0e1;color:#375f3c}
 .topic-digest-modal{max-width:620px}
 @media(max-width:760px){.topic-digest-card{grid-template-columns:minmax(0,1fr)}.topic-digest-actions{justify-content:flex-start}}
 .topic-digest-card .topic-digest-feedback{grid-column:1/-1;margin:0;color:#526c56;font-size:13px;line-height:1.5}

@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { existsSync, statSync, chmodSync, readdirSync, mkdirSync, copyFileSync } from 'node:fs';
 export function preparePty(root, { platform = process.platform, arch = process.arch } = {}) {
   if (platform === 'darwin') {
@@ -20,4 +21,9 @@ export function preparePty(root, { platform = process.platform, arch = process.a
     }
   }
 }
-if (['darwin', 'win32'].includes(process.platform)) preparePty(dirname(createRequire(import.meta.url).resolve('node-pty/package.json')));
+export function prepareCurrentPty() {
+  if (['darwin', 'win32'].includes(process.platform)) preparePty(dirname(createRequire(import.meta.url).resolve('node-pty/package.json')));
+}
+
+// CI can still prepare the desktop binaries before running parallel workers.
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) prepareCurrentPty();

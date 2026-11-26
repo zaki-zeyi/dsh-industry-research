@@ -137,7 +137,7 @@ test('PRD 6023 HTTP manual generation waits for all reports and shares one docum
     const waiting = await generate();
     assert.equal(waiting.status, 409);
     assert.match((await waiting.json()).error, /尚未全部生成/);
-    assert.equal((await read()).digestGeneration, null);
+    assert.deepEqual((await read()).digestGeneration, {date:DATE, status:'waiting'});
     assert.equal(f.control.creates.length, 0);
     assert.equal(f.control.notices.length, 0);
 

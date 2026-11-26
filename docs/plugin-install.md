@@ -1,6 +1,6 @@
 # 安装与发布
 
-插件包名 `dsh-industry-research`，页签「行研工作台」。当前源码版本 0.13.19。
+插件包名 `dsh-industry-research`，页签「行研工作台」。正式版本以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
 ## 用户安装
 
@@ -38,7 +38,7 @@ dsh plugin --profile <profile> add <tgz绝对路径>
 
 使用 `#release`、安装标签或 ZIP/TGZ 等非固定 Git 提交来源安装的版本，DSH 不会提供原地更新。让在途任务完成后，在「已安装」卸载旧插件，再从上述索引安装一次，并恢复原来的启用状态。不要删除工作台数据目录；如设置了自定义数据目录，继续使用原路径（默认 `~/.dsh/industry-research`）。若当前业务版本比宿主显示版本新，宿主仍按其管理的安装版本判断是否显示「更新」。行研工作台内部的更新设置独立于此入口。
 
-索引不改变安装包的平台支持。当前正式 Git 安装包未内置 Linux 原生终端依赖，不要用它直接替换可用的 Linux 自行构建版本。
+从 0.13.25 起，同一预构建 Git 安装包和 ZIP 解压目录可在 Linux 的 DSH 网页版启用行研工作台；调研使用宿主原生会话，不需要安装或编译插件的旧版 PTY。Windows/macOS 的原生终端依赖保留。正式包仍不内置 Linux 的旧版交互终端；旧终端任务可查看已有记录，但需要原 PTY 的继续执行、重试或上传不受支持。如果仍依赖这些旧任务，请保留已可用的 Linux 自行构建版本。
 
 ## 官方详情页更新按钮
 
@@ -49,7 +49,7 @@ dsh plugin --profile <profile> add <tgz绝对路径>
 在 main 更新 package.json/package-lock.json 的同一版本后，合入 main 自动触发 **Publish verified plugin**。失败后可在已有Actions运行中重试。发布分支是源码镜像加验证产物，推送使用工作流内置凭据，不需要额外的仓库设置；安装内容仍由安装清单的 `files` 决定。流程：
 
 1. Windows 和 macOS 分别运行构建、业务测试、浏览器测试。
-2. 打包 ZIP/TGZ，校验独立安装、页面、生产依赖和原生 PTY。
+2. 打包 ZIP/TGZ，校验独立安装、页面、生产依赖和 Windows/macOS 原生 PTY。Linux 网页端单独复验同样不含 Linux PTY 的安装包，确认 TGZ/ZIP 能启动，解压目录可由 DSH 宿主安装并在浏览器运行原生会话。
 3. 从通过验证的 Windows ZIP 恢复原目录，校验版本、源码提交和 SHA256。
 4. 把安装目录写成 release 分支的发布提交：父提交同时指向上一发布提交和产出该产物的源码提交，内容为源码目录叠加验证产物，使用普通 push 保留历史，不强制覆盖。
 5. 冷缓存安装显式带 #release 的公开 GitHub 链接，断言安装版本等于源码版本并运行安装包验收。
@@ -73,8 +73,10 @@ npm run plugin:pack
 npm run plugin:check-pack
 node scripts/release-acceptance.mjs
 node scripts/publish-git-plugin.mjs --output <新的临时目录>   # 不加 --push 时只在本地生成安装提交
-node scripts/git-install-acceptance.mjs --pnpm-cli <宿主pnpm入口> --expected-version 0.13.19
+node scripts/git-install-acceptance.mjs --pnpm-cli <宿主pnpm入口> --expected-version <正式版本>
 ```
+
+Linux 复验须使用未内置 Linux `pty.node` 的 ZIP/TGZ（例如 Windows CI 产物）；安装 Playwright Chromium 后，设 `DSH_CLI_PATH` 为 DSH 的 `lib/bin.js` 绝对路径，再运行 `node scripts/release-acceptance.mjs --without-legacy-pty --native-host`。如需冷缓存验证已发布的 Git 安装包，可为 Git 验收命令加 `--without-legacy-pty --source <固定提交安装地址>`。
 
 macOS CI 运行包安装及浏览器验收，不等同于真实 macOS 桌面应用点击验收。真实飞书授权、模型调研、音视频转写和机器人消息需要实际环境单独验收。
 

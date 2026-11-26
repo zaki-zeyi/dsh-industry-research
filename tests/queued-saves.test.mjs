@@ -135,7 +135,7 @@ async function runtimeFor(dataDir, fixture, host, payloads, ended) {
   return runtime;
 }
 
-test('PRD 6129 automatic digest uses native session; failed turn retries that session with edited prompt and archives once', async () => {
+test('PRD 6264 saves the automatic prompt and batch-retries the original digest session only after daily reports recover', async () => {
   const dataDir = mkdtempSync(resolve(tmpdir(), 'digest-native-'));
   const fixture = cliFixture(), host = mockHost(), notices = [];
   const appId = 'cli_digest';
@@ -161,8 +161,18 @@ test('PRD 6129 automatic digest uses native session; failed turn retries that se
     let now = time.getTime();
     digest.now = () => now;
     store.saveSetting('feishu', root);
-    const scope = topicScope(root, app), digestPath = runtime.url + '/api/topics/digest';
-    const generate = prompt => fetch(digestPath, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({scope,prompt}) });
+    const scope = topicScope(root, app), topicsApi = runtime.url + '/api/topics';
+    const request = (path, method, body) => fetch(topicsApi + path, { method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    const generate = prompt => request('/digest', 'POST', {scope,prompt});
+    const settings = (scope, prompt) => request('/digest/settings', 'PUT', {scope,prompt});
+    const retry = () => request('/retry-failed-dailies', 'POST', {scope});
+    const card = async () => (await fetch(topicsApi)).json();
+    const prompt = '请先比较两项结论，再聚合全部专题日报摘要。';
+    assert.match((await card()).digestPrompt, /每个章节一个专题题目和摘要/);
+    assert.equal((await settings('outdated-scope', prompt)).status,409);
+    assert.deepEqual(await (await settings(scope, prompt)).json(), {prompt});
+    assert.equal((await card()).digestPrompt,prompt);
+    assert.equal(host.created,0);
     const topicId = '33333333-3333-4333-8333-333333333333';
     const input = { topicId, question:'验证日报来源', sources:['测试来源'] };
     const task = { ...topicTask(input, time, {startDaysAgo:1,startTime:'00:00',endDaysAgo:0,endTime:'00:00'}),
@@ -181,7 +191,7 @@ test('PRD 6129 automatic digest uses native session; failed turn retries that se
       const current = store.list().find(candidate => candidate.nativeSessionId === request.sessionId);
       const meta = store.terminal(current.terminalId);
       prompts.push({id:request.sessionId,text:readFileSync(meta.promptPath,'utf8')});
-      if (prompts.length < 3) host.emit(request.sessionId, 'turn/end', {kind:'error'});
+      if (prompts.length < 4) host.emit(request.sessionId, 'turn/end', {kind:'error'});
       else {
         assert.deepEqual(await runClient(meta, {report:'按编辑后的要求输出综合观察。'}), {accepted:true});
         host.emit(request.sessionId, 'turn/end', {kind:'completed'});
@@ -190,25 +200,45 @@ test('PRD 6129 automatic digest uses native session; failed turn retries that se
     };
     await digest.tick();
     const failed = await until(() => store.list().find(candidate => candidate.topicDigest && candidate.status === 'failed' && !service.active.has(candidate.id)));
-    assert.match(prompts[0].text, /自动聚合所有日报/);
+    assert.ok(prompts[0].text.startsWith(prompt));
+    assert.deepEqual(await (await settings(scope, '供下次自动汇总使用的新默认提示词。')).json(), {prompt:'供下次自动汇总使用的新默认提示词。'});
     assert.equal(host.created, 1);
     await digest.tick(); // persist the first retry deadline
     now += 16_000;
     await digest.tick();
     await until(() => prompts.length === 2 && store.get(failed.id)?.status === 'failed' && !service.active.has(failed.id));
     assert.equal(prompts[0].id, prompts[1].id);
-    assert.match(prompts[1].text, /自动聚合所有日报/);
-    const response = await generate('请先比较两项结论，再聚合全部专题日报摘要。');
+    assert.ok(prompts[1].text.startsWith(prompt));
+    assert.equal((await card()).digestRetryable,true);
+    const immediate = await retry();
+    assert.equal(immediate.status,202);
+    assert.deepEqual(await immediate.json(), {accepted:0,rejected:[],digestRetry:'submitted'});
+    await until(() => prompts.length === 3 && store.get(failed.id)?.status === 'failed' && !service.active.has(failed.id));
+    assert.equal(prompts[0].id,prompts[2].id);
+    // Simulate a source going back to failed before the next batch retry.
+    // Keep the real retry queue but gate execution so this test controls publication.
+    const drain = service.drain;
+    service.drain = () => {};
+    store.save({ ...task, status:'failed', runs:[] });
+    const response = await retry();
     assert.equal(response.status, 202);
-    assert.equal((await response.json()).task.id, failed.id);
+    assert.deepEqual(await response.json(), {accepted:1,rejected:[],digestRetry:'waiting'});
+    assert.deepEqual(await (await retry()).json(), {accepted:0,rejected:[],digestRetry:null});
+    await digest.tick();
+    assert.equal(prompts.length,3);
+    assert.equal((await card()).digestGeneration.status,'waiting');
+    assert.equal(service.queue.shift().id,task.id);
+    store.save(task);
+    service.drain = drain;
     const finished = await until(async () => {
       await digest.tick();
       return digest.manualStatus(scope)?.status === 'sent' && store.get(failed.id);
     });
     assert.equal(finished.status,'ready');
-    assert.equal(prompts.length, 3);
-    assert.equal(prompts[0].id, prompts[2].id);
-    assert.match(prompts[2].text, /请先比较两项结论/);
+    assert.equal(prompts.length, 4);
+    assert.equal(prompts[0].id, prompts[3].id);
+    assert.ok(prompts[3].text.startsWith(prompt));
+    assert.doesNotMatch(prompts[3].text, /供下次自动汇总使用/);
     const [[digestUrl, doc]] = [...fixture.docs].filter(([,entry]) => entry.folder === 'digest-folder');
     assert.match(doc.content,/按编辑后的要求输出综合观察/);
     assert.match(doc.content,/测试原日报的完整摘要/);
@@ -216,10 +246,12 @@ test('PRD 6129 automatic digest uses native session; failed turn retries that se
     assert.equal(finished.publication.url,digestUrl);
     assert.equal(notices.length, 1);
     assert.equal((await generate('当天汇总已存在，不应创建另一份文档。')).status, 409);
-    const {digest:card,digestGeneration,digestDate} = await (await fetch(runtime.url+'/api/topics')).json();
-    assert.deepEqual(card,{date:day,url:digestUrl});
+    const {digest:archived,digestGeneration,digestDate,digestRetryable} = await card();
+    assert.deepEqual(archived,{date:day,url:digestUrl});
     assert.equal(digestDate,day);
     assert.equal(digestGeneration.taskId,finished.id);
+    assert.equal(digestRetryable,false);
+    assert.deepEqual(await (await retry()).json(), {accepted:0,rejected:[],digestRetry:null});
     // A fresh local day record must still respect a document already in Drive.
     store.deleteSetting('topic-digests:' + scope);
     assert.equal((await generate('飞书已经归档，不应启动另一个汇总会话。')).status, 409);
