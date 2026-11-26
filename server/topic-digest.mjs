@@ -1,12 +1,21 @@
 import { createHash } from 'node:crypto';
 import { notificationContext } from './notification-context.mjs';
 import { documentToken, escapeXml, plainXml } from './queued-save-documents.mjs';
-import { driveType } from './folder-identity.mjs';
+import { driveToken, driveType, matchingFolders } from './folder-identity.mjs';
 import { ServiceError } from './service-error.mjs';
+import { z } from 'zod';
 import { TOPIC_DIGEST_FOLDER, TOPIC_FOLDER, topicDeletionState, topicScheduleDate, topicScheduleRequestKey, topicScope } from './topics.mjs';
 
 const titleFor = date => `${TOPIC_DIGEST_FOLDER} · ${date}`;
 const delay = 15_000;
+const retryLimit = 3;
+const defaultPrompt = '自动聚合所有日报的摘要生成汇总日报的飞书文档。并发送到飞书消息。';
+const output = z.object({ report: z.string().trim().min(1).max(6000) }).strict();
+const sourceList = tasks => tasks.map(task => ({ title: task.topic.question, url: task.publication.url }));
+const canonical = value => value.replace(/\s+/g, ' ').trim();
+const textHash = value => createHash('sha256').update(canonical(value)).digest('hex');
+const deliveryFor = task => ({ notificationRecipient:task.notificationRecipient ?? task.feishuApp?.ownerOpenId,
+  notificationApp:task.notificationApp ?? task.feishuApp });
 const dateInTitle = /^汇总日报 · (\d{4}-\d{2}-\d{2})(?:\.docx?)?$/;
 export function digestFileDate(file) {
   if (!['docx', 'doc'].includes(file.type) || !documentToken(file.url)) return;
@@ -51,6 +60,7 @@ export class TopicDigest {
     this.store = service.store;
     this.documents = documents;
     this.now = now;
+    this.starting = new Set();
   }
 
   context() {
@@ -88,7 +98,14 @@ export class TopicDigest {
     return state ? { date, url: state.url } : null;
   }
 
-  async generate(scope) {
+  date() { return topicScheduleDate(new Date(this.now())); }
+
+  async generate(scope, prompt, remote) {
+    if (prompt !== undefined) return this.startSession(scope, prompt, remote);
+    return this.generateLegacy(scope);
+  }
+
+  async generateLegacy(scope) {
     const context = this.context();
     if (context.scope !== scope) throw new ServiceError(409, '飞书账号或存储位置已变化，请刷新专题列表后再试');
     if (!context.root.folderToken) throw new ServiceError(409, '请先确认飞书存储位置，再生成日报汇总');
@@ -112,9 +129,108 @@ export class TopicDigest {
     return { date, status: 'queued' };
   }
 
-  manualStatus(scope) {
-    const date = topicScheduleDate(new Date(this.now()));
+  async startSession(scope, prompt, remote, { date = this.date(), automatic = false } = {}) {
+    const context = this.context(), key = scope + ':' + date;
+    if (context.scope !== scope || !context.root.folderToken) throw new ServiceError(409, '飞书账号或存储位置已变化，请刷新专题列表后再试');
+    if (!this.service.nativeSessions || !this.service.queuedSaves) throw new ServiceError(409, '请在宿主 DSH 中启动汇总会话');
+    const day = this.days(scope)[date] ?? {};
+    if (day.url || remote?.date === date) throw new ServiceError(409, '今天已有汇总日报，不能再次生成');
+    if (this.starting.has(key) || this.publishing === key || day.creating) throw new ServiceError(409, '今天的汇总正在生成或核对，请稍后再试');
+    const expected = this.roster(scope, date, day);
+    if (!expected.length) throw new ServiceError(409, '今天没有待汇总的专题日报');
+    const tasks = this.readyTasks(scope, date, expected);
+    if (!tasks) throw new ServiceError(409, '今天的专题日报尚未全部生成，请等日报补齐后再试');
+    this.starting.add(key);
+    try {
+      const digestOwner = await this.requireSourceOwner(context, tasks);
+      const archived = await this.findArchived(context, date);
+      if (archived) {
+        this.save(scope, date, { url:archived, sent:true });
+        if (!automatic) throw new ServiceError(409, '今天已有汇总日报，不能再次生成');
+        return { date, status:'sent' };
+      }
+      const latest = this.days(scope)[date] ?? {};
+      if (latest.url || latest.creating || this.publishing === key) throw new ServiceError(409, '今天已有汇总或正在核对，请刷新后再试');
+      if (topicScope(this.service.feishuSettings(), context.app) !== scope || !automatic && this.date() !== date) throw new ServiceError(409, '汇总日期或存储位置已变化，请重新打开汇总');
+      const live = this.readyTasks(scope, date, this.roster(scope, date, latest));
+      if (!live || JSON.stringify(sourceList(live)) !== JSON.stringify(sourceList(tasks))) throw new ServiceError(409, '当天日报已变化，请重新打开汇总');
+      const prior = latest.taskId && this.store.get(latest.taskId);
+      let task;
+      if (prior) {
+        if (!['failed', 'interrupted'].includes(prior.status) || this.service.active.has(prior.id)) throw new ServiceError(409, '汇总会话正在处理，请稍后再试');
+        // Reuse the existing task and its native session, but never replace a
+        // draft already committed for publication by this same session.
+        if (!prior.queuedSave) {
+          prior.prompt = prompt;
+          prior.topicDigest.sources = sourceList(tasks);
+          this.store.save(prior);
+        }
+        task = this.service.retry(prior.id, 'research');
+        this.save(scope, date, { modelRetries:0, modelRetryAt:undefined });
+      } else {
+        task = await this.service.createAuthorized({ direction: '专题日报汇总 · ' + date, prompt }, undefined,
+          { digestOwner, topicDigest: { scope, date, automatic, sources:sourceList(tasks) } });
+      }
+      return { date, status:'queued', task };
+    } finally { this.starting.delete(key); }
+  }
+
+  async findArchived({app,root,scope}, date) {
+    const directories = this.service.directories;
+    const list = token => directories.list(app, token);
+    const parents = matchingFolders(await list(root.folderToken), TOPIC_FOLDER).map(driveToken);
+    const found = new Set();
+    for (const parent of parents) {
+      for (const folder of matchingFolders(await list(parent), TOPIC_DIGEST_FOLDER)) {
+        for (const file of await list(driveToken(folder))) if (digestFileDate(file) === date) found.add(file.url);
+      }
+    }
+    this.assertCurrent(scope);
+    if (found.size > 1) throw new ServiceError(409, '飞书有多份当天的汇总，请先核对存储目录');
+    return [...found][0];
+  }
+
+  assertSources(task) {
+    const {scope,date,sources} = task.topicDigest;
+    const day = this.days(scope)[date] ?? {};
+    const reports = this.readyTasks(scope, date, this.roster(scope, date, day));
+    if (!reports || JSON.stringify(sourceList(reports)) !== JSON.stringify(sources)) {
+      throw new ServiceError(409, '当天日报已变化，等待全部日报完成后再重试');
+    }
+  }
+
+  claim(task) {
+    const {scope,date} = task.topicDigest;
+    this.assertCurrent(scope);
     const day = this.days(scope)[date];
+    if ((!task.topicDigest.automatic && this.date() !== date) || day?.taskId || day?.url || day?.creating) throw new ServiceError(409, '当天已有汇总或日期已变化，请重新打开汇总');
+    this.assertSources(task);
+    this.save(scope, date, { taskId:task.id, modelRetries:0, manual:true });
+  }
+
+  async checkTaskOwner(task) {
+    const bound = await this.service.binding.requireBound(task.feishuApp);
+    this.assertTask(task);
+    return Boolean(bound.openId && bound.openId === task.notificationRecipient &&
+      (!task.notificationApp?.appId || bound.appId === task.notificationApp.appId));
+  }
+
+  assertTask(task) {
+    const {scope,date} = task.topicDigest;
+    this.assertCurrent(scope);
+    const day = this.days(scope)[date];
+    if (day?.taskId !== task.id || day.url) throw new ServiceError(409, '当前汇总已交付或会话不再有效');
+  }
+
+  validateSubmission(input) { return output.parse(input); }
+
+  manualStatus(scope) {
+    const date = this.date(), days = this.days(scope);
+    const day = days[date];
+    const sessionDay = day?.taskId ? day : !day?.url && days[this.latest(scope)?.date];
+    const task = sessionDay?.taskId && this.store.get(sessionDay.taskId);
+    if (task) return { date:task.topicDigest.date, taskId:task.id, prompt:task.prompt,
+      status:sessionDay.sent ? 'sent' : sessionDay.retryAt > this.now() ? 'retrying' : task.status === 'ready' ? 'queued' : task.status };
     if (!day?.manual) return null;
     if (day.sent) return { date, status: 'sent' };
     if (!this.readyTasks(scope, date, this.roster(scope, date, day))) return { date, status: 'waiting' };
@@ -124,7 +240,7 @@ export class TopicDigest {
   remoteVisible(scope, digest) {
     if (!digest) return null;
     const local = this.days(scope)[digest.date];
-    return local && local.url !== digest.url ? null : digest;
+    return local?.creating && local.url !== digest.url ? null : digest;
   }
 
   readyTasks(scope, date, expected) {
@@ -177,25 +293,98 @@ export class TopicDigest {
     const context = this.context(), { scope, root } = context;
     if (!root.folderToken) return;
     for (const [date, day] of Object.entries(this.days(scope)).sort()) {
-      if (day.sent || day.retryAt > this.now()) continue;
+      const key = scope + ':' + date;
+      if (day.sent) {
+        const task = day.taskId && this.store.get(day.taskId);
+        if (day.url && task?.status === 'running') this.completeSession(task.id, day.url);
+        continue;
+      }
+      if (day.retryAt > this.now() || this.starting.has(key)) continue;
       this.assertCurrent(scope);
-      const tasks = this.readyTasks(scope, date, this.roster(scope, date, day));
+      const snapshot = day.destination ?? day.intent?.destination;
+      const tasks = snapshot && (day.url || day.intent) ? [] : this.readyTasks(scope, date, this.roster(scope, date, day));
       if (!tasks) continue;
+      const task = day.taskId && this.store.get(day.taskId);
+      const destination = snapshot ?? deliveryFor(tasks[0]);
       let url = day.url;
-      try {
-        if (!url) {
-          url = await this.publish(context, date, day, tasks);
-          this.save(scope, date, { url, creating: undefined });
+      if (!task && !url && !day.creating && this.service.nativeSessions && this.service.queuedSaves) {
+        try { await this.startSession(scope, defaultPrompt, null, { date, automatic:true }); }
+        catch (error) {
+          this.save(scope, date, { retryAt:this.now() + delay });
+          this.store.runtimeLog('topic.digest.retry', { phase:'session_start', code:error.code ?? 'DIGEST_SESSION_FAILED' }, 'warn');
         }
-        await this.notify(context, date, url, tasks[0]);
-        this.save(scope, date, { url, sent: true, expected: undefined, triggered: undefined, attempt: undefined, retryAt: undefined });
+        continue;
+      }
+      if (task && !url && !task.queuedSave) {
+        if (task.status === 'failed') this.retrySession(scope, date, day, task, tasks);
+        continue;
+      }
+      if (task?.status === 'interrupted') continue;
+      this.publishing = key;
+      try {
+        if (!url && day.intent) {
+          url = await this.reconcileCreated(context, date, day.intent);
+          this.save(scope, date, { url, destination, creating:undefined, intent:undefined });
+        }
+        if (!url) {
+          let synthesis;
+          if (task) {
+            await this.requireSourceOwner(context, [...tasks, task]);
+            synthesis = output.parse(await this.service.queuedSaves.readDraft(task)).report;
+            if (JSON.stringify(task.topicDigest.sources) !== JSON.stringify(sourceList(tasks))) {
+              if (!day.creating) {
+                delete task.queuedSave;
+                task.status = 'failed';
+                task.error = '汇总来源已变化，将用最新日报重试';
+                task.publication.status = 'pending';
+                this.service.save(task);
+              }
+              throw new ServiceError(409, '汇总来源已变化，请用最新日报重试');
+            }
+          }
+          const published = await this.publish(context, date, day, tasks, synthesis);
+          url = published.url;
+          if (published.reused) {
+            this.save(scope, date, { url, sent:true, creating:undefined, expected:undefined, triggered:undefined, attempt:undefined, retryAt:undefined });
+            if (task) this.completeSession(task.id, url, true);
+            continue;
+          }
+          this.save(scope, date, { url, destination, creating:undefined, intent:undefined });
+        }
+        if (task && task.status !== 'ready') this.completeSession(task.id, url);
+        await this.notify(context, date, url, destination);
+        this.save(scope, date, { url, sent:true, destination:undefined, expected:undefined, triggered:undefined, attempt:undefined, retryAt:undefined });
       } catch (error) {
         const attempt = (day.attempt ?? 0) + 1;
         this.save(scope, date, { attempt, retryAt: this.now() + Math.min(delay * 2 ** Math.min(attempt - 1, 5), 300_000) });
         this.store.runtimeLog('topic.digest.retry', { phase: url ? 'notification' : 'publication',
           code: error.code ?? 'DIGEST_DELIVERY_FAILED', attempt }, 'warn');
-      }
+      } finally { this.publishing = null; }
     }
+  }
+
+  retrySession(scope, date, day, task, sources) {
+    if (this.service.active.has(task.id) || (day.modelRetries ?? 0) >= retryLimit) return;
+    if (!day.modelRetryAt) {
+      this.save(scope, date, { modelRetryAt:this.now() + delay * 2 ** (day.modelRetries ?? 0) });
+      return;
+    }
+    if (day.modelRetryAt > this.now()) return;
+    task.topicDigest.sources = sourceList(sources);
+    this.store.save(task);
+    this.service.retry(task.id, 'research');
+    this.save(scope, date, { modelRetries:(day.modelRetries ?? 0) + 1, modelRetryAt:undefined });
+  }
+
+  completeSession(id, url, reused = false) {
+    const task = this.store.get(id);
+    task.status = 'ready';
+    task.stage = 'done';
+    task.publication = { ...task.publication, status:'published', url };
+    const run = task.runs.at(-1);
+    if (run) { run.status = 'completed'; run.endedAt = new Date(this.now()).toISOString(); }
+    this.service.save(task);
+    this.service.event(id, 'system', (reused ? '已存在当天的汇总，未改写或重发：' : '专题日报汇总已保存到飞书：') + url);
   }
 
   verifyRoster(scope, date, tasks) {
@@ -214,11 +403,12 @@ export class TopicDigest {
     this.assertCurrent(scope);
     if (!bound.openId || tasks.some(task => (task.notificationRecipient ?? task.feishuApp?.ownerOpenId) !== bound.openId ||
       task.notificationApp?.appId && task.notificationApp.appId !== bound.appId)) {
-      throw Object.assign(new Error('飞书授权与原日报所有者不一致'), { code: 'DIGEST_BINDING_CHANGED' });
+      throw Object.assign(new ServiceError(428, '飞书授权与原日报所有者不一致'), { code: 'DIGEST_BINDING_CHANGED' });
     }
+    return { openId: bound.openId, appId: bound.appId };
   }
 
-  async publish(context, date, day, tasks) {
+  async publish(context, date, day, tasks, synthesis) {
     const { app, root, scope } = context, { directories } = this.service;
     await this.requireSourceOwner(context, tasks);
     const parent = await directories.folder(app, root.folderToken, TOPIC_FOLDER);
@@ -233,6 +423,11 @@ export class TopicDigest {
     if (matches.length > 1) throw Object.assign(new Error('存在多份同日汇总'), { code: 'DIGEST_DOCUMENT_CONFLICT' });
     const title = titleFor(date);
     let [url] = matches;
+    if (url && synthesis && !day.creating) {
+      await this.requireSourceOwner(context, tasks);
+      return { url, reused:true };
+    }
+    const synthesisLines = synthesis ? synthesis.split(/\r?\n/).map(line => line.trim()).filter(Boolean) : [];
     if (!url && day.creating) throw Object.assign(new Error('上次创建尚未确认，继续核对'), { code: 'DIGEST_CREATE_UNCONFIRMED' });
     const sections = [];
     for (const task of tasks) {
@@ -244,29 +439,56 @@ export class TopicDigest {
       sections.push({ title: task.topic.question, paragraphs, source });
     }
     if (!url) {
-      const content = sections.map(({title, paragraphs, source}) => `<h2>${escapeXml(title)}</h2>` +
-        paragraphs.map(line => `<p>${escapeXml(line)}</p>`).join('') +
-        `<p><a href="${escapeXml(source)}">打开原日报</a></p>`).join('');
+      const paragraphsXml = lines => lines.map(line => `<p>${escapeXml(line)}</p>`).join('');
+      const content = (synthesisLines.length ? '<h2>综合观察</h2>' + paragraphsXml(synthesisLines) : '') +
+        sections.map(({title, paragraphs, source}) => `<h2>${escapeXml(title)}</h2>` + paragraphsXml(paragraphs) +
+          `<p><a href="${escapeXml(source)}">打开原日报</a></p>`).join('');
       await this.requireSourceOwner(context, tasks);
       const expected = this.verifyRoster(scope, date, tasks);
-      this.save(scope, date, { expected, creating: true });
+      const intent = { folder, destination:deliveryFor(tasks[0]), links:sections.map(section => section.source),
+        hashes:[...synthesisLines, ...sections.flatMap(section => [section.title,...section.paragraphs])].map(textHash) };
+      this.save(scope, date, { expected, creating:true, intent });
       try { url = await this.documents.create(app, folder, title, content); }
       catch (error) {
-        if (error.definitelyRejected) this.save(scope, date, { expected: undefined, creating: undefined });
+        if (error.definitelyRejected) this.save(scope, date, { expected:undefined, creating:undefined, intent:undefined });
         throw error;
       }
+      intent.url = url;
+      this.save(scope, date, { intent });
+      return { url:await this.reconcileCreated(context, date, intent), reused:false };
     }
     this.assertCurrent(scope);
     const { content } = await this.documents.read(app, url);
-    const canonical = value => value.replace(/\s+/g, ' ').trim();
     const body = plainXml(content).replace(/\s+/g, ' ');
-    if (!sections.every(({title, paragraphs, source}) => content.includes(`href="${escapeXml(source)}"`) &&
-      [title, ...paragraphs].every(line => body.includes(canonical(line))))) {
+    if (!synthesisLines.every(line => body.includes(canonical(line))) ||
+      !sections.every(({title, paragraphs, source}) => content.includes(`href="${escapeXml(source)}"`) &&
+        [title, ...paragraphs].every(line => body.includes(canonical(line))))) {
       throw Object.assign(new Error('汇总日报尚未核对到所有摘要和原文链接'), { code: 'DIGEST_READBACK_INCOMPLETE' });
     }
     await this.requireSourceOwner(context, tasks);
     const expected = this.verifyRoster(scope, date, tasks);
     this.save(scope, date, { expected });
+    return { url, reused:false };
+  }
+
+  async reconcileCreated(context, date, intent) {
+    const {app,scope} = context;
+    await this.requireSourceOwner(context, [intent.destination]);
+    let {url} = intent;
+    if (!url) {
+      const matches = [...new Set((await this.documents.files(app, intent.folder))
+        .filter(file => digestFileDate(file) === date).map(file => file.url))];
+      if (matches.length > 1) throw new ServiceError(409, '存在多份同日汇总，请先核对飞书目录');
+      [url] = matches;
+    }
+    if (!url) throw Object.assign(new Error('上次创建尚未确认，继续核对'), { code:'DIGEST_CREATE_UNCONFIRMED' });
+    const {content} = await this.documents.read(app, url);
+    const hashes = new Set([...content.matchAll(/<(h[1-6]|p)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g)]
+      .map(match => textHash(plainXml(match[2]))));
+    if (!intent.hashes.every(hash => hashes.has(hash)) || !intent.links.every(link => content.includes(`href="${escapeXml(link)}"`))) {
+      throw Object.assign(new Error('汇总日报尚未核对到所有摘要和原文链接'), { code:'DIGEST_READBACK_INCOMPLETE' });
+    }
+    this.assertCurrent(scope);
     return url;
   }
 
