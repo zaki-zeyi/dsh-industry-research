@@ -44,13 +44,16 @@ window.__ModuleLoader__.load({
     function OwnUpdateActions() {
       const state = useUpdates();
       const busy = state.busy || state.submitting;
-      return h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' }, 'aria-label': '行研工作台官方 Git 更新' },
+      const error = state.connectionError || state.error || state.operation?.error;
+      return h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }, 'aria-label': '行研工作台官方 Git 更新' },
         h('button', { type: 'button', style: { ...updateButtonStyle, background: '#111216', color: '#fff', opacity: busy ? 0.6 : 1 },
           disabled: Boolean(busy || state.candidateVersion && !state.eligible),
           onClick: () => updateAction(state.candidateVersion ? 'install' : 'check', state.candidateVersion),
           title: state.unavailableReason ?? '由 DSH 官方插件管理器安装并热加载' },
         busy ? '正在更新…' : state.candidateVersion ? `更新到 ${state.candidateVersion}` : '检查更新'),
-        state.candidateVersion && h('button', { type: 'button', style: updateButtonStyle, disabled: Boolean(busy), onClick: () => updateAction('check') }, '重新检查'));
+        state.candidateVersion && h('button', { type: 'button', style: updateButtonStyle, disabled: Boolean(busy), onClick: () => updateAction('check') }, '重新检查'),
+        (error || state.operation) && h('span', { role: error ? 'alert' : 'status', style: { color: error ? '#b42318' : '#315b43', maxWidth: 280, fontSize: 13 } },
+          error || phaseLabel[state.operation.state] || state.operation.state));
     }
     function UpdateBadge({ subject }) { return ours(subject) ? h(OwnUpdateBadge) : null; }
     function OwnUpdateBadge() {
