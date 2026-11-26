@@ -28,7 +28,8 @@ function blank(key) {
   });
 }
 
-export function createTabStore({ freshMs = FRESH_MS, retryMs = RETRY_MS, now = () => Date.now() } = {}) {
+export function createTabStore({ freshMs = FRESH_MS, retryMs = RETRY_MS, now = () => Date.now(), selectExtra } = {}) {
+  const extra = value => selectExtra ? { extra: selectExtra(value) } : {};
   const entries = new Map();
   const listeners = new Set();
 
@@ -54,6 +55,7 @@ export function createTabStore({ freshMs = FRESH_MS, retryMs = RETRY_MS, now = (
     const current = read(key);
     if (current.epoch !== epoch) return false; // a newer request owns this scope
     write(key, {
+      ...extra(value),
       items: Array.isArray(value?.items) ? value.items : [],
       syncedAt: value?.syncedAt ?? current.syncedAt ?? null,
       status: 'ready',
@@ -88,6 +90,7 @@ export function createTabStore({ freshMs = FRESH_MS, retryMs = RETRY_MS, now = (
         // A failed sync keeps the visible cache and only reports the reason.
         if (value?.syncError) write(key, { syncError: value.syncError, status: 'ready' });
         else if (Array.isArray(value?.items)) write(key, {
+          ...extra(value),
           items: value.items,
           syncedAt: value.syncedAt ?? read(key).syncedAt ?? null,
           syncError: '',

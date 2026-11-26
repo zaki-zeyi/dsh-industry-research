@@ -99,23 +99,26 @@ test('热更新后重载工作台资源并回到设置，运行版本与启动�
       candidateVersion: installed ? null : '0.13.16', lastResult: installed ? 'updated' : null,
       eligible: true, supported: true, packageReady: true, actionToken: 'test-token' } });
   });
-  await page.goto('/?view=settings');
-  await expect(page.getByLabel('版本信息')).toContainText('0.13.15');
+  await page.goto('/?view=settings#keep-task');
+  await expect(page.locator('.settings-version-number')).toHaveText('0.13.15');
+  const reloaded = page.waitForEvent('load');
   await page.getByRole('button', { name: '安装已校验版本' }).click();
-  await expect(page.getByLabel('版本信息')).toContainText('0.13.16');
+  await reloaded;
+  await expect(page.locator('.settings-version-number')).toHaveText('0.13.16');
   await expect(page.getByLabel('版本信息')).toContainText('启动层版本：0.13.15');
   await expect(page.getByRole('tab', { name: '版本与更新' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page).toHaveURL(/view=settings#keep-task$/);
   await expect(page.getByText(/重启 DSH/)).toHaveCount(0);
 });
 
 test('停留在公司资料页时也检测运行版本变化并重新加载资源', async ({ page }) => {
   let version = '0.13.15';
   await page.route('**/api/plugin-update', route => route.fulfill({ json: { installedVersion: version } }));
-  await page.goto('/');
+  await page.goto('/?view=library#keep-task');
   await expect(page.getByRole('heading', { name: '全量信息库', exact: true })).toBeVisible();
   const loaded = page.waitForEvent('load');
   version = '0.13.16';
   await loaded;
-  await expect(page).toHaveURL(/view=library/);
+  await expect(page).toHaveURL(/view=library#keep-task$/);
   await expect(page.getByRole('heading', { name: '全量信息库', exact: true })).toBeVisible();
 });

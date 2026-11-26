@@ -9,7 +9,8 @@ export function bindingBlockers(service) {
       kind:t?.briefing?.kind??(t?.topic?'topic':t?.internal?'internal':t?.analysis?'analysis':'industry'),
       reason:t?.publication?.status==='publishing'?(active?'uploading':'upload_pending'):t?.status==='queued'?'queued':t?.stage==='waiting_save'?'waiting_save':active&&t?.status!=='running'?'finishing':'researching',
       canOpenSession:Boolean(t?.nativeSession&&t.nativeSessionId)};
-  }).concat(service.topicDeletions?.blockers()??[],service.internalReconciliation?.blockers()??[],service.documentDeletions?.blockers()??[]);
+  }).concat(service.topicDeletions?.blockers()??[],service.internalReconciliation?.blockers()??[],service.documentDeletions?.blockers()??[],
+    service.topicDigest?.active ? [{ id:'topic-digest', title:'专题日报汇总', kind:'topic', reason:'uploading', canOpenSession:false }] : []);
 }
 
 export function requireIdleBinding(service, action='重新绑定') {
