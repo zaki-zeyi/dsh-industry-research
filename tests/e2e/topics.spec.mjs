@@ -129,7 +129,7 @@ test('PRD 6004 专题列表置顶显示已完成的日报汇总并打开飞书�
   const topic = { topicId:'77777777-7777-4777-8777-777777777777', question:'测试专题', workflowVersion:468 };
   let digest = null;
   await page.route(/\/api\/topics(?:\?.*)?$/, route => route.fulfill({ json: {
-    items: [{ id:'digest-topic', topic, status:'ready', dailyReports:[] }], digest, syncedAt:new Date().toISOString(),
+    items: [{ id:'digest-topic', topic, status:'ready', dailyReports:[] }], digest, digestDate:date, syncedAt:new Date().toISOString(),
   } }));
   await context.route(url, route => route.fulfill({ body:'汇总日报验收' }));
   await page.goto('/');
@@ -137,10 +137,13 @@ test('PRD 6004 专题列表置顶显示已完成的日报汇总并打开飞书�
   await expect(page.getByText('全部专题日报生成后，汇总会显示在这里。')).toBeVisible();
   const link = page.getByRole('link', { name:'打开最新日报汇总' });
   await expect(link).toHaveCount(0);
+  const retry = page.getByRole('button', {name:'重试生成汇总',exact:true});
+  await expect(retry).toBeEnabled();
   digest = { date, url };
   await page.getByRole('button', { name:'刷新', exact:true }).click();
   await expect(link).toHaveAttribute('href', url);
   await expect(link.getByText(date, { exact:true })).toBeVisible();
+  await expect(retry).toHaveCount(0);
   const [report] = await Promise.all([page.waitForEvent('popup'), link.click()]);
   await expect(report).toHaveURL(url);
   await report.close();
@@ -151,37 +154,100 @@ test('PRD 6004 专题列表置顶显示已完成的日报汇总并打开飞书�
   await expect(link).toBeVisible();
 });
 
-test('PRD 6023 从汇总卡片手动生成，提示日报未齐并在完成后更新文档入口', async ({page}) => {
+test('PRD 6129 编辑汇总 Prompt、启动原生会话，按服务端日期禁止重复生成并保留文档入口', async ({page}) => {
   const scope = (await (await page.request.get('/api/config')).json()).topicScope;
-  const date = '2026-11-26';
-  const url = 'https://example.feishu.cn/docx/ManualDigest';
+  const date = '2026-01-02', previousDate = '2026-01-01';
+  const url = 'https://example.feishu.cn/docx/ManualDigest', previousUrl = 'https://example.feishu.cn/docx/PreviousDigest';
+  const defaultPrompt = '自动聚合所有日报的摘要生成汇总日报的飞书文档。并发送到飞书消息。';
+  const prompt = '聚合所有日报并在飞书通知中突出共性趋势。';
+  const task = {id:'61290000-0000-4000-8000-000000000001',direction:'汇总日报 · '+date,status:'queued',
+    createdAt:date+'T01:00:00Z',nativeSession:true,nativeSessionId:'digest-native-session'};
   let reportsReady = false, finished = false, requests = 0;
   await page.route(/\/api\/topics(?:\?.*)?$/, route => route.fulfill({ json: {
-    items: [], digest: finished ? {date,url} : null, syncedAt:new Date().toISOString(),
-    digestGeneration: requests > 1 ? {date,status:finished ? 'sent' : 'queued'} : null,
+    items: [], digestDate:date, digest: finished ? {date,url} : {date:previousDate,url:previousUrl}, syncedAt:new Date().toISOString(),
+    digestGeneration: requests > 1 ? {date,status:finished ? 'sent' : 'queued',taskId:task.id,prompt}
+      : {date:previousDate,status:'sent',prompt:'上一期的自定义 Prompt'},
   } }));
   await page.route('**/api/topics/digest', route => {
     expect(route.request().method()).toBe('POST');
-    expect(route.request().postDataJSON()).toEqual({scope});
+    expect(route.request().postDataJSON()).toEqual({scope,prompt});
     requests++;
-    if (!reportsReady) return route.fulfill({ status:409,json:{error:'今天的专题日报尚未全部生成，请等日报补齐后再试'} });
-    return route.fulfill({ status:202,json:{date,status:'queued'} });
+    if (!reportsReady) return route.fulfill({status:409,json:{error:'今天的专题日报尚未全部生成，请等日报补齐后再试'}});
+    return route.fulfill({status:202,json:{date,status:'queued',task}});
   });
+  await page.route('**/api/tasks/'+task.id, route => route.fulfill({json:{task:{...task,status:finished ? 'ready' : 'queued'}}}));
   await page.goto('/');
-  await page.getByRole('button', { name:'专题调研',exact:true }).click();
+  await page.getByRole('button', {name:'专题调研',exact:true}).click();
   const card = page.locator('.topic-digest-card');
-  await card.getByRole('button', { name:'生成汇总',exact:true }).click();
-  await expect(card.getByRole('alert')).toContainText('尚未全部生成');
+  const link = card.getByRole('link', {name:'打开最新日报汇总'});
+  const retry = card.getByRole('button', {name:'重试生成汇总',exact:true});
+  await expect(link).toHaveAttribute('href',previousUrl);
+  await retry.click();
+  const dialog = page.getByRole('dialog', {name:'重试生成汇总'});
+  const promptField = dialog.getByLabel('任务 Prompt', {exact:false});
+  const start = dialog.getByRole('button', {name:'启动',exact:true});
+  await expect(promptField).toHaveValue(defaultPrompt);
+  expect(requests).toBe(0);
+  await promptField.fill('   ');
+  await expect(start).toBeDisabled();
+  await promptField.fill(prompt);
+  await start.click();
+  await expect(dialog.getByRole('alert')).toContainText('尚未全部生成');
+  await expect(promptField).toHaveValue(prompt);
   reportsReady = true;
-  await card.getByRole('button', { name:'生成汇总',exact:true }).click();
+  await start.click();
+  await expect(page).toHaveURL(new RegExp('#'+task.id+'$'));
+  await expect(page.getByRole('heading', {name:task.direction,exact:true})).toBeVisible();
+  await expect(page.getByRole('region', {name:'DSH 原生会话'})).toBeVisible();
+  await page.getByRole('button', {name:'← 返回工作台'}).click();
   await expect(card.getByRole('status')).toContainText('正在生成今天的汇总');
-  await expect(card.getByRole('button', { name:'生成中…',exact:true })).toBeDisabled();
-  await expect(card.getByRole('link')).toHaveCount(0);
+  await expect(card.getByRole('button', {name:'生成中…',exact:true})).toBeDisabled();
+  await expect(card.getByRole('button', {name:'AI 会话详情',exact:true})).toBeEnabled();
+  await expect(link).toHaveAttribute('href',previousUrl);
   finished = true;
   await expect(card.getByRole('status')).toHaveText('今天的汇总已生成并发送飞书通知。', {timeout:10000});
-  await expect(card.getByRole('link', { name:'打开最新日报汇总' })).toHaveAttribute('href',url);
-  await expect(card.getByRole('button', { name:'生成汇总',exact:true })).toBeEnabled();
+  await expect(link).toHaveAttribute('href',url);
+  await expect(retry).toHaveCount(0);
+  await expect(card.getByRole('button', {name:'AI 会话详情',exact:true})).toBeEnabled();
   expect(requests).toBe(2);
+});
+
+test('PRD 6129 汇总失败后可编辑保存的 Prompt，卡片可独立重开原会话', async ({page}) => {
+  const date = '2026-01-02', prompt = '已保存的汇总 Prompt，优先标注原始来源。';
+  const task = {id:'61290000-0000-4000-8000-000000000002',direction:'失败的汇总日报',status:'failed',
+    createdAt:date+'T01:00:00Z',nativeSession:true,nativeSessionId:'failed-digest-native-session'};
+  let canOpen = false, taskReads = 0;
+  await page.route(/\/api\/topics(?:\?.*)?$/, route => route.fulfill({json:{items:[],digestDate:date,
+    digestGeneration:{date,status:'failed',taskId:task.id,prompt},syncedAt:new Date().toISOString()}}));
+  await page.route('**/api/tasks/'+task.id, route => {
+    expect(route.request().method()).toBe('GET');
+    taskReads++;
+    return canOpen ? route.fulfill({json:{task}}) : route.fulfill({status:503,json:{error:'暂时无法读取会话'}});
+  });
+  await page.goto('/');
+  await page.getByRole('button', {name:'专题调研',exact:true}).click();
+  const card = page.locator('.topic-digest-card');
+  await expect(card.getByRole('status')).toContainText('汇总生成失败');
+  const retry = card.getByRole('button', {name:'重试生成汇总',exact:true});
+  await retry.click();
+  const dialog = page.getByRole('dialog', {name:'重试生成汇总'});
+  const promptField = dialog.getByLabel('任务 Prompt', {exact:false});
+  await expect(promptField).toHaveValue(prompt);
+  await expect(promptField).toBeFocused();
+  await promptField.fill('重新编辑失败任务的汇总 Prompt。');
+  await expect(dialog.getByRole('button', {name:'启动',exact:true})).toBeEnabled();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(retry).toBeFocused();
+  const details = card.getByRole('button', {name:'AI 会话详情',exact:true});
+  await details.click();
+  await expect(card.getByRole('alert')).toHaveText('暂时无法读取会话');
+  expect(taskReads).toBe(1);
+  canOpen = true;
+  await details.click();
+  await expect(page).toHaveURL(new RegExp('#'+task.id+'$'));
+  await expect(page.getByRole('heading', {name:task.direction,exact:true})).toBeVisible();
+  await expect(page.getByRole('region', {name:'DSH 原生会话'})).toBeVisible();
 });
 
 test('专题列表一键重试保留列表，显示部分提交结果并更新日报状态', async ({page}) => {

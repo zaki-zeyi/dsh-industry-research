@@ -69,7 +69,7 @@ export class QueuedSaves {
 
   async submit(id, { requestId, terminalId, input }) {
     const task = this.service.require(id);
-    const payload = validateSavePayload(task, input);
+    const payload = task.topicDigest ? this.service.topicDigest.validateSubmission(input) : validateSavePayload(task, input);
     const digest = saveDigest(JSON.stringify(payload));
     if (task.queuedSave?.requestId === requestId && task.terminalId === terminalId) {
       if (task.queuedSave.digest !== digest) throw conflict('本轮已提交另一份增量');
@@ -89,10 +89,12 @@ export class QueuedSaves {
 
   async accept(task, payload, { requestId, terminalId, digest, signal }) {
     const bound = await this.service.binding.requireBound(task.feishuApp);
-    if (task.feishuApp.ownerOpenId && bound.openId !== task.feishuApp.ownerOpenId) throw conflict('飞书账号与本次调研的绑定不一致');
-    await this.service.directories.prepare(task, signal);
+    const owner = task.topicDigest ? task.notificationRecipient : task.feishuApp.ownerOpenId;
+    if (owner && bound.openId !== owner) throw conflict('飞书账号与本次调研的绑定不一致');
+    if (task.topicDigest) this.service.topicDigest.assertTask(task);
+    else await this.service.directories.prepare(task, signal);
     this.assertSubmission(task.id, requestId, terminalId);
-    const jobs = this.plan(task, payload);
+    const jobs = task.topicDigest ? [] : this.plan(task, payload);
     await Promise.all(jobs.filter(job => job.url && /\/(?:wiki|docs)\//.test(job.url)).map(async job => {
       const doc = await this.documents.read(task.feishuApp, job.url);
       job.documentId = doc.id;
@@ -118,6 +120,7 @@ export class QueuedSaves {
     const draft = await this.documents.read(task.feishuApp, url);
     if (saveDigest(JSON.stringify(this.parseDraft(draft))) !== digest) throw nextStatus('飞书草稿内容尚未完整读回，请重试提交');
     const latest = this.assertSubmission(task.id, requestId, terminalId).task;
+    if (latest.topicDigest) this.service.topicDigest.assertTask(latest);
     latest.feishuRoot = task.feishuRoot;
     latest.industryLibrary = task.industryLibrary ?? latest.industryLibrary;
     latest.queuedSave = { requestId, digest, url, ownerOpenId: bound.openId,
@@ -139,7 +142,8 @@ export class QueuedSaves {
       this.store.deleteSetting(stageKey);
     });
     this.service.event(latest.id, 'state', { status: latest.status, stage: latest.stage, publication: latest.publication.status });
-    if (!jobs.length) this.finish(latest.id);
+    if (latest.topicDigest) void this.service.topicDigest.tick();
+    else if (!jobs.length) this.finish(latest.id);
     this.wake();
     return { accepted: true };
   }
@@ -506,7 +510,7 @@ export class QueuedSaves {
 
   recover(task) {
     if (!task.queuedSave) return false;
-    if (task.status === 'running') this.finish(task.id);
+    if (task.status === 'running' && !task.topicDigest) this.finish(task.id);
     return true;
   }
 
@@ -523,14 +527,17 @@ export class QueuedSaves {
       task.publication = { ...task.publication, status: 'publishing', error: null };
       this.store.save(task);
     });
-    this.finish(task.id);
-    this.wake();
+    if (task.topicDigest) void this.service.topicDigest.tick();
+    else { this.finish(task.id); this.wake(); }
     return this.service.require(task.id);
   }
 
   cancel(task) {
     if (task.status !== 'running') throw conflict('任务当前未在执行');
-    if ([...this.running.values()].some(run => run.job.taskId === task.id)) throw conflict('飞书写入正在确认，请稍后取消待保存项目');
+    if ([...this.running.values()].some(run => run.job.taskId === task.id) ||
+      task.topicDigest && this.service.topicDigest.publishing === task.topicDigest.scope + ':' + task.topicDigest.date) {
+      throw conflict('飞书写入正在确认，请稍后取消待保存项目');
+    }
     task.status = 'interrupted';
     task.stage = 'waiting_save';
     task.publication = { ...task.publication, status: 'interrupted' };
