@@ -20,12 +20,12 @@
       },
       "versions": [
         {
-          "version": "0.13.16",
-          "publishTimestamp": 1795663822,
+          "version": "0.13.17",
+          "publishTimestamp": 1795675370,
           "source": {
             "type": "git",
             "url": "https://github.com/zaki-zeyi/dsh-industry-research",
-            "commit": "03a7b1713a6b879636125d775140785ce922794a"
+            "commit": "9d26a87ee816d63e4464a9722e84e12b483e495c"
           }
         }
       ]
