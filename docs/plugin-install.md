@@ -4,20 +4,14 @@
 
 ## 用户安装
 
-Windows/macOS 桌面版和网页版的「添加插件」均可填写：
-
-```text
-https://github.com/zaki-zeyi/dsh-industry-research.git#release
-```
-
-仓库默认分支为 `main`，保存开发源码；安装地址通过 `#release` 显式选择 `release` 分支。`release` 与 `main` 共享同一条 Git 历史：每个发布提交以源码提交为父提交，内容为源码目录叠加经 CI 验证的构建产物（预构建页面、完整生产依赖和安装清单），安装时仍按安装清单的 `files` 只打包 `plugin`、`server`、`dist`、`docs` 与三个运行期脚本。网页端的下载、安装、执行均在 DSH 服务端发生。
+推荐通过下方的 [DSH「插件 → 发现」](#从-dsh-插件页面安装与更新) 安装；它使用经过验证的固定 Git 提交，后续可从 DSH 原地更新。手动添加时，可用 `https://github.com/zaki-zeyi/dsh-industry-research.git#<安装提交>`，提交应取自 [官方索引](../dsh-plugin-index.json) 的 `source.commit`，不要使用源码提交或浮动 `#release`。网页端的下载、安装、执行均在 DSH 服务端发生。
 
 本地目录安装：从 GitHub Releases 下载所需版本的 `desktop.zip`，解压后在弹窗填写包含 `package.json` 的目录绝对路径。网页版填写服务所在机器上的路径。保留目录，按宿主提示启用或重新加载。ZIP 包含 Windows/macOS x64、arm64 的原生终端依赖。
 
 也可使用宿主 CLI：
 
 ```sh
-dsh plugin --profile <profile> add https://github.com/zaki-zeyi/dsh-industry-research.git#release
+dsh plugin --profile <profile> add 'https://github.com/zaki-zeyi/dsh-industry-research.git#<安装提交>'
 dsh plugin --profile <profile> add <tgz绝对路径>
 ```
 
