@@ -45,12 +45,14 @@ export function claimUpdate(directory, kind) {
 export function confirmUpdateRuntime(directory, version) {
   let record;
   try { record = read(resolve(directory, 'official-update.json')); } catch { return; }
-  if (!record?.id || record.version !== version || !['checking', 'installing', 'removing'].includes(record.state)) return;
+  const legacyEarlyFailure = record?.state === 'failed' && record.error === 'DSH 已完成安装，但工作台新版健康状态尚未确认';
+  if (!record?.id || record.version !== version || !legacyEarlyFailure && !['checking', 'installing', 'removing'].includes(record.state)) return;
   atomicWrite(resolve(directory, 'official-ready.json'), { id: record.id, version, pid: process.pid, at: new Date().toISOString() });
 }
 
-export function confirmedUpdateRuntime(directory, record) {
+export function confirmedUpdateRuntime(directory, record, maxAge = Infinity) {
   let ready;
   try { ready = read(resolve(directory, 'official-ready.json')); } catch { return false; }
-  return Boolean(ready && ready.id === record.id && ready.version === record.version && ready.pid === process.pid && ready.at >= record.startedAt);
+  return Boolean(ready && ready.id === record.id && ready.version === record.version && ready.pid === process.pid &&
+    ready.at >= record.startedAt && Date.now() - Date.parse(ready.at) <= maxAge);
 }

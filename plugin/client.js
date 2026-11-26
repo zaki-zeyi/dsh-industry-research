@@ -16,7 +16,7 @@ window.__ModuleLoader__.load({
     async function updateAction(action, version) {
       const epoch = updateEpoch;
       try {
-        emitUpdate({ connectionError: '', submitting: true });
+        emitUpdate({ connectionError: '', submitting: true, pendingAction: action });
         const status = await readUpdate();
         if (updateStopped || epoch !== updateEpoch) return;
         const response = await fetch(`${updateEndpoint}?action=${action}${version ? `&version=${encodeURIComponent(version)}` : ''}`, {
@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
         if (!response.ok) throw new Error(result.error ?? '更新请求未完成');
         if (!updateStopped && epoch === updateEpoch) emitUpdate(result);
       } catch (error) { if (!updateStopped && epoch === updateEpoch) emitUpdate({ connectionError: error.message }); }
-      finally { if (!updateStopped && epoch === updateEpoch) emitUpdate({ submitting: false }); }
+      finally { if (!updateStopped && epoch === updateEpoch) emitUpdate({ submitting: false, pendingAction: null }); }
     }
     function useUpdates() {
       const state = React.useSyncExternalStore(callback => { updateListeners.add(callback); return () => updateListeners.delete(callback); }, () => updateState);
@@ -55,7 +55,7 @@ window.__ModuleLoader__.load({
           disabled: Boolean(busy || state.candidateVersion && !state.eligible),
           onClick: () => updateAction(state.candidateVersion ? 'install' : 'check', state.candidateVersion),
           title: state.unavailableReason ?? '由 DSH 官方插件管理器安装并热加载' },
-        busy ? '正在更新…' : state.candidateVersion ? `更新到 ${state.candidateVersion}` : '检查更新'),
+        busy ? state.pendingAction === 'check' && !state.busy ? '正在检查…' : '正在更新…' : state.candidateVersion ? `更新到 ${state.candidateVersion}` : '检查更新'),
         state.candidateVersion && h('button', { type: 'button', style: updateButtonStyle, disabled: Boolean(busy), onClick: () => updateAction('check') }, '重新检查'),
         (error || state.operation) && h('span', { role: error ? 'alert' : 'status', style: { color: error ? '#b42318' : '#315b43', maxWidth: 280, fontSize: 13 } },
           error || phaseLabel[state.operation.state] || state.operation.state));
