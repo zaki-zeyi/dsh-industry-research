@@ -122,8 +122,11 @@ test('旧版误报仅在当前启动的健康回执与目标版本一致时校�
   const f = fixture(t);
   f.updater.start('1.1.0'); await f.updater.work;
   const record = f.updater.record();
-  writeFileSync(f.updater.file, JSON.stringify({ ...record, state: 'failed', error: 'DSH 已完成安装，但工作台新版健康状态尚未确认' }));
   const next = new OfficialGitUpdates(f.service, () => f.manager, '1.1.0', { cacheDir: f.cacheDir });
+  writeFileSync(f.updater.file, JSON.stringify({ ...record, installCommit: undefined, state: 'removing' }));
+  const settling = await next.snapshot();
+  assert.equal(settling.operation.state, 'removing'); assert.equal(settling.busy, true);
+  writeFileSync(f.updater.file, JSON.stringify({ ...record, state: 'failed', error: 'DSH 已完成安装，但工作台新版健康状态尚未确认' }));
   assert.equal((await next.snapshot()).operation.state, 'updated');
   writeFileSync(f.updater.file, JSON.stringify({ ...record, id: 'different-operation', state: 'failed', error: 'DSH 已完成安装，但工作台新版健康状态尚未确认' }));
   assert.equal((await next.snapshot()).operation.state, 'failed');

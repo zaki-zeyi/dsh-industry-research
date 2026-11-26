@@ -49,8 +49,9 @@ export function confirmUpdateRuntime(directory, version) {
   atomicWrite(resolve(directory, 'official-ready.json'), { id: record.id, version, pid: process.pid, at: new Date().toISOString() });
 }
 
-export function confirmedUpdateRuntime(directory, record) {
+export function confirmedUpdateRuntime(directory, record, maxAge = Infinity) {
   let ready;
   try { ready = read(resolve(directory, 'official-ready.json')); } catch { return false; }
-  return Boolean(ready && ready.id === record.id && ready.version === record.version && ready.pid === process.pid && ready.at >= record.startedAt);
+  return Boolean(ready && ready.id === record.id && ready.version === record.version && ready.pid === process.pid &&
+    ready.at >= record.startedAt && Date.now() - Date.parse(ready.at) <= maxAge);
 }

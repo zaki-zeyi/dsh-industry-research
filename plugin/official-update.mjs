@@ -22,6 +22,9 @@ export class OfficialGitUpdates {
     try {
       const record = JSON.parse(readFileSync(this.file, 'utf8'));
       if (live?.kind === 'official' && live.id === record.id) return record;
+      // A legacy updater has no disk lease. Give its final result a bounded
+      // grace period after this boot confirms health, instead of flashing an interruption.
+      if (!record.installCommit && !terminal.has(record.state) && confirmedUpdateRuntime(this.cacheDir, record, 30_000)) return record;
       if (!terminal.has(record.state)) return { ...record, state: 'interrupted', error: '上次更新被中断，请检查当前版本后重试' };
       return record;
     } catch { return null; }
@@ -69,7 +72,7 @@ export class OfficialGitUpdates {
     return { installedVersion: installed?.version ?? null, runningVersion: this.version, source: installed?.source ?? null,
       supported, eligible, candidateVersion: candidate?.version ?? null, checkedAt: this.checkedAt,
       checking: Boolean(this.checking), error: this.error, operation,
-      busy: Boolean(activeUpdate(this.cacheDir)),
+      busy: Boolean(activeUpdate(this.cacheDir) || operation && !terminal.has(operation.state)),
       unavailableReason: !supported ? '当前 DSH 不支持官方 Git 更新' : !eligible ? '请通过 DSH 安装固定 Git 提交的版本后使用此入口' : null };
   }
 
