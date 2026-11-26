@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { notificationContext } from './notification-context.mjs';
 import { documentToken, escapeXml, plainXml } from './queued-save-documents.mjs';
 import { driveType } from './folder-identity.mjs';
+import { ServiceError } from './service-error.mjs';
 import { TOPIC_DIGEST_FOLDER, TOPIC_FOLDER, topicDeletionState, topicScheduleDate, topicScheduleRequestKey, topicScope } from './topics.mjs';
 
 const titleFor = date => `${TOPIC_DIGEST_FOLDER} · ${date}`;
@@ -85,6 +86,39 @@ export class TopicDigest {
   latest(scope = this.context().scope) {
     const [date, state] = Object.entries(this.days(scope)).filter(([, day]) => day.url).sort(([a], [b]) => b.localeCompare(a))[0] ?? [];
     return state ? { date, url: state.url } : null;
+  }
+
+  async generate(scope) {
+    const context = this.context();
+    if (context.scope !== scope) throw new ServiceError(409, '飞书账号或存储位置已变化，请刷新专题列表后再试');
+    if (!context.root.folderToken) throw new ServiceError(409, '请先确认飞书存储位置，再生成日报汇总');
+    await this.service.binding.requireBound(context.app);
+    if (this.context().scope !== scope) throw new ServiceError(409, '飞书账号或存储位置已变化，请刷新专题列表后再试');
+    if (this.closed || this.service.closed || this.service.updating) throw new ServiceError(503, '工作台正在停止或更新，请稍后再试');
+
+    const date = topicScheduleDate(new Date(this.now()));
+    const day = this.days(scope)[date] ?? {};
+    if (day.sent) {
+      if (!day.manual) this.save(scope, date, { manual: true });
+      return { date, status: 'sent' };
+    }
+    const expected = this.roster(scope, date, day);
+    if (!expected.length) throw new ServiceError(409, '今天没有待汇总的专题日报');
+    if (!this.readyTasks(scope, date, expected)) throw new ServiceError(409, '今天的专题日报尚未全部生成，请等日报补齐后再试');
+    this.save(scope, date, { manual: true, retryAt: undefined });
+    // The automatic worker owns all writes. A click wakes that same worker
+    // and can retry delivery, but never schedules a second writer or sender.
+    void this.tick();
+    return { date, status: 'queued' };
+  }
+
+  manualStatus(scope) {
+    const date = topicScheduleDate(new Date(this.now()));
+    const day = this.days(scope)[date];
+    if (!day?.manual) return null;
+    if (day.sent) return { date, status: 'sent' };
+    if (!this.readyTasks(scope, date, this.roster(scope, date, day))) return { date, status: 'waiting' };
+    return { date, status: day.retryAt > this.now() ? 'retrying' : 'queued' };
   }
 
   remoteVisible(scope, digest) {
