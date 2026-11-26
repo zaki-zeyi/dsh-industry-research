@@ -82,7 +82,8 @@ export class OfficialGitUpdates {
     const lease = claimUpdate(this.cacheDir, 'official');
     const operation = lease.operation;
     operation.record = { id: randomUUID(), version: target.version, startedAt: operation.startedAt, events: [] };
-    this.save(operation, 'checking');
+    try { this.save(operation, 'checking'); }
+    catch (error) { lease.release(); throw error; }
     // DSH owns updateBundle: do not await it from a disposer or a request whose
     // route will disappear when DSH unloads this package.
     this.work = this.run(target, operation).finally(() => lease.release());

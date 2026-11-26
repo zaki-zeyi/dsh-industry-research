@@ -83,3 +83,9 @@ test('断网检查保留原版本；未完成的持久化操作在重新启动�
   writeFileSync(f.updater.file, JSON.stringify({ id: 'crash', state: 'removing', version: '1.1.0' }));
   assert.equal((await f.updater.snapshot()).operation.state, 'interrupted');
 });
+
+test('无法持久化安装意图时释放互斥状态且不调用宿主', t => {
+  const f = fixture(t); f.updater.file = f.cacheDir;
+  assert.throws(() => f.updater.start('1.1.0'));
+  assert.equal(activeUpdate(f.cacheDir), undefined); assert.equal(f.calls.length, 0);
+});
