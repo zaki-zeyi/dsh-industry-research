@@ -11,8 +11,9 @@ if (!/^http:\/\/127\.0\.0\.1:\d+\/?$/.test(url ?? '') || !/^\d+\.\d+\.\d+$/.test
 const root = url.replace(/\/$/, '');
 const output = resolve('artifacts/desktop-hot-update', targetVersion); mkdirSync(output, { recursive: true });
 function processes() {
+  const port = Number(new URL(root).port);
   const result = spawnSync('powershell.exe', ['-NoProfile', '-Command',
-    "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'DeepSeek Harness.exe' -and ($_.CommandLine -match '--expose-internals' -or $_.CommandLine -notmatch ' --') } | Select-Object ProcessId,CreationDate | ConvertTo-Json -Compress"],
+    `$listenerOwners = @(Get-NetTCPConnection -State Listen -LocalPort ${port} -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique); $desktopProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'DeepSeek Harness.exe'"); $desktopIds = @($desktopProcesses.ProcessId); Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -in $listenerOwners -or ($_.Name -eq 'DeepSeek Harness.exe' -and $_.ParentProcessId -notin $desktopIds) } | Select-Object ProcessId,CreationDate | ConvertTo-Json -Compress`],
   { encoding: 'utf8', windowsHide: true });
   assert.equal(result.status, 0, result.stderr);
   const value = JSON.parse(result.stdout);

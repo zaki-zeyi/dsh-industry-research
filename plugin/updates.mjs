@@ -1,24 +1,14 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { stageUpdateArchive } from './update-download.mjs';
 import { updateBusy } from './update-busy.mjs';
 
-const releaseUrl = 'https://api.github.com/repos/zaki-zeyi/dsh-industry-research/releases/latest';
-const settingKey = 'plugin-update';
+import { newerVersion, readJson, readVerifiedRelease } from "./update-release.mjs";
+import { activeUpdate, claimUpdate } from "./update-operation.mjs";
+
+const settingKey = "plugin-update";
 const checkIntervalMs = 6 * 60 * 60 * 1000;
 const retryIntervalMs = 5 * 60 * 1000;
 const releaseAgeMs = 12 * 60 * 60 * 1000;
-const versionPattern = /^(\d+)\.(\d+)\.(\d+)$/;
-const commitPattern = /^[a-f0-9]{40}$/;
-
-function newerVersion(candidate, installed) {
-  const next = versionPattern.exec(candidate);
-  const current = versionPattern.exec(installed);
-  if (!next || !current) return false;
-  for (let index = 1; index <= 3; index++) {
-    if (Number(next[index]) !== Number(current[index])) return Number(next[index]) > Number(current[index]);
-  }
-  return false;
-}
 
 function failureDetails(error, phase, durationMs) {
   const message = String(error?.message ?? '');
@@ -30,13 +20,6 @@ function failureDetails(error, phase, durationMs) {
           : /fetch failed|network|ECONN|ENET/i.test(message) ? 'NETWORK_FAILED'
           : /任务或写入正在执行/.test(message) ? 'WORKBENCH_BUSY' : 'UPDATE_FAILED';
   return { phase, code, durationMs, ...(Number.isInteger(httpStatus) && httpStatus >= 100 ? { httpStatus } : {}) };
-}
-
-async function readJson(response, maxBytes) {
-  if (!response.ok) throw new Error(`更新服务返回 ${response.status}`);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.length > maxBytes) throw new Error('更新清单过大');
-  return { bytes, value: JSON.parse(bytes.toString('utf8')) };
 }
 
 export class PluginUpdates {
@@ -266,11 +249,8 @@ export class PluginUpdates {
         this.downloadAbort?.abort();
         await this.downloadWork.promise.catch(() => {});
       }
-      const { value: release } = await readJson(await this.request(releaseUrl, {
-        headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'dsh-industry-research' },
-        signal: AbortSignal.timeout(15_000),
-      }), 128 * 1024);
-      if (/^v\d+\.\d+\.\d+$/.test(release.tag_name ?? '') && !newerVersion(release.tag_name.slice(1), this.version)) {
+      const candidate = await readVerifiedRelease(this.request, this.version);
+      if (!candidate) {
         this.candidate = null;
         this.rollbackArchive = null;
         this.packageReady = false;
@@ -281,45 +261,21 @@ export class PluginUpdates {
         this.log('check.current', { phase: 'check', durationMs: this.now() - startedAt });
         return this.snapshot();
       }
-      if (release.immutable !== true) throw new Error('正式发布未启用不可变保护，已暂停自动更新');
-      const asset = release.assets?.find(item => item.name === 'update-manifest.json');
-      if (!asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest ?? '')) throw new Error('正式发布缺少可校验的更新清单');
-      const { bytes, value: manifest } = await readJson(await this.request(asset.browser_download_url, {
-        signal: AbortSignal.timeout(15_000),
-      }), 8 * 1024);
-      if (`sha256:${createHash('sha256').update(bytes).digest('hex')}` !== asset.digest) throw new Error('更新清单校验失败');
-      if (manifest.schema !== 'dsh-industry-research/update/v1' || manifest.name !== 'dsh-industry-research' ||
-        release.tag_name !== `v${manifest.version}` || !commitPattern.test(manifest.sourceCommit) ||
-        manifest.sourceCommit !== release.target_commitish || !commitPattern.test(manifest.installCommit) ||
-        manifest.installTag !== `plugin-install-v${manifest.version}` ||
-        !/^[a-f0-9]{64}$/.test(manifest.archiveSha256) ||
-        manifest.archiveName !== `dsh-industry-research-${manifest.version}.tgz` ||
-        !Number.isSafeInteger(manifest.archiveSize) || manifest.archiveSize < 1 ||
-        !Number.isFinite(Date.parse(release.published_at))) {
-        throw new Error('更新清单与正式发布不一致');
-      }
-      const archiveAsset = release.assets?.find(item => item.name === manifest.archiveName);
-      if (!archiveAsset || archiveAsset.size !== manifest.archiveSize ||
-        archiveAsset.digest !== `sha256:${manifest.archiveSha256}`) throw new Error('正式发布安装包与更新清单不一致');
-      this.log('release.verified', { phase: 'check', candidateVersion: manifest.version,
-        bytesTotal: manifest.archiveSize, durationMs: this.now() - startedAt });
-      this.candidate = newerVersion(manifest.version, this.version) && manifest.version !== this.saved.failedVersion
-        ? { version: manifest.version, installCommit: manifest.installCommit, publishedAt: release.published_at,
-          archive: { version: manifest.version, name: manifest.archiveName, size: manifest.archiveSize,
-            sha256: manifest.archiveSha256, url: archiveAsset.browser_download_url } }
-        : null;
+      this.log("release.verified", { phase: "check", candidateVersion: candidate.version,
+        bytesTotal: candidate.archive.size, durationMs: this.now() - startedAt });
+      this.candidate = candidate.version !== this.saved.failedVersion ? candidate : null;
       this.packageReady = false;
       this.downloadPercent = 0;
       await this.refreshEligibility();
       this.saved = { ...this.saved, checkedAt: new Date(this.now()).toISOString() };
       this.service.store.saveSetting(settingKey, this.saved);
-      this.state = this.candidate ? 'available' : manifest.version === this.saved.failedVersion ? 'failed' : 'current';
-      if (manifest.version === this.saved.failedVersion) {
-        this.error = `版本 ${manifest.version} 启动失败，已回到旧版；等待下一正式版本`;
+      this.state = this.candidate ? 'available' : candidate.version === this.saved.failedVersion ? 'failed' : 'current';
+      if (candidate.version === this.saved.failedVersion) {
+        this.error = `版本 ${candidate.version} 启动失败，已回到旧版；等待下一正式版本`;
         this.errorPhase = 'health';
       }
       this.log(this.candidate ? 'check.available' : 'check.current', { phase: 'check',
-        candidateVersion: manifest.version, durationMs: this.now() - startedAt });
+        candidateVersion: candidate.version, durationMs: this.now() - startedAt });
       if (this.candidate && this.eligible) void this.download().catch(() => {});
     } catch (error) {
       if (!this.saved.staged?.candidate || this.candidate?.version !== this.saved.staged.candidate.version ||
@@ -417,10 +373,12 @@ export class PluginUpdates {
 
   async install() {
     if (this.installWork) return this.installWork;
+    if (activeUpdate(this.cacheDir)) throw Object.assign(new Error("另一个更新正在执行，请稍后重试"), { code: "UPDATE_BUSY" });
+    const lease = this.cacheDir ? claimUpdate(this.cacheDir, "local") : null;
     const work = this.performInstall();
     this.installWork = work;
     try { return await work; }
-    finally { if (this.installWork === work) this.installWork = null; }
+    finally { lease?.release(); if (this.installWork === work) this.installWork = null; }
   }
 
   async performInstall() {
