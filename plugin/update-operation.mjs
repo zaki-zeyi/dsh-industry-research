@@ -45,7 +45,8 @@ export function claimUpdate(directory, kind) {
 export function confirmUpdateRuntime(directory, version) {
   let record;
   try { record = read(resolve(directory, 'official-update.json')); } catch { return; }
-  if (!record?.id || record.version !== version || !['checking', 'installing', 'removing'].includes(record.state)) return;
+  const legacyEarlyFailure = record?.state === 'failed' && record.error === 'DSH 已完成安装，但工作台新版健康状态尚未确认';
+  if (!record?.id || record.version !== version || !legacyEarlyFailure && !['checking', 'installing', 'removing'].includes(record.state)) return;
   atomicWrite(resolve(directory, 'official-ready.json'), { id: record.id, version, pid: process.pid, at: new Date().toISOString() });
 }
 

@@ -22,7 +22,10 @@ function fixture(t, options = {}) {
     if (options.wait) await options.wait;
     if (options.failure) return { result: { application: 'failed' }, restore: { application: 'applied' } };
     if (!options.mismatch) installed = { ...installed, version: '1.1.0', source: `${repository}#${'b'.repeat(40)}` };
-    if (!options.unhealthy) confirmUpdateRuntime(cacheDir, '1.1.0');
+    if (!options.unhealthy) {
+      if (options.delayedHealth) setTimeout(() => confirmUpdateRuntime(cacheDir, '1.1.0'), 20);
+      else confirmUpdateRuntime(cacheDir, '1.1.0');
+    }
     return { result: { application: options.restart ? 'restart-required' : 'applied' } };
   } };
   const updater = new OfficialGitUpdates(service, () => manager, options.runtime ?? '1.0.0', { cacheDir, confirmationTimeout: 100 });
@@ -44,6 +47,12 @@ test('官方 Git 更新调用固定提交；卸载后结果由新实例读取且
 test('运行中的任务阻止官方更新，不调用宿主，不中断任务', async t => {
   const f = fixture(t, { busy: true }); f.updater.start('1.1.0'); await f.updater.work;
   assert.equal(f.calls.length, 0); assert.match(f.updater.record().error, /任务或写入/); assert.notEqual(f.service.updating, true);
+});
+
+test('宿主先返回安装成功，新实例稍后健康就绪时等待真实回执', async t => {
+  const f = fixture(t, { delayedHealth: true });
+  f.updater.start('1.1.0'); await f.updater.work;
+  assert.equal(f.updater.record().state, 'updated');
 });
 
 test('本地安装与官方更新互斥，重复点击不会发起第二次安装', async t => {
@@ -132,4 +141,11 @@ test('旧版误报仅在当前启动的健康回执与目标版本一致时校�
   assert.equal((await next.snapshot()).operation.state, 'failed');
   writeFileSync(f.updater.file, JSON.stringify({ ...record, state: 'failed', error: 'download failed' }));
   assert.equal((await next.snapshot()).operation.state, 'failed');
+  rmSync(join(f.cacheDir, 'official-ready.json'));
+  confirmUpdateRuntime(f.cacheDir, '1.1.0');
+  assert.equal((await next.snapshot()).operation.state, 'failed');
+  writeFileSync(f.updater.file, JSON.stringify({ ...record, state: 'failed', error: 'DSH 已完成安装，但工作台新版健康状态尚未确认' }));
+  assert.equal((await next.snapshot()).operation.state, 'failed', 'No receipt yet');
+  confirmUpdateRuntime(f.cacheDir, '1.1.0');
+  assert.equal((await next.snapshot()).operation.state, 'updated', 'Legacy result preceded activation; the actual healthy boot can confirm it');
 });
