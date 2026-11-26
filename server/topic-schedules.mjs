@@ -1,6 +1,6 @@
 import { saveHostSchedule, removeHostSchedule, scheduleFailure } from './host-schedule.mjs';
 import { z } from 'zod';
-import { topicInput, topicTask, topicScope, assertTopicAvailable } from './topics.mjs';
+import { topicInput, topicTask, topicScope, assertTopicAvailable, topicScheduleDate, topicScheduleRequestKey } from './topics.mjs';
 import { withTopicTotalMerge } from './topic-defaults.mjs';
 import { previousScheduleRun, scheduleTiming } from './briefings.mjs';
 import { topicMinuteWindow, topicRangeError, topicTimePattern, wholeDayTopicRange } from './topic-window.mjs';
@@ -55,7 +55,8 @@ export class TopicSchedules {
     if(scope!==this.scope())throw Object.assign(new Error('专题日报绑定的账号或目录已切换'),{status:409});
     assertTopicAvailable(this.service,{topicId:id});
     const p=this.get(id);if(!p.enabled)throw Object.assign(new Error('专题日报未启用'),{status:409});
-    const date=new Date(scheduledFor),key='topic:'+scope+':'+id+':'+new Date(date.getTime()+28800000).toISOString().slice(0,10);
+    const date=new Date(scheduledFor),day=topicScheduleDate(date),key=topicScheduleRequestKey(scope,id,day);
+    this.service.topicDigest?.expect(scope,day,id);
     const old=this.service.store.request(key);if(old)return this.service.require(old.task_id);
     const input=topicTask({...p.research,topicId:id},date,p.range);
     return this.service.createAuthorized(input,key,{scheduled:{kind:'topic',scheduledFor:date.toISOString()}});

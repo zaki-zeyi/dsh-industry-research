@@ -123,6 +123,34 @@ test('专题卡片直达总报和最近发布的日报，打开报告仍停留�
  await expect(emptyCard.getByText('暂无日报',{exact:true})).toBeVisible();
 });
 
+test('PRD 6004 专题列表置顶显示已完成的日报汇总并打开飞书文档', async ({page, context}) => {
+  const url = 'https://example.feishu.cn/docx/TopicDigest';
+  const date = '2026-11-26';
+  const topic = { topicId:'77777777-7777-4777-8777-777777777777', question:'测试专题', workflowVersion:468 };
+  let digest = null;
+  await page.route(/\/api\/topics(?:\?.*)?$/, route => route.fulfill({ json: {
+    items: [{ id:'digest-topic', topic, status:'ready', dailyReports:[] }], digest, syncedAt:new Date().toISOString(),
+  } }));
+  await context.route(url, route => route.fulfill({ body:'汇总日报验收' }));
+  await page.goto('/');
+  await page.getByRole('button', { name:'专题调研', exact:true }).click();
+  await expect(page.getByText('全部专题日报生成后，汇总会显示在这里。')).toBeVisible();
+  const link = page.getByRole('link', { name:'打开最新日报汇总' });
+  await expect(link).toHaveCount(0);
+  digest = { date, url };
+  await page.getByRole('button', { name:'刷新', exact:true }).click();
+  await expect(link).toHaveAttribute('href', url);
+  await expect(link.getByText(date, { exact:true })).toBeVisible();
+  const [report] = await Promise.all([page.waitForEvent('popup'), link.click()]);
+  await expect(report).toHaveURL(url);
+  await report.close();
+  await expect(page.getByRole('heading', { level:1, name:'专题调研', exact:true })).toBeVisible();
+  await page.getByRole('button', { name:'查看专题：测试专题' }).click();
+  await expect(link).toHaveCount(0);
+  await page.getByRole('button', { name:'← 返回专题列表' }).click();
+  await expect(link).toBeVisible();
+});
+
 test('专题列表一键重试保留列表，显示部分提交结果并更新日报状态', async ({page}) => {
  const scope = (await (await page.request.get('/api/config')).json()).topicScope;
  const topic = {topicId:'66666666-6666-4666-8666-666666666666',question:'日报一键重试验收',workflowVersion:468};

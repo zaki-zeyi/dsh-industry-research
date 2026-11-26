@@ -1,7 +1,7 @@
 import { documentKind, documentDeletionInput } from './document-deletions.mjs';
 import { documentScope, documentOperationKey, documentRemoved, taskDocumentRemoved } from './document-deletion-state.mjs';
 import { topicDeletionInput } from './topic-deletions.mjs';
-import { topicTask, topicScope, topicDocumentKey, topicCards, topicInput, assertTopicAvailable } from './topics.mjs';
+import { TOPIC_DIGEST_FOLDER, topicTask, topicScope, topicDocumentKey, topicCards, topicInput, assertTopicAvailable } from './topics.mjs';
 import { isFailedTopicDaily } from './topic-defaults.mjs';
 import { cloudPublications, mergePublicationCards, publicationCacheKey } from './cloud-publications.mjs';
 import { createScopedSync } from './sync-once.mjs';
@@ -124,15 +124,23 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   }catch(error){next(error);}});
   app.get('/api/topics',async(req,res,next)=>{try{
     res.setHeader('Cache-Control','no-store');
+    const currentScope = () => topicScope(service.feishuSettings(), service.binding?.applicationSnapshot?.());
+    const scope = currentScope();
     const remote=await readPublications('topic',{refresh:req.query.refresh==='true',force:req.query.force==='true'});
+    if (scope !== currentScope()) throw new ServiceError(409, '读取期间飞书账号或存储位置已变化，请重新刷新');
     const items=topicCards(service,remote.items);
-    res.json({...remote,items});
+    const local = service.topicDigest?.latest(scope);
+    const cloud = service.topicDigest ? service.topicDigest.remoteVisible(scope, remote.digest) : remote.digest;
+    const digest = !cloud || (local?.date ?? '') >= cloud.date ? local ?? null : cloud;
+    res.json({...remote,items,digest});
   }catch(e){next(e);}});
   app.post('/api/topics',async(req,res,next)=>{try{
     const key=req.headers['idempotency-key'];if(key)z.string().min(1).max(100).parse(key);
     const input=topicInput.parse(req.body),prior=key&&service.store.request(key);
     if(prior){const task=service.require(prior.task_id);if(!task.topic)throw new ServiceError(409,'该请求标识已用于其他任务');return res.status(202).json(await service.createAuthorized(topicTask({...input,topicId:task.topic.topicId}),key));}
     const existing=topicCards(service,(await cloudPublications(service,'topic')).items).find(t=>t.topic.question===input.question);
+    if (input.question.normalize('NFC') === TOPIC_DIGEST_FOLDER && (!existing || input.topicId && input.topicId !== existing.topic.topicId))
+      throw new ServiceError(409, '“汇总日报”是系统目录名称，请使用其他调研方向');
     res.status(202).json(await service.createAuthorized(topicTask({...input,topicId:input.topicId??existing?.topic.topicId}),key));
   }catch(e){next(e);}});
   app.post('/api/topics/retry-failed-dailies', async (req, res, next) => {
@@ -265,7 +273,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
   app.get('/api/feishu-registration/qr/:id', (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.type('png').send(service.binding.registration.qr(req.params.id)); } catch(e) { next(e); } });
   app.get('/api/feishu-binding', async (_req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.json(await service.binding.status()); } catch(e) { next(e); } });
   app.post('/api/feishu-binding', async (req, res, next) => { try { const input = z.object({ rebind: z.boolean().optional() }).strict().parse(req.body ?? {}); if (input.rebind) requireIdleBinding(service); res.setHeader('Cache-Control', 'no-store'); const flow = await service.binding.start({ rebind: input.rebind }); res.json(flow); } catch(e) { next(e); } });
-  app.post('/api/feishu-binding/complete', async (req, res, next) => { try { const { flowId } = z.object({ flowId: z.string().uuid() }).strict().parse(req.body); res.json(await service.binding.complete(flowId)); } catch(e) { next(e); } });
+  app.post('/api/feishu-binding/complete', async (req, res, next) => { try { const { flowId } = z.object({ flowId: z.string().uuid() }).strict().parse(req.body); if (service.topicDigest?.active) requireIdleBinding(service); res.json(await service.binding.complete(flowId)); } catch(e) { next(e); } });
   app.get('/api/feishu-binding/qr/:id', (req, res, next) => { try { res.setHeader('Cache-Control', 'no-store'); res.type('png').send(service.binding.qr(req.params.id)); } catch(e) { next(e); } });
   app.get('/api/feishu-settings', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json(service.feishuSettings()); });
   app.put('/api/feishu-settings', (req, res, next) => { try { res.json(service.setFeishuSettings(req.body)); } catch (e) { next(e); } });
