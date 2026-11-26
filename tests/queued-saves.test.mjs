@@ -8,6 +8,7 @@ import { briefingKey } from '../server/briefings.mjs';
 import { library, libraryKey, parseLibraryManifest } from '../server/industry.mjs';
 import { QueuedSaveDocuments, plainXml } from '../server/queued-save-documents.mjs';
 import { startRuntime } from '../server/runtime.mjs';
+import { topicTask, topicScope, topicScheduleRequestKey, topicScheduleDate } from '../server/topics.mjs';
 import { mockHost } from './fixtures/fake-native-host.mjs';
 import { until } from './helpers.mjs';
 
@@ -133,6 +134,99 @@ async function runtimeFor(dataDir, fixture, host, payloads, ended) {
   };
   return runtime;
 }
+
+test('PRD 6129 automatic digest uses native session; failed turn retries that session with edited prompt and archives once', async () => {
+  const dataDir = mkdtempSync(resolve(tmpdir(), 'digest-native-'));
+  const fixture = cliFixture(), host = mockHost(), notices = [];
+  const appId = 'cli_digest';
+  const binding = { applicationSnapshot: () => app, requireBound: async () => ({ openId:app.ownerOpenId, appId }), close() {},
+    async json(args) {
+      if (args[0] === 'auth') return { appId, identities:{user:{openId:app.ownerOpenId,available:true,verified:true},bot:{available:true,verified:true}} };
+      notices.push(args);
+      return {ok:true};
+    } };
+  const directories = { async folder(_, parent, name) {
+    if (parent === root.folderToken && name === '专题调研') return 'topics-folder';
+    if (parent === 'topics-folder' && name === '汇总日报') return 'digest-folder';
+    throw new Error('unexpected folder');
+  }, async list(_, parent) {
+    if (parent === root.folderToken) return [{type:'folder',name:'专题调研',token:'topics-folder'}];
+    if (parent === 'topics-folder') return [{type:'folder',name:'汇总日报',token:'digest-folder'}];
+    return fixture.adapter.files(app, parent);
+  } };
+  const runtime = await startRuntime({ dataDir, port:0, env:{RESEARCH_MODE:'native'}, host, binding, directories, queuedDocuments:fixture.adapter });
+  try {
+    const service = runtime.service, digest = service.topicDigest, store = service.store;
+    const time = new Date('2026-11-26T04:00:00Z'), day = topicScheduleDate(time);
+    let now = time.getTime();
+    digest.now = () => now;
+    store.saveSetting('feishu', root);
+    const scope = topicScope(root, app), digestPath = runtime.url + '/api/topics/digest';
+    const generate = prompt => fetch(digestPath, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({scope,prompt}) });
+    const topicId = '33333333-3333-4333-8333-333333333333';
+    const input = { topicId, question:'验证日报来源', sources:['测试来源'] };
+    const task = { ...topicTask(input, time, {startDaysAgo:1,startTime:'00:00',endDaysAgo:0,endTime:'00:00'}),
+      id:'source-report', createdAt:time.toISOString(), status:'ready', feishuApp:app, feishuRoot:root,
+      notificationRecipient:app.ownerOpenId, notificationApp:{...app,appId},
+      scheduled:{kind:'topic',scheduledFor:time.toISOString()}, publication:{status:'published',url:url('sourceReport')} };
+    fixture.seed('sourceReport', '源日报', 'topic-daily-folder', '## 摘要\n测试原日报的完整摘要。');
+    store.saveSetting('topic-schedules', { [`${scope}:${topicId}`]:{ topicId,scope,enabled:true,time:'12:00', research:input } });
+    store.save(task);
+    store.saveRequest(topicScheduleRequestKey(scope,topicId,day), '', task.id);
+    digest.expect(scope, day, topicId);
+
+    const prompts = [];
+    host.sessionController.prompt = async request => {
+      host.emit(request.sessionId, 'turn/start');
+      const current = store.list().find(candidate => candidate.nativeSessionId === request.sessionId);
+      const meta = store.terminal(current.terminalId);
+      prompts.push({id:request.sessionId,text:readFileSync(meta.promptPath,'utf8')});
+      if (prompts.length < 3) host.emit(request.sessionId, 'turn/end', {kind:'error'});
+      else {
+        assert.deepEqual(await runClient(meta, {report:'按编辑后的要求输出综合观察。'}), {accepted:true});
+        host.emit(request.sessionId, 'turn/end', {kind:'completed'});
+      }
+      return {accepted:true};
+    };
+    await digest.tick();
+    const failed = await until(() => store.list().find(candidate => candidate.topicDigest && candidate.status === 'failed' && !service.active.has(candidate.id)));
+    assert.match(prompts[0].text, /自动聚合所有日报/);
+    assert.equal(host.created, 1);
+    await digest.tick(); // persist the first retry deadline
+    now += 16_000;
+    await digest.tick();
+    await until(() => prompts.length === 2 && store.get(failed.id)?.status === 'failed' && !service.active.has(failed.id));
+    assert.equal(prompts[0].id, prompts[1].id);
+    assert.match(prompts[1].text, /自动聚合所有日报/);
+    const response = await generate('请先比较两项结论，再聚合全部专题日报摘要。');
+    assert.equal(response.status, 202);
+    assert.equal((await response.json()).task.id, failed.id);
+    const finished = await until(async () => {
+      await digest.tick();
+      return digest.manualStatus(scope)?.status === 'sent' && store.get(failed.id);
+    });
+    assert.equal(finished.status,'ready');
+    assert.equal(prompts.length, 3);
+    assert.equal(prompts[0].id, prompts[2].id);
+    assert.match(prompts[2].text, /请先比较两项结论/);
+    const [[digestUrl, doc]] = [...fixture.docs].filter(([,entry]) => entry.folder === 'digest-folder');
+    assert.match(doc.content,/按编辑后的要求输出综合观察/);
+    assert.match(doc.content,/测试原日报的完整摘要/);
+    assert.match(doc.content,/href="https:\/\/example\.feishu\.cn\/docx\/sourceReport"/);
+    assert.equal(finished.publication.url,digestUrl);
+    assert.equal(notices.length, 1);
+    assert.equal((await generate('当天汇总已存在，不应创建另一份文档。')).status, 409);
+    const {digest:card,digestGeneration,digestDate} = await (await fetch(runtime.url+'/api/topics')).json();
+    assert.deepEqual(card,{date:day,url:digestUrl});
+    assert.equal(digestDate,day);
+    assert.equal(digestGeneration.taskId,finished.id);
+    // A fresh local day record must still respect a document already in Drive.
+    store.deleteSetting('topic-digests:' + scope);
+    assert.equal((await generate('飞书已经归档，不应启动另一个汇总会话。')).status, 409);
+    assert.equal(host.created, 1);
+    assert.equal(notices.length, 1);
+  } finally { await runtime.close(); rmSync(dataDir,{recursive:true,force:true}); }
+});
 
 test('同一公司按文档排队且重启后去重，其他公司和日报周报并行，索引独立合并', async () => {
   const dataDir = mkdtempSync(resolve(tmpdir(), 'queued-saves-'));
