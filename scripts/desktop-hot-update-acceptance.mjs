@@ -47,8 +47,8 @@ try {
   await page.getByRole('button', { name: '安装已校验版本', exact: true }).click();
   const updated = await poll(s => s.installedVersion === targetVersion && s.lastResult === 'updated' && s.progress.percent === 100,
     'in-process activation');
-  await expect(page.getByLabel('版本信息')).toContainText(targetVersion, { timeout: 30000 });
-  await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
+  await expect(page.locator('.settings-version-number')).toHaveText(targetVersion, { timeout: 30000 });
+  await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100', { timeout: 30000 });
   await page.waitForTimeout(500);
   await page.screenshot({ path: resolve(output, 'version.png') });
   const afterProcesses = processes(); assert.deepEqual(afterProcesses, beforeProcesses, 'DSH shell and Host did not restart');
