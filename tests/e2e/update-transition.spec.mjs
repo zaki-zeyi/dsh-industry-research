@@ -37,6 +37,21 @@ test('在健康检查及切换时打开页面，自动等待就绪并保留原�
     runtime.service.updating = false;
     await expect(page.locator('.settings-version-number')).toHaveText(/^\d+\.\d+\.\d+$/);
     await expect(page).toHaveURL(url);
+
+    // A restored 0.13.16 slot has no readiness field on its health response.
+    await page.route('**/api/health', async route => {
+      const response = await route.fetch(), health = await response.json();
+      delete health.ready; delete health.state;
+      await route.fulfill({ response, json: health });
+    });
+    runtime.service.activationPending = true;
+    const blockedProbe = page.waitForResponse(response => response.url().endsWith('/api/plugin-update') && response.status() === 503);
+    await page.reload();
+    await expect(page.getByLabel('工作台更新过渡页')).toBeVisible();
+    await blockedProbe;
+    runtime.service.activationPending = false;
+    await expect(page.locator('.settings-version-number')).toHaveText(/^\d+\.\d+\.\d+$/);
+    await expect(page).toHaveURL(url);
   } finally {
     await page.goto('about:blank');
     await runtime.close();

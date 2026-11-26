@@ -25,7 +25,14 @@ progress{width:100%;height:10px;accent-color:#355b44}button{font:inherit;color:#
     try {
       const response = await fetch('/api/health', {cache:'no-store',signal:controller.signal});
       const health = await response.json();
-      if (response.ok && health.application === 'industry-research' && health.ready === true) {
+      let ready = health.ready === true;
+      if (response.ok && health.application === 'industry-research' && health.ready === undefined) {
+        // Earlier local fallback slots expose no readiness field. Their update
+        // endpoint remains blocked until activation has actually completed.
+        const probe = await fetch('/api/plugin-update', {cache:'no-store',signal:controller.signal});
+        if (probe.ok) ready = (await probe.json()).installedVersion === health.version;
+      }
+      if (response.ok && health.application === 'industry-research' && ready) {
         stopped = true; location.reload(); return;
       }
     } catch {}
