@@ -9,7 +9,7 @@ import { TOPIC_DIGEST_FOLDER, TOPIC_FOLDER, topicDeletionState, topicScheduleDat
 const titleFor = date => `${TOPIC_DIGEST_FOLDER} · ${date}`;
 const delay = 15_000;
 const retryLimit = 3;
-const defaultPrompt = '自动聚合所有日报的摘要生成汇总日报的飞书文档。并发送到飞书消息。';
+export const defaultDigestPrompt = '自动聚合所有日报的摘要生成汇总日报并发布到【存储位置】飞书文档，并发送到飞书消息。【汇总规则】每个章节一个专题题目和摘要，附带每个日报链接。';
 const output = z.object({ report: z.string().trim().min(1).max(6000) }).strict();
 const sourceList = tasks => tasks.map(task => ({ title: task.topic.question, url: task.publication.url }));
 const canonical = value => value.replace(/\s+/g, ' ').trim();
@@ -100,6 +100,38 @@ export class TopicDigest {
 
   date() { return topicScheduleDate(new Date(this.now())); }
 
+  prompt(scope) { return this.store.setting('topic-digest-prompt:' + scope)?.prompt ?? defaultDigestPrompt; }
+
+  async setPrompt(scope, prompt) {
+    const context = this.context();
+    if (context.scope !== scope || !context.root.folderToken) throw new ServiceError(409, '飞书账号或存储位置已变化，请刷新专题列表后再试');
+    await this.service.binding.requireBound(context.app);
+    this.assertCurrent(scope);
+    this.store.saveSetting('topic-digest-prompt:' + scope, { prompt });
+    return { prompt };
+  }
+
+  retryable(scope, date = this.date()) {
+    const day = this.days(scope)[date];
+    const key = scope + ':' + date;
+    if (!day || day.sent || day.retryRequested || this.starting.has(key) || this.publishing === key) return false;
+    const task = day.taskId && this.store.get(day.taskId);
+    return Boolean(day.retryAt || ['failed', 'interrupted'].includes(task?.status));
+  }
+
+  retryBatch(scope) {
+    this.assertCurrent(scope);
+    const date = this.date();
+    if (!this.retryable(scope, date)) return null;
+    const day = this.days(scope)[date];
+    // Retain the user's request until every source is ready. This survives a
+    // restart and never claims a second task or replaces a published digest.
+    const ready = day.url || day.intent || this.readyTasks(scope, date, this.roster(scope, date, day));
+    this.save(scope, date, { retryRequested:true, retryAt:undefined, modelRetryAt:undefined });
+    void this.tick();
+    return ready ? 'submitted' : 'waiting';
+  }
+
   async generate(scope, prompt, remote) {
     if (prompt !== undefined) return this.startSession(scope, prompt, remote);
     return this.generateLegacy(scope);
@@ -168,7 +200,7 @@ export class TopicDigest {
         task = this.service.retry(prior.id, 'research');
         this.save(scope, date, { modelRetries:0, modelRetryAt:undefined });
       } else {
-        task = await this.service.createAuthorized({ direction: '专题日报汇总 · ' + date, prompt }, undefined,
+        task = await this.service.createAuthorized({ direction: '专题日报汇总 · ' + date, prompt:automatic ? this.prompt(scope) : prompt }, undefined,
           { digestOwner, topicDigest: { scope, date, automatic, sources:sourceList(tasks) } });
       }
       return { date, status:'queued', task };
@@ -224,17 +256,21 @@ export class TopicDigest {
 
   validateSubmission(input) { return output.parse(input); }
 
+  archivedTaskId(scope, digest) {
+    const day = digest && this.days(scope)[digest.date];
+    return day?.url === digest?.url && day?.taskId && this.store.get(day.taskId)?.publication.url === digest.url ? day.taskId : null;
+  }
+
   manualStatus(scope) {
-    const date = this.date(), days = this.days(scope);
-    const day = days[date];
-    const sessionDay = day?.taskId ? day : !day?.url && days[this.latest(scope)?.date];
-    const task = sessionDay?.taskId && this.store.get(sessionDay.taskId);
-    if (task) return { date:task.topicDigest.date, taskId:task.id, prompt:task.prompt,
-      status:sessionDay.sent ? 'sent' : sessionDay.retryAt > this.now() ? 'retrying' : task.status === 'ready' ? 'queued' : task.status };
-    if (!day?.manual) return null;
-    if (day.sent) return { date, status: 'sent' };
-    if (!this.readyTasks(scope, date, this.roster(scope, date, day))) return { date, status: 'waiting' };
-    return { date, status: day.retryAt > this.now() ? 'retrying' : 'queued' };
+    const date = this.date(), day = this.days(scope)[date];
+    if (!day) return null;
+    const task = day.taskId && this.store.get(day.taskId);
+    const details = task ? {taskId:task.id,prompt:task.prompt} : {};
+    if (day.sent) return {date, ...details, status:'sent'};
+    const ready = day.url || day.intent || this.readyTasks(scope, date, this.roster(scope, date, day));
+    const status = day.retryRequested ? (ready ? 'retrying' : 'waiting') :
+      day.retryAt || day.modelRetryAt ? 'retrying' : task && task.status !== 'ready' ? task.status : ready ? 'queued' : 'waiting';
+    return {date, ...details, status};
   }
 
   remoteVisible(scope, digest) {
@@ -284,8 +320,9 @@ export class TopicDigest {
   }
 
   assertCurrent(scope) {
-    if (this.closed || this.service.closed || this.service.updating || this.context().scope !== scope) {
-      throw Object.assign(new Error('飞书账号或存储位置已变化，汇总暂停'), { code: 'DIGEST_SCOPE_CHANGED' });
+    if (this.closed || this.service.closed || this.service.updating) throw new ServiceError(503, '工作台正在停止或更新，请稍后再试');
+    if (this.context().scope !== scope) {
+      throw Object.assign(new ServiceError(409, '飞书账号或存储位置已变化，汇总暂停'), { code: 'DIGEST_SCOPE_CHANGED' });
     }
   }
 
@@ -304,11 +341,33 @@ export class TopicDigest {
       const snapshot = day.destination ?? day.intent?.destination;
       const tasks = snapshot && (day.url || day.intent) ? [] : this.readyTasks(scope, date, this.roster(scope, date, day));
       if (!tasks) continue;
-      const task = day.taskId && this.store.get(day.taskId);
+      let task = day.taskId && this.store.get(day.taskId);
+      if (day.retryRequested) {
+        if (task && this.service.active.has(task.id)) continue;
+        try {
+          if (task && !day.url && ['failed', 'interrupted'].includes(task.status)) {
+            await this.requireSourceOwner(context, [...tasks, task]);
+            const current = this.store.get(task.id);
+            if (['failed', 'interrupted'].includes(current.status)) {
+              if (!current.queuedSave) {
+                current.topicDigest.sources = sourceList(tasks);
+                this.assertSources(current);
+                this.store.save(current);
+              }
+              task = this.service.retry(current.id, 'research');
+            } else task = current;
+          }
+          this.save(scope, date, { retryRequested:undefined, retryAt:undefined, modelRetries:0, modelRetryAt:undefined });
+        } catch (error) {
+          this.save(scope, date, { retryAt:this.now() + delay });
+          this.store.runtimeLog('topic.digest.retry', { phase:'batch_retry', code:error.code ?? 'DIGEST_SESSION_FAILED' }, 'warn');
+          continue;
+        }
+      }
       const destination = snapshot ?? deliveryFor(tasks[0]);
       let url = day.url;
       if (!task && !url && !day.creating && this.service.nativeSessions && this.service.queuedSaves) {
-        try { await this.startSession(scope, defaultPrompt, null, { date, automatic:true }); }
+        try { await this.startSession(scope, undefined, null, { date, automatic:true }); }
         catch (error) {
           this.save(scope, date, { retryAt:this.now() + delay });
           this.store.runtimeLog('topic.digest.retry', { phase:'session_start', code:error.code ?? 'DIGEST_SESSION_FAILED' }, 'warn');
@@ -440,7 +499,7 @@ export class TopicDigest {
     }
     if (!url) {
       const paragraphsXml = lines => lines.map(line => `<p>${escapeXml(line)}</p>`).join('');
-      const content = (synthesisLines.length ? '<h2>综合观察</h2>' + paragraphsXml(synthesisLines) : '') +
+      const content = paragraphsXml(synthesisLines) +
         sections.map(({title, paragraphs, source}) => `<h2>${escapeXml(title)}</h2>` + paragraphsXml(paragraphs) +
           `<p><a href="${escapeXml(source)}">打开原日报</a></p>`).join('');
       await this.requireSourceOwner(context, tasks);

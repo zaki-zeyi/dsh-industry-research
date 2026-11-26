@@ -3,6 +3,7 @@ import { documentScope, documentOperationKey, documentRemoved, taskDocumentRemov
 import { topicDeletionInput } from './topic-deletions.mjs';
 import { TOPIC_DIGEST_FOLDER, topicTask, topicScope, topicDocumentKey, topicCards, topicInput, assertTopicAvailable, topicScheduleDate } from './topics.mjs';
 import { isFailedTopicDaily } from './topic-defaults.mjs';
+import { defaultDigestPrompt } from './topic-digest.mjs';
 import { cloudPublications, mergePublicationCards, publicationCacheKey } from './cloud-publications.mjs';
 import { createScopedSync } from './sync-once.mjs';
 import { briefingTask } from './briefings.mjs';
@@ -132,8 +133,18 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
     const cloud = service.topicDigest ? service.topicDigest.remoteVisible(scope, remote.digest) : remote.digest;
     const digest = !cloud || (local?.date ?? '') >= cloud.date ? local ?? null : cloud;
     const digestGeneration = service.topicDigest?.manualStatus(scope) ?? null;
-    res.json({...remote,items,digest,digestGeneration,digestDate:service.topicDigest?.date() ?? topicScheduleDate(new Date())});
+    res.json({...remote,items,digest,digestGeneration,digestDate:service.topicDigest?.date() ?? topicScheduleDate(new Date()),
+      digestPrompt:service.topicDigest?.prompt(scope) ?? defaultDigestPrompt,
+      digestRetryable:service.topicDigest?.retryable(scope) ?? false,
+      digestArchivedTaskId:service.topicDigest?.archivedTaskId(scope, digest) ?? null});
   }catch(e){next(e);}});
+  app.put('/api/topics/digest/settings', async (req, res, next) => {
+    try {
+      const {scope,prompt} = z.object({scope:z.string().min(1).max(4000),prompt:z.string().trim().min(10).max(14000)}).strict().parse(req.body);
+      if (!service.topicDigest) throw new ServiceError(409, '请在宿主 DSH 中设置日报汇总');
+      res.json(await service.topicDigest.setPrompt(scope, prompt));
+    } catch (error) { next(error); }
+  });
   app.post('/api/topics/digest', async (req, res, next) => {
     try {
       const {scope,prompt} = z.object({scope:z.string().min(1).max(4000),prompt:z.string().trim().min(10).max(14000).optional()}).strict().parse(req.body);
@@ -164,7 +175,7 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
       if (service.cloudOnly) await service.binding.requireBound();
       const remote = await cloudPublications(service, 'topic');
       checkScope();
-      if (service.closed) throw new ServiceError(503, '工作台正在停止，请重启后再试');
+      if (service.closed || service.updating) throw new ServiceError(503, '工作台正在停止或更新，请稍后再试');
       const candidates = topicCards(service, remote.items)
         .filter(group => !group.deletion)
         .flatMap(group => group.dailyReports.filter(isFailedTopicDaily));
@@ -181,7 +192,8 @@ export function createApp(service, { dist = resolve('dist'), health = {}, librar
           rejected.push({id:task.id, title:task.direction, error:error instanceof ServiceError?error.message:'暂时无法提交，请稍后重试'});
         }
       }
-      res.status(accepted?202:200).json({accepted,rejected});
+      const digestRetry = service.topicDigest?.retryBatch(scope) ?? null;
+      res.status(accepted || digestRetry ? 202 : 200).json({accepted,rejected,digestRetry});
     } catch (error) { next(error); }
   });
   app.get('/api/topics/:id/deletion',async(req,res,next)=>{try{

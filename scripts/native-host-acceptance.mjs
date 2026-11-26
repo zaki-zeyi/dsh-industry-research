@@ -4,14 +4,41 @@ import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
 import { DatabaseSync } from 'node:sqlite';
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, rmSync, chmodSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-const root = fileURLToPath(new URL('..', import.meta.url)), dir = mkdtempSync(resolve(tmpdir(), 'native-host-')), profile = resolve(dir, 'profiles/native-test');
-mkdirSync(resolve(profile, 'node_modules'), { recursive: true }); symlinkSync(process.argv.includes('--package-root') ? resolve(process.argv[process.argv.indexOf('--package-root') + 1]) : root, resolve(profile, 'node_modules/dsh-industry-research'), 'junction');
-writeFileSync(resolve(profile, 'package.json'), JSON.stringify({ name: 'native-host-test', private: true, dependencies: { 'dsh-industry-research': `link:${root}` }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-industry-research'] } } }));
+const root = fileURLToPath(new URL('..', import.meta.url));
+const packageIndex = process.argv.indexOf('--package-root');
+const packageRoot = packageIndex < 0 ? root : resolve(process.argv[packageIndex + 1]);
+const installDirectory = process.argv.includes('--install-directory');
+const cli = process.env.DSH_CLI_PATH ?? (process.platform === 'win32' ? resolve(process.env.APPDATA, 'npm/node_modules/@deepseek-ai/dsh/lib/bin.js') : null);
+const hostCommand = cli ? process.execPath : process.env.DSH_COMMAND ?? 'dsh';
+const hostArgs = cli ? ['--expose-internals', cli] : [];
+// An explicit CLI entry avoids wrappers that replace the disposable DSH_HOME.
+if (installDirectory && (!cli || packageIndex < 0)) throw new Error('--install-directory requires DSH_CLI_PATH and --package-root');
+const dir = mkdtempSync(resolve(tmpdir(), 'native-host-')), profile = resolve(dir, 'profiles/native-test');
+mkdirSync(resolve(profile, 'node_modules'), { recursive: true });
+const profileFile = resolve(profile, 'package.json');
+const bundles = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'];
+writeFileSync(profileFile, JSON.stringify({ name: 'native-host-test', private: true,
+  dependencies: installDirectory ? {} : { 'dsh-industry-research': `link:${packageRoot}` },
+  dsh: { profile: { bundles: installDirectory ? bundles : [...bundles, 'dsh-industry-research'] } } }));
+if (installDirectory) {
+  try {
+    const result = spawnSync(hostCommand, [...hostArgs, 'plugin', '--profile', 'native-test', 'add', packageRoot], {
+      cwd: dir, env: { ...process.env, DSH_HOME: dir, npm_config_store_dir: resolve(dir, 'pnpm-store') }, stdio: 'inherit',
+    });
+    if (result.error || result.status !== 0) throw result.error ?? new Error(`DSH local-directory install failed: ${result.status}`);
+    const installed = JSON.parse(readFileSync(profileFile, 'utf8'));
+    assert.ok(installed.dependencies?.['dsh-industry-research']);
+    assert.ok(installed.dsh?.profile?.bundles?.includes('dsh-industry-research'));
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
+} else symlinkSync(packageRoot, resolve(profile, 'node_modules/dsh-industry-research'), 'junction');
 let retryAttempts = 0;
 let modelCalls = 0, browser, page, followUpObserved = false, parallelGate=null,releaseParallel;const parallelSeen=new Set();
 const fakeLark = resolve(dir, 'fake-lark.cjs');
@@ -106,8 +133,7 @@ writeFileSync(resolve(dir, 'test-patch.json'), JSON.stringify([
   { id: 'llm-deepseek-account', disabled: true },
   { id: 'llm-deepseek', config: { baseURL: `http://127.0.0.1:${model.address().port}`, apiKeyEnv: 'DSH_NATIVE_ACCEPTANCE_KEY' } },
 ]));
-const cli = process.platform === 'win32' ? resolve(process.env.APPDATA,'npm/node_modules/@deepseek-ai/dsh/lib/bin.js') : null;
-const child = spawn(cli ? process.execPath : process.env.DSH_COMMAND ?? 'dsh', [...(cli?['--expose-internals',cli]:[]),'--profile', 'native-test', '--patch', resolve(dir, 'test-patch.json'), '--no-open', '--port', String(port)], { env: { ...process.env, DSH_HOME: dir, LARK_CLI_COMMAND: fakeLark, NATIVE_ACCEPTANCE_CLOUD_DIR: cloudDir, DSH_NATIVE_ACCEPTANCE_KEY: 'sk-' + 'a'.repeat(32) }, stdio: ['ignore', 'pipe', 'pipe'] });
+const child = spawn(hostCommand, [...hostArgs, '--profile', 'native-test', '--patch', resolve(dir, 'test-patch.json'), '--no-open', '--port', String(port)], { env: { ...process.env, DSH_HOME: dir, LARK_CLI_COMMAND: fakeLark, NATIVE_ACCEPTANCE_CLOUD_DIR: cloudDir, DSH_NATIVE_ACCEPTANCE_KEY: 'sk-' + 'a'.repeat(32) }, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = ''; child.stdout.on('data', x => { log = (log + x).slice(-12000); }); child.stderr.on('data', x => { log = (log + x).slice(-12000); });
 const hostURL = `http://127.0.0.1:${port}`;
 async function until(fn, timeout = 40000) { const start = Date.now(); while (Date.now() - start < timeout) { const value = await fn(); if (value) return value; if (child.exitCode !== null) throw new Error(`DSH exited ${child.exitCode}`); await new Promise(r => setTimeout(r, 200)); } throw new Error('真实宿主验收等待超时'); }

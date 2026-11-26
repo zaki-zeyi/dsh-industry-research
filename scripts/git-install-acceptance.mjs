@@ -29,9 +29,11 @@ try {
   assert.equal(existsSync(resolve(installed, 'tests')), false, 'Git 安装包不得包含测试目录');
   assert.equal(existsSync(resolve(installed, '.github')), false, 'Git 安装包不得包含工作流');
   assert.equal(existsSync(resolve(installed, 'scripts/prepare-pty.mjs')), true, 'Git 安装包必须包含运行期脚本');
-  run(process.execPath, [resolve(root, 'scripts/plugin-acceptance.mjs'), '--package-root', installed]);
+  const checks = [resolve(root, 'scripts/plugin-acceptance.mjs'), '--package-root', installed];
+  if (process.argv.includes('--without-legacy-pty')) checks.push('--without-legacy-pty');
+  run(process.execPath, checks);
   const desktop = option('--desktop-runtime');
-  if (desktop) run(desktop, ['--expose-internals', resolve(root, 'scripts/plugin-acceptance.mjs'), '--package-root', installed], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+  if (desktop) run(desktop, ['--expose-internals', ...checks], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
   console.log('PASS: 冷缓存 Git 依赖安装、预构建页面与运行时验收通过；未添加 allowBuilds 或降低宿主策略');
 } finally {
   try {
