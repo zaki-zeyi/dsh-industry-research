@@ -1,8 +1,9 @@
-import { TOPIC_FOLDER, topicDocumentKey, topicDailyDocumentKey, topicFolderKey, topicDeletionState } from './topics.mjs';
+import { TOPIC_FOLDER, TOPIC_DIGEST_FOLDER, topicDocumentKey, topicDailyDocumentKey, topicFolderKey, topicDeletionState } from './topics.mjs';
+import { digestFileDate } from './topic-digest.mjs';
 import { createHash } from 'node:crypto';
 import { libraryKey, listDriveFolder } from './industry.mjs';
 import { LibraryRefreshError } from './library-errors.mjs';
-import { matchingFolders, driveToken } from './folder-identity.mjs';
+import { matchingFolders, driveToken, folderName } from './folder-identity.mjs';
 import { documentRemoved } from './document-deletion-state.mjs';
 import { readTopicMinuteTitle } from './topic-window.mjs';
 
@@ -68,8 +69,9 @@ export function mergePublicationCards(local, remote) {
 
 async function readTopicPublications(service,{root,app,key,list,children}){
   const roots=await list(root.folderToken);
-  const parents=[...new Set([TOPIC_FOLDER,'专题调研库'].flatMap(name=>matchingFolders(roots,name).map(driveToken)))];
-  const items=[],known=service.store.list().filter(t=>t.topic),uuid=seed=>{
+  const modernParents = new Set(matchingFolders(roots, TOPIC_FOLDER).map(driveToken));
+  const parents = new Set([...modernParents, ...matchingFolders(roots, '专题调研库').map(driveToken)]);
+  const items=[],digests=new Map(),known=service.store.list().filter(t=>t.topic),uuid=seed=>{
     const hash=createHash('sha256').update(seed).digest('hex');return hash.slice(0,8)+'-0000-4000-8000-'+hash.slice(8,20);
   };
   const record=(file,topic,extra={})=>({id:idFor(file.url),remoteOnly:true,direction:(topic.window?'专题日报 · ':'专题总报 · ')+topic.question,status:'ready',createdAt:timestamp(file),topic,...extra,publication:{status:'published',url:file.url}});
@@ -84,6 +86,16 @@ async function readTopicPublications(service,{root,app,key,list,children}){
     for(const folder of files.filter(f=>f.type==='folder')){
       const token=driveToken(folder),content=await list(token);
       const previous=known.find(t=>t.topicLibrary?.folderToken===token||service.store.setting(topicFolderKey(t))?.folderToken===token);
+      if (folderName(folder.name) === TOPIC_DIGEST_FOLDER && modernParents.has(parent)) {
+        const reports = content.filter(digestFileDate);
+        for (const report of reports) {
+          const date = digestFileDate(report);
+          if (!digests.has(date)) digests.set(date, new Set());
+          digests.get(date).add(report.url);
+        }
+        // Reserve the aggregate archive, but preserve an older topic with the same name.
+        if (reports.length || !previous && !content.some(item => isDocument(item) || item.type === 'folder')) continue;
+      }
       const topic={question:folder.name,sources:[],requirements:'',topicId:previous?.topic.topicId??uuid(token),workflowVersion:468};
       const totalFiles=content.filter(isDocument);
       if(totalFiles.length>1)throw new LibraryRefreshError('TOPIC_TOTAL_AMBIGUOUS','专题目录存在多份总报，请核对文档后刷新；本地记录保留');
@@ -116,5 +128,7 @@ async function readTopicPublications(service,{root,app,key,list,children}){
     }
     if(item.topic.window?.start&&item.publication.url)service.store.saveSetting(topicDailyDocumentKey(task),{url:item.publication.url});
   }
-  const result={items,syncedAt:new Date().toISOString()};service.store.saveSetting(key,result);return result;
+  const [date, urls] = [...digests].filter(([, urls]) => urls.size === 1).sort(([a], [b]) => b.localeCompare(a))[0] ?? [];
+  const result={items,digest:urls ? { date, url: [...urls][0] } : null,syncedAt:new Date().toISOString()};
+  service.store.saveSetting(key,result);return result;
 }

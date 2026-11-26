@@ -2,6 +2,7 @@ import { DocumentDeletions } from './document-deletions.mjs';
 import { InternalReconciliation } from './internal-reconciliation.mjs';
 import { TopicDeletions } from './topic-deletions.mjs';
 import { TopicSchedules } from './topic-schedules.mjs';
+import { TopicDigest } from './topic-digest.mjs';
 import {BriefingNotifications} from './briefing-notifications.mjs';
 import { InternalMaterialNotifications } from './internal-notifications.mjs';
 import { BriefingSchedules } from './briefings.mjs';
@@ -52,7 +53,8 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     service.recover();
     service.cloudWrites.start();
     service.queuedSaves?.start();
-    void service.topicSchedules.catchUpMissed().catch(() => {});
+    void service.topicSchedules.catchUpMissed().catch(() => {}).finally(() => service.topicDigest?.tick());
+    service.topicDigest?.start();
     void service.briefingSchedules.catchUpMissed().catch(() => {});
   }
   const release = () => { try { unlinkSync(lock); } catch {} };
@@ -77,7 +79,9 @@ export async function startRuntime({ env = process.env, port = Number(env.PORT ?
     // always resolve directories on the server before authorizing cloud writes.
     service.directories = directories ?? (service.cloudOnly && !binding ? new FeishuDirectories(store, { command: service.binding.command }) : undefined);
     if (nativeSessions && service.directories && (queuedDocuments || !binding)) {
-      service.queuedSaves = new QueuedSaves(service, queuedDocuments ?? new QueuedSaveDocuments(service.binding.command));
+      const documents = queuedDocuments ?? new QueuedSaveDocuments(service.binding.command);
+      service.queuedSaves = new QueuedSaves(service, documents);
+      service.topicDigest = new TopicDigest(service, documents);
       nativeSessions.queuedSaving = true;
     }
     terminals.onDelivery = (id, terminalId, receipt) => service.recordAgentDelivery(id, terminalId, receipt);

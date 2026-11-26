@@ -162,8 +162,15 @@ test('PRD468 读取层级目录导入总报与所有日报，不将日报覆盖�
  const groups=topicCards(service,result.items);assert.equal(groups.length,1);assert.equal(groups[0].totalReport.publication.url,'https://example.feishu.cn/docx/Total');assert.equal(groups[0].dailyReports.length,2);
  assert.equal(groups[0].dailyReports[0].publication.url,'https://example.feishu.cn/docx/Day2');
  assert.equal(values.get(topicDocumentKey({...groups[0],feishuRoot:service.feishuSettings(),feishuApp:{}})).url,'https://example.feishu.cn/docx/Total');
+ files.Topics.push({type:'folder',name:'汇总日报',token:'Digest'});
+ const digest = { date:'2026-11-15', url:'https://example.feishu.cn/docx/Digest15' };
+ files.Digest = [{type:'docx',name:'汇总日报 · 2026-11-14',url:'https://example.feishu.cn/docx/Digest14'},
+   {type:'docx',name:'汇总日报 · '+digest.date,url:digest.url}];
  files.Daily.push({type:'docx',name:'专题日报 · 2026-10-01 专题 · 2026-11-14 至 2026-11-16',url:'https://example.feishu.cn/docx/Day3'});
  const updated=await cloudPublications(service,'topic',{refresh:true,run:async(_command,args)=>({stdout:JSON.stringify({ok:true,data:{files:files[args[args.indexOf('--folder-token')+1]]??[],has_more:false}})})});
+ assert.deepEqual(updated.digest, digest);
+ assert.deepEqual((await cloudPublications(service, 'topic')).digest, digest);
+ assert.equal(topicCards(service, updated.items).length, 1);
  const reports=topicCards(service,updated.items)[0].dailyReports;
  assert.equal(reports.length,3);
  assert.deepEqual(reports[0].topic.window,{start:'2026-11-13T16:00:00.000Z',end:'2026-11-16T16:00:00.000Z',display:'2026-11-14 至 2026-11-16'});
