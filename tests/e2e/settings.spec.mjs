@@ -107,3 +107,15 @@ test('热更新后重载工作台资源并回到设置，运行版本与启动�
   await expect(page.getByRole('tab', { name: '版本与更新' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByText(/重启 DSH/)).toHaveCount(0);
 });
+
+test('停留在公司资料页时也检测运行版本变化并重新加载资源', async ({ page }) => {
+  let version = '0.13.15';
+  await page.route('**/api/plugin-update', route => route.fulfill({ json: { installedVersion: version } }));
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: '全量信息库', exact: true })).toBeVisible();
+  const loaded = page.waitForEvent('load');
+  version = '0.13.16';
+  await loaded;
+  await expect(page).toHaveURL(/view=library/);
+  await expect(page.getByRole('heading', { name: '全量信息库', exact: true })).toBeVisible();
+});

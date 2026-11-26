@@ -24,7 +24,29 @@ const status = t => t.status === 'running' && t.stage === 'waiting_save' ? '等�
 // Card badges stay short: a report that no local task can be matched to is simply published.
 const cardStatus = item => item.status ? status(item) : '已发布';
 export function IndustryApp({ BindingModal, RootModal, Conversation }) {
-  const [config, setConfig] = useState(null), [binding, setBinding] = useState(null), [tab, setTab] = useState(() => new URLSearchParams(location.search).get('view') === 'settings' ? 'settings' : 'library');
+  const [config, setConfig] = useState(null), [binding, setBinding] = useState(null), [tab, setTab] = useState(() => {
+    const view = new URLSearchParams(location.search).get('view');
+    return ['library','analysis','daily','weekly','internal','topic','history','settings'].includes(view) ? view : 'library';
+  });
+  const currentTab = useRef(tab); currentTab.current = tab;
+  useEffect(() => {
+    let active = true, version;
+    const poll = async () => {
+      try {
+        const response = await fetch('/api/plugin-update', { cache: 'no-store' });
+        if (!response.ok || !active) return;
+        const value = await response.json();
+        if (!active || !value.installedVersion) return;
+        if (version && version !== value.installedVersion) {
+          const url = new URL(location.href); url.searchParams.set('view', currentTab.current); location.replace(url.href); return;
+        }
+        version = value.installedVersion;
+      } catch {}
+    };
+    void poll();
+    const timer = setInterval(poll, 5000);
+    return () => { active = false; clearInterval(timer); };
+  }, []);
   const [companies, setCompanies] = useState([]), [tasks, setTasks] = useState([]), [cursor, setCursor] = useState(null), [query, setQuery] = useState('');
   const [reports, setReports] = useState([]), [analysisTasks, setAnalysisTasks] = useState([]), [reportsSyncedAt, setReportsSyncedAt] = useState(null);
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [modal, setModal] = useState(''), [selected, setSelected] = useState(null), [resumeModal, setResumeModal] = useState('');
