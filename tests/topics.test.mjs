@@ -182,6 +182,32 @@ test('PRD468 读取层级目录导入总报与所有日报，不将日报覆盖�
  assert.deepEqual(imported.topic.window,minute.topic.window);
  assert.equal(imported.publication.url,'https://example.feishu.cn/docx/Minute');
 });
+test('汇总目录不把普通文档导入为专题，并且不会展示有歧义的汇总', async () => {
+  const {cloudPublications}=await import('../server/cloud-publications.mjs');
+  const values=new Map(), root={rootName:'研究',folderToken:'Root'};
+  const app={appId:'cli_test',ownerOpenId:'ou_test'};
+  const files={Root:[{type:'folder',name:'专题调研',token:'Topics'}],Topics:[{type:'shortcut',name:'汇总日报',
+    shortcut_info:{target_type:'folder',target_token:'Archive'}}],Archive:[{type:'docx',name:'整理说明',url:'https://example.feishu.cn/docx/Notes'},
+    {type:'folder',name:'备份',token:'Backup'}]};
+  const service={cloudOnly:true,feishuSettings:()=>root,binding:{applicationSnapshot:()=>app},
+    store:{list:()=>[],setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v)}};
+  const read=()=>cloudPublications(service,'topic',{refresh:true,run:async(_command,args)=>({stdout:JSON.stringify({ok:true,
+    data:{files:files[args[args.indexOf('--folder-token')+1]]??[],has_more:false}})})});
+  assert.deepEqual((await read()).items,[]);
+  assert.ok(![...values.keys()].some(key=>key.startsWith('topic-folder-v2:')));
+  files.Archive.push({type:'docx',name:'汇总日报 · 2026-11-14',url:'https://example.feishu.cn/docx/Previous'},
+    {type:'docx',name:'汇总日报 · 2026-11-15',url:'https://example.feishu.cn/docx/Current'},
+    {type:'shortcut',name:'汇总日报 · 2026-11-15',shortcut_info:{target_type:'docx'}});
+  assert.deepEqual((await read()).digest,{date:'2026-11-14',url:'https://example.feishu.cn/docx/Previous'});
+  files.Archive.push({type:'folder',name:'日报',token:'LegacyDaily'});
+  const mixed=await read();
+  assert.equal(mixed.digest,null);
+  assert.deepEqual(mixed.items,[]);
+  files.Archive=[{type:'docx',name:'汇总日报专题调研总报',url:'https://example.feishu.cn/docx/LegacyTotal'},
+    {type:'folder',name:'日报',token:'LegacyDaily'}];
+  assert.equal((await read()).items[0].publication.url,'https://example.feishu.cn/docx/LegacyTotal');
+});
+
 test('PRD468 旧版日报作为总报保留，新总报可复用其链接',()=>{
  const old={id:'old',topic:{topicId:id,window:{start:'2026-11-01T16:00:00.000Z'}},feishuRoot:{rootName:'研究',folderToken:'Root'},feishuApp:{},publication:{url:'https://example.feishu.cn/docx/Legacy'}};
  const values=new Map(),service={store:{list:()=>[old],setting:k=>values.get(k),saveSetting:(k,v)=>values.set(k,v)}};
