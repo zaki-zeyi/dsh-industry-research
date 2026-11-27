@@ -116,6 +116,47 @@ test('PRD 6004 waits for later slots and failed reports, then writes all summari
   assert.equal(f.control.creates.length, 1);
 });
 
+test('digest recovers in a mixed-use archive without modifying unrelated entries', async t => {
+  const f = fixture(t);
+  f.record(await f.trigger(0), 'First', '## 摘要\n第一份日报。');
+  f.record(await f.trigger(1), 'Second', '## 摘要\n第二份日报。');
+  const extras = [
+    {type:'docx', name:'归档备注', url:reportUrl('Notes')},
+    {type:'folder', name:'历史备份', token:'Backup'},
+    {type:'shortcut', name:'参考资料', shortcut_info:{target_type:'wiki',target_token:'Reference'}},
+    {type:'docx', name:'汇总日报 · 2026-11-25'},
+  ];
+  f.documents.archive.push(...extras);
+  f.store.save({id:'other-scope-topic',createdAt:new Date(f.control.now).toISOString(),status:'ready',
+    topic:{topicId:'other-scope-topic',question:'汇总日报'},feishuRoot:{...f.control.root,folderToken:'OtherRoot'},
+    feishuApp:f.control.app,publication:{topicFolderToken:'DigestFolder'}});
+  await f.service.topicDigest.tick();
+  assert.deepEqual(f.documents.archive.slice(0, extras.length), extras);
+  assert.deepEqual(f.service.topicDigest.latest(), {date:DATE,url:digestUrl});
+  assert.equal(f.control.creates.length, 1);
+  assert.equal(f.control.notices.length, 1);
+});
+
+for (const { name, code, files, local } of [
+  {name:'legacy topic layout',code:'DIGEST_FOLDER_CONFLICT',files:[{type:'folder',name:'日报',token:'LegacyDailies'}]},
+  {name:'legacy topic total',code:'DIGEST_FOLDER_CONFLICT',files:[{type:'docx',name:'汇总日报专题调研总报',url:reportUrl('Legacy')}]},
+  {name:'empty folder claimed by a local topic',code:'DIGEST_FOLDER_CONFLICT',files:[],local:true},
+  {name:'a same-day candidate with no usable link',code:'DIGEST_DOCUMENT_LINK_INVALID',files:[{type:'docx',name:`汇总日报 · ${DATE}`,url:digestUrl}, {type:'docx',name:`汇总日报 · ${DATE}`}]},
+  {name:'two distinct existing reports',code:'DIGEST_DOCUMENT_CONFLICT',files:[{type:'docx',name:`汇总日报 · ${DATE}`,url:digestUrl}, {type:'docx',name:`汇总日报 · ${DATE}`,url:reportUrl('Another')}]},
+]) test(`digest safely stops for ${name}`, async t => {
+  const f = fixture(t);
+  f.record(await f.trigger(0), 'First', '## 摘要\n第一份日报。');
+  f.record(await f.trigger(1), 'Second', '## 摘要\n第二份日报。');
+  f.documents.archive.push(...files);
+  if (local) f.store.save({id:'legacy-topic', createdAt:new Date(f.control.now).toISOString(), status:'ready',
+    topic:{topicId:'legacy-topic',question:'汇总日报'},feishuRoot:f.control.root,feishuApp:f.control.app,
+    publication:{topicFolderToken:'DigestFolder'}});
+  await f.service.topicDigest.tick();
+  assert.equal(f.control.creates.length, 0);
+  assert.equal(f.control.notices.length, 0);
+  assert.equal(f.store.runtimeLogs({limit:10}).find(item=>item.event==='topic.digest.retry')?.details.code, code);
+});
+
 test('PRD 6023 HTTP manual generation waits for all reports and shares one document and notification with automation', async t => {
   const f = fixture(t);
   const worker = f.service.topicDigest;
@@ -205,6 +246,8 @@ test('uncertain create and message recover across workers without another docume
   assert.equal(f.service.topicDigest.remoteVisible(f.scope, { date: DATE, url: digestUrl }), null);
   assert.equal(f.control.notices.length, 0);
   f.control.loseCreateReply = false;
+  // A second listing entry for the same URL is not another document.
+  f.documents.archive.push({type:'shortcut',name:`汇总日报 · ${DATE}.DOCX`,url:digestUrl,shortcut_info:{target_type:'docx'}});
   f.control.loseNotificationReply = true;
   // The stored write intent is authoritative after the remote create, even
   // if a source becomes unavailable before restarting and confirming it.

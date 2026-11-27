@@ -1,5 +1,5 @@
 import { TOPIC_FOLDER, TOPIC_DIGEST_FOLDER, topicDocumentKey, topicDailyDocumentKey, topicFolderKey, topicDeletionState } from './topics.mjs';
-import { digestFileDate } from './topic-digest.mjs';
+import { digestFileDate, digestTitleDate, ownsLegacyDigestTopic } from './topic-digest-archive.mjs';
 import { createHash } from 'node:crypto';
 import { libraryKey, listDriveFolder } from './industry.mjs';
 import { LibraryRefreshError } from './library-errors.mjs';
@@ -20,7 +20,7 @@ const timestamp = file => {
   return Number.isFinite(n) && n > 0 ? new Date(n > 1e12 ? n : n * 1000).toISOString() : null;
 };
 export function publicationCacheKey(root, app, kind, directoryName = '内部资料') {
-  return `cloud-publications:${libraryKey(root, app)}:${root.folderToken ?? ''}:${kind}:${kind === 'internal' ? directoryName : ''}${kind==='topic'?':v2:'+ (app?.ownerOpenId??''):''}`;
+  return `cloud-publications:${libraryKey(root, app)}:${root.folderToken ?? ''}:${kind}:${kind === 'internal' ? directoryName : ''}${kind==='topic'?':v3:'+ (app?.ownerOpenId??''):''}`;
 }
 
 // Read only metadata, on tab entry/manual refresh. Polling serves the cache.
@@ -83,18 +83,25 @@ async function readTopicPublications(service,{root,app,key,list,children}){
       const topic={question:previous?.topic.question??(file.name||'历史专题').replace(/^(专题调研|专题总报) · /,''),sources:[],requirements:'',topicId:previous?.topic.topicId??uuid(file.url)};
       items.push(record(file,topic,{legacy:true}));
     }
-    for(const folder of files.filter(f=>f.type==='folder')){
+    const reservedName = folder => modernParents.has(parent) && folderName(folder.name) === TOPIC_DIGEST_FOLDER;
+    const folders = files.filter(file => file.type === 'folder' && !reservedName(file));
+    if (modernParents.has(parent)) folders.push(...matchingFolders(files, TOPIC_DIGEST_FOLDER));
+    for(const folder of folders){
       const token=driveToken(folder),content=await list(token);
       const previous=known.find(t=>t.topicLibrary?.folderToken===token||service.store.setting(topicFolderKey(t))?.folderToken===token);
       if (folderName(folder.name) === TOPIC_DIGEST_FOLDER && modernParents.has(parent)) {
-        const reports = content.filter(digestFileDate);
-        for (const report of reports) {
-          const date = digestFileDate(report);
+        const legacy = ownsLegacyDigestTopic(service.store, root, app, token, content, known);
+        let hasDigestTitles = false;
+        for (const report of content) {
+          const date = digestTitleDate(report);
+          if (!date) continue;
+          hasDigestTitles = true;
           if (!digests.has(date)) digests.set(date, new Set());
-          digests.get(date).add(report.url);
+          digests.get(date).add(!legacy && digestFileDate(report) ? report.url : null);
         }
-        // Reserve the aggregate archive, but preserve an older topic with the same name.
-        if (reports.length || !previous && !content.some(item => isDocument(item) || item.type === 'folder')) continue;
+        // Treat loose files as archive extras, not a topic. Never expose a
+        // mixed folder as deletable through a synthetic topic card.
+        if (!legacy || hasDigestTitles) continue;
       }
       const topic={question:folder.name,sources:[],requirements:'',topicId:previous?.topic.topicId??uuid(token),workflowVersion:468};
       const totalFiles=content.filter(isDocument);
@@ -128,7 +135,7 @@ async function readTopicPublications(service,{root,app,key,list,children}){
     }
     if(item.topic.window?.start&&item.publication.url)service.store.saveSetting(topicDailyDocumentKey(task),{url:item.publication.url});
   }
-  const [date, urls] = [...digests].filter(([, urls]) => urls.size === 1).sort(([a], [b]) => b.localeCompare(a))[0] ?? [];
+  const [date, urls] = [...digests].filter(([, urls]) => urls.size === 1 && !urls.has(null)).sort(([a], [b]) => b.localeCompare(a))[0] ?? [];
   const result={items,digest:urls ? { date, url: [...urls][0] } : null,syncedAt:new Date().toISOString()};
   service.store.saveSetting(key,result);return result;
 }
