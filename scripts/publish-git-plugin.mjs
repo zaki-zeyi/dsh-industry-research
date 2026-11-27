@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { installationManifest } from './plugin-manifest.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const arg = name => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
 const output = arg('--output');
@@ -15,6 +16,7 @@ const sourceDirectory = resolve(arg('--source-dir') ?? root);
 const branch = 'release';
 const release = JSON.parse(readFileSync(resolve(root, 'artifacts/plugin-release.json')));
 const source = JSON.parse(readFileSync(resolve(root, 'package.json')));
+const expectedManifest = installationManifest(source);
 assert.equal(release.version, source.version, 'Rebuild artifacts after changing the source version');
 for (const [file, hash] of [[release.filename, release.sha256], [release.zipFilename, release.zipSha256]]) {
   assert.equal(createHash('sha256').update(readFileSync(resolve(root, 'artifacts', file))).digest('hex'), hash, 'Release artifact checksum mismatch');
@@ -57,12 +59,7 @@ cpSync(resolve(root, 'artifacts', release.directory), directory, { recursive: tr
 // 安装包里的 README 是用户安装说明，分支根目录仍保留源码 README；从索引取回可避免工作树换行差异改写内容。
 git(['checkout-index', '-f', '--', 'README.md']);
 const manifest = JSON.parse(readFileSync(resolve(directory, 'package.json')));
-assert.deepEqual(manifest, source, '安装产物必须使用原始源码清单，请重新构建');
-for (const hook of ['preinstall', 'install', 'postinstall', 'prepare', 'prepack', 'postpack', 'prepublish', 'prepublishOnly', 'publish']) {
-  assert.ok(!manifest.scripts?.[hook], `发布包不得带生命周期脚本：${hook}`);
-}
-// 从源码索引恢复原始字节（含换行），两分支的包清单不再产生任何分叉。
-git(['checkout-index', '-f', '--', 'package.json']);
+assert.deepEqual(manifest, expectedManifest, '安装清单只能在源码清单上补充内置依赖，请重新构建');
 git(['add', '--force', '--all']);
 // 生产依赖的可执行位（如 node-pty 的 spawn-helper）在 Windows 上无法从文件系统读回，沿用上一发布的记录。
 if (previous) {

@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { installationManifest } from '../scripts/plugin-manifest.mjs';
 
 const script = new URL('../scripts/publish-git-plugin.mjs', import.meta.url);
 function run(command, args, cwd) {
@@ -32,7 +33,10 @@ function writeArtifacts(root, version) {
   writeFileSync(resolve(stage, 'dist/index.html'), '<script src="/assets/index-fixture.js"></script>');
   writeFileSync(resolve(stage, 'plugin/index.mjs'), 'export const fixture = true;\n');
   writeFileSync(resolve(stage, 'node_modules/production-dependency/index.js'), 'module.exports = 1;\n');
-  cpSync(resolve(root, 'package.json'), resolve(stage, 'package.json'));
+  const source = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+  // 模拟真实构建产物；允许下方测试刻意把非法安装脚本带入发布。
+  writeFileSync(resolve(stage, 'package.json'), JSON.stringify({ ...source,
+    bundledDependencies: Object.keys(source.dependencies) }, null, 2) + '\n');
   const hash = value => createHash('sha256').update(value).digest('hex');
   for (const file of [`${name}.tgz`, `${name}-desktop.zip`]) writeFileSync(resolve(root, 'artifacts', file), `verified ${file}`);
   writeFileSync(resolve(root, 'artifacts/plugin-release.json'), JSON.stringify({ name: 'dsh-industry-research', version, directory: name, filename: `${name}.tgz`, sha256: hash(`verified ${name}.tgz`), zipFilename: `${name}-desktop.zip`, zipSha256: hash(`verified ${name}-desktop.zip`), sourceCommit: git(['rev-parse', 'HEAD'], root) }, null, 2));
@@ -56,11 +60,12 @@ function contract(workspace) {
   mkdirSync(bare);
   git(['init', '-q', '--bare', '--initial-branch', 'main'], bare);
   gitInit(work);
-  writeFileSync(resolve(work, 'package.json'), JSON.stringify({ name: 'dsh-industry-research', version: '1.2.3', scripts: { test: 'node --test' }, dependencies: { 'production-dependency': '1.0.0' }, bundledDependencies: ['production-dependency'], files: ['plugin', 'dist'] }, null, 2));
+  writeFileSync(resolve(work, 'package.json'), JSON.stringify({ name: 'dsh-industry-research', version: '1.2.3', scripts: { test: 'node --test' }, dependencies: { 'production-dependency': '1.0.0' }, files: ['plugin', 'dist'] }, null, 2));
   writeFileSync(resolve(work, 'README.md'), '# 源码说明\n');
   writeFileSync(resolve(work, 'source.txt'), 'source\n');
   mkdirSync(resolve(work, 'scripts'), { recursive: true });
   cpSync(script, resolve(work, 'scripts/publish-git-plugin.mjs'));
+  cpSync(new URL('../scripts/plugin-manifest.mjs', import.meta.url), resolve(work, 'scripts/plugin-manifest.mjs'));
   mkdirSync(resolve(work, '.github/workflows'), { recursive: true });
   writeFileSync(resolve(work, '.github/workflows/acceptance.yml'), 'name: acceptance\non: push\n');
   commitAll(work, 'main 首次提交');
@@ -80,7 +85,7 @@ test('release 分支与 main 共享历史，可以直接合并且保留源码与
     assert.equal(first.version, '1.2.3');
     assert.equal(first.sourceCommit, firstSource);
     const tree = () => git(['ls-tree', '-r', '--name-only', 'release'], bare).split('\n');
-    assert.deepEqual(tree().sort(), ['README.md', 'dist/index.html', 'node_modules/production-dependency/index.js', 'package.json', 'plugin/index.mjs', 'scripts/publish-git-plugin.mjs', 'source.txt'].sort(), '安装分支 = 源码目录 + 验证产物，且不含未跟踪的 artifacts/');
+    assert.deepEqual(tree().sort(), ['README.md', 'dist/index.html', 'node_modules/production-dependency/index.js', 'package.json', 'plugin/index.mjs', 'scripts/plugin-manifest.mjs', 'scripts/publish-git-plugin.mjs', 'source.txt'].sort(), '安装分支 = 源码目录 + 验证产物，且不含未跟踪的 artifacts/');
     assert.ok(!tree().some(path => path.startsWith('.github/')), '安装分支不镜像 .github：发布凭据没有 workflow 权限');
     assert.equal(git(['rev-parse', 'release^'], bare), firstSource, '首次发布提交以源码提交为父提交');
 
@@ -115,7 +120,8 @@ test('release 分支与 main 共享历史，可以直接合并且保留源码与
     assert.ok(existsSync(resolve(verify, 'added-later.txt')), '合并后获得 main 新增文件');
     assert.ok(existsSync(resolve(verify, 'dist/index.html')), '合并后仍保留预构建页面');
     assert.ok(existsSync(resolve(verify, 'node_modules/production-dependency/index.js')), '合并后仍保留生产依赖');
-    assert.equal(git(['rev-parse', 'release:package.json'], bare), git(['rev-parse', 'main:package.json'], bare), '源码与安装使用完全相同的包清单');
+    assert.deepEqual(JSON.parse(git(['show', 'release:package.json'], bare)),
+      installationManifest(JSON.parse(git(['show', 'main:package.json'], bare))), '发布清单只补充内置依赖');
 
     // 版本号、依赖同时变化也无需自定义 merge driver、--ours 或任何本机配置。
     const updated = JSON.parse(readFileSync(resolve(work, 'package.json'), 'utf8'));
@@ -166,10 +172,10 @@ test('发布拒绝分叉清单及安装生命周期脚本，不写入安装分�
     writeArtifacts(checkout, '1.2.3');
     const manifestPath = resolve(checkout, 'artifacts/dsh-industry-research-1.2.3/package.json');
     const source = JSON.parse(readFileSync(resolve(checkout, 'package.json'), 'utf8'));
-    writeFileSync(manifestPath, JSON.stringify({ ...source, private: true }));
+    writeFileSync(manifestPath, JSON.stringify({ ...installationManifest(source), private: true }));
     const mismatch = spawnSync(process.execPath, [resolve(checkout, 'scripts/publish-git-plugin.mjs'), '--output', resolve(workspace, 'mismatch')], { cwd: checkout, encoding: 'utf8' });
     assert.notEqual(mismatch.status, 0);
-    assert.match(mismatch.stderr, /原始源码清单/);
+    assert.match(mismatch.stderr, /只能在源码清单上补充内置依赖/);
     source.scripts.prepare = 'node unsafe.mjs';
     writeFileSync(resolve(checkout, 'package.json'), JSON.stringify(source));
     commitAll(checkout, 'fixture: unsafe lifecycle');

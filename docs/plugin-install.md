@@ -4,7 +4,7 @@
 
 ## 用户安装
 
-推荐通过下方的 [DSH「插件 → 发现」](#从-dsh-插件页面安装与更新) 安装；它使用经过验证的固定 Git 提交，后续可从 DSH 原地更新。手动添加时，可用 `https://github.com/zaki-zeyi/dsh-industry-research.git#<安装提交>`，提交应取自 [官方索引](../dsh-plugin-index.json) 的 `source.commit`，不要使用源码提交或浮动 `#release`。网页端的下载、安装、执行均在 DSH 服务端发生。
+推荐通过下方的 [DSH「插件 → 发现」](#从-dsh-插件页面安装与更新) 安装。它使用经过验证的固定 Git 提交，后续可从 DSH 原地更新。手动添加时，可用 `https://github.com/zaki-zeyi/dsh-industry-research.git#<安装提交>`，提交取自 [官方索引](../dsh-plugin-index.json) 的 `source.commit`。从 0.13.28 起，填写不带后缀的仓库地址也能安装，宿主会从 npm 源解析运行依赖。网页端的下载、安装和执行均在 DSH 服务端发生。
 
 本地目录安装：从 GitHub Releases 下载所需版本的 `desktop.zip`，解压后在弹窗填写包含 `package.json` 的目录绝对路径。网页版填写服务所在机器上的路径。保留目录，按宿主提示启用或重新加载。ZIP 包含 Windows/macOS x64、arm64 的原生终端依赖。
 
@@ -48,7 +48,7 @@ dsh plugin --profile <profile> add <tgz绝对路径>
 
 在 main 更新 package.json/package-lock.json 的同一版本后，合入 main 自动触发 **Publish verified plugin**。失败后可在已有Actions运行中重试。发布分支是源码镜像加验证产物，推送使用工作流内置凭据，不需要额外的仓库设置；安装内容仍由安装清单的 `files` 决定。流程：
 
-1. Windows 和 macOS 分别运行构建、业务测试、浏览器测试。
+1. Windows 和 macOS 分别运行构建、业务测试、浏览器测试，并使用 DSH 同版本 pnpm 从本次源码提交冷安装，验证所有运行依赖可解析且工作台可启动。
 2. 打包 ZIP/TGZ，校验独立安装、页面、生产依赖和 Windows/macOS 原生 PTY。Linux 网页端单独复验同样不含 Linux PTY 的安装包，确认 TGZ/ZIP 能启动，解压目录可由 DSH 宿主安装并在浏览器运行原生会话。
 3. 从通过验证的 Windows ZIP 恢复原目录，校验版本、源码提交和 SHA256。
 4. 把安装目录写成 release 分支的发布提交：父提交同时指向上一发布提交和产出该产物的源码提交，内容为源码目录叠加验证产物，使用普通 push 保留历史，不强制覆盖。
@@ -56,9 +56,9 @@ dsh plugin --profile <profile> add <tgz绝对路径>
 6. 创建与源码提交绑定的版本标签和 GitHub Release，上传版本包、校验文件及来源清单。
 7. 正式 Release 发布后，CI 自动运行 `publish-dsh-plugin-index.mjs`，校验不可变发布并更新主分支的官方插件索引；遇到并发修改会重读并重试，不覆盖更高版本。需要手工补发时，用 `node scripts/write-dsh-plugin-index.mjs`（需要已登录的 `gh`）生成索引，提交 `dsh-plugin-index.json` 并合入 `main`。脚本校验发布清单摘要及安装标签指向的固定提交；失败时不会覆盖索引。DSH「发现」只会在索引合入后看到新版，不会直接追踪 `release` 分支。
 
-已有同名正式版本时停止，必须先增加版本号。CI 失败不能当作成功发布；release 分支已同步但 Release 创建失败时，检查日志，修复后补齐同一版本资产。仓库默认分支可以保持 main；安装与冷缓存验收均显式指定 #release，避免安装开发源码。
+已有同名正式版本时停止，必须先增加版本号。release 分支已同步但 Release 创建失败时，检查日志，修复后补齐同一版本资产。仓库默认分支为 `main`，固定提交安装入口使用发布分支的预构建提交。
 
-`release` 与 `main` 共享历史，并且从 0.8.15 开始使用完全相同的根 `package.json`：构建不再生成另一份安装清单，发布会校验清单语义一致并从源码提交还原原始字节。运行期依赖由 `bundledDependencies` 全部内置，前端构建依赖列入 `devDependencies`，保留的开发命令不是安装钩子，安装时不会执行；`files` 仍限制实际打包内容。
+`release` 与 `main` 共享历史。两种安装方式共用源码清单里的版本号和依赖列表。构建正式包时才添加 `bundledDependencies`，对应的全部生产依赖一并内置。发布校验会检查这项生成字段及其余清单内容，因此源码 Git 安装仍会解析依赖，正式安装包仍可离线安装。前端构建依赖列入 `devDependencies`，`files` 限制实际打包内容。
 
 需要时可在 `release` 分支 `git merge main`，版本号、依赖与其他源码修改一样正常合并，无需 `git checkout --ours package.json`、自定义 merge driver 或本机 Git 配置。注意：手工合并仅同步源码和清单，不会重新生成 `dist` 和内置依赖，不能代替构建、验收和正式发布；不要把这种未发布的中间状态当成新版本安装包。反向把 `release` 合并进 `main` 只会把构建产物和生产依赖带进开发分支。
 

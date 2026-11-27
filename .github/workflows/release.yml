@@ -38,6 +38,14 @@ jobs:
       - run: npm run plugin:pack
       - run: npm run plugin:check-pack
       - run: node scripts/release-acceptance.mjs
+      - name: Verify cold installation from the source branch
+        shell: bash
+        env:
+          GIT_SOURCE: github:${{ github.repository }}#${{ github.sha }}
+        run: |
+          set -e
+          npm install --prefix "$RUNNER_TEMP/dsh-pnpm" pnpm@11.28.5 --ignore-scripts --no-audit --no-fund
+          node scripts/git-install-acceptance.mjs --pnpm-cli "$RUNNER_TEMP/dsh-pnpm/node_modules/pnpm/bin/pnpm.mjs" --source "$GIT_SOURCE"
       - if: matrix.os == 'windows-latest'
         run: npm install --prefix "$env:RUNNER_TEMP/dsh-cli" @deepseek-ai/dsh@0.2.0-rc.2 --ignore-scripts --no-audit --no-fund
       - if: matrix.os == 'windows-latest'
