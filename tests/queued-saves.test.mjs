@@ -184,6 +184,7 @@ test('PRD 6282 automatic and manual digest creation share readiness, saved promp
       notificationRecipient:app.ownerOpenId, notificationApp:{...app,appId},
       scheduled:{kind:'topic',scheduledFor:time.toISOString()}, publication:{status:'published',url:url('sourceReport')} };
     fixture.seed('sourceReport', '源日报', 'topic-daily-folder', '## 摘要\n测试原日报的完整摘要。');
+    fixture.seed('archiveNotes', '归档备注', 'digest-folder', '<p>现有文档，必须保留</p>');
     store.saveSetting('topic-schedules', { [`${scope}:${topicId}`]:{ topicId,scope,enabled:true,time:'12:00', research:input } });
     store.save(task);
     store.saveRequest(topicScheduleRequestKey(scope,topicId,day), '', task.id);
@@ -233,8 +234,20 @@ test('PRD 6282 automatic and manual digest creation share readiness, saved promp
     assert.equal(prompts.length,3);
     assert.deepEqual((await card()).digestGeneration, {date:day,status:'waiting',taskId:failed.id,prompt});
     assert.equal(service.queue.shift().id,task.id);
+    // A genuine conflict introduced after the model turn starts must leave the
+    // accepted draft intact. Once gone, publication retries the saved draft, not AI.
+    fixture.seed('legacyTotal', '汇总日报专题调研总报', 'digest-folder', '<p>旧专题</p>');
     store.save(task);
     service.drain = drain;
+    await until(async () => {
+      await digest.tick();
+      return store.runtimeLogs({limit:30}).some(row=>row.event==='topic.digest.retry' && row.details.code==='DIGEST_FOLDER_CONFLICT');
+    });
+    assert.ok(store.get(failed.id).queuedSave);
+    assert.deepEqual((await card()).digestGeneration,{date:day,status:'retrying',taskId:failed.id,prompt});
+    assert.equal(notices.length,0);
+    fixture.docs.delete(url('legacyTotal')); // Simulates the folder owner resolving the genuine conflict.
+    now += 16_000;
     const finished = await until(async () => {
       await digest.tick();
       return digest.manualStatus(scope)?.status === 'sent' && store.get(failed.id);
@@ -244,7 +257,8 @@ test('PRD 6282 automatic and manual digest creation share readiness, saved promp
     assert.equal(prompts[0].id, prompts[3].id);
     assert.ok(prompts[3].text.startsWith(prompt));
     assert.doesNotMatch(prompts[3].text, /供下次自动汇总使用/);
-    const [[digestUrl, doc]] = [...fixture.docs].filter(([,entry]) => entry.folder === 'digest-folder');
+    const [[digestUrl, doc]] = [...fixture.docs].filter(([,entry]) => entry.folder === 'digest-folder' && entry.title.startsWith('汇总日报 · '));
+    assert.equal(fixture.docs.get(url('archiveNotes')).content,'<p>现有文档，必须保留</p>');
     assert.match(doc.content,/按编辑后的要求输出综合观察/);
     assert.match(doc.content,/测试原日报的完整摘要/);
     assert.match(doc.content,/href="https:\/\/example\.feishu\.cn\/docx\/sourceReport"/);

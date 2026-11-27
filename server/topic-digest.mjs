@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { notificationContext } from './notification-context.mjs';
 import { documentToken, escapeXml, plainXml } from './queued-save-documents.mjs';
-import { driveToken, driveType, matchingFolders } from './folder-identity.mjs';
+import { driveToken, matchingFolders } from './folder-identity.mjs';
+import { assertDigestArchive, uniqueDigestDocument } from './topic-digest-archive.mjs';
+export { digestFileDate } from './topic-digest-archive.mjs';
 import { ServiceError } from './service-error.mjs';
 import { z } from 'zod';
 import { TOPIC_DIGEST_FOLDER, TOPIC_FOLDER, topicDeletionState, topicScheduleDate, topicScheduleRequestKey, topicScope } from './topics.mjs';
@@ -13,7 +15,9 @@ export const defaultDigestPrompt = '聚合所有日报的摘要生成汇总日�
 const startIssues = {
   DIGEST_BINDING_CHANGED:'日报与当前飞书账号不匹配，请恢复生成日报时的飞书绑定。',
   FOLDER_LIST_INCOMPLETE:'飞书目录未读取完整，请检查连接后重试。',
+  DIGEST_FOLDER_CONFLICT:'汇总目录与已有同名专题冲突，请先核对飞书目录。',
   DIGEST_DOCUMENT_CONFLICT:'汇总目录存在多份同日文档，请先核对飞书目录。',
+  DIGEST_DOCUMENT_LINK_INVALID:'当天的汇总缺少可核对的飞书链接，请先核对飞书目录。',
 };
 function digestStartIssue(error) {
   if (Object.hasOwn(startIssues, error?.code)) return startIssues[error.code];
@@ -26,13 +30,6 @@ const canonical = value => value.replace(/\s+/g, ' ').trim();
 const textHash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const deliveryFor = task => ({ notificationRecipient:task.notificationRecipient ?? task.feishuApp?.ownerOpenId,
   notificationApp:task.notificationApp ?? task.feishuApp });
-const dateInTitle = /^汇总日报 · (\d{4}-\d{2}-\d{2})(?:\.docx?)?$/;
-export function digestFileDate(file) {
-  if (!['docx', 'doc'].includes(file.type) || !documentToken(file.url)) return;
-  const date = dateInTitle.exec(file.name ?? '')?.[1];
-  const time = Date.parse(date);
-  if (Number.isFinite(time) && new Date(time).toISOString().startsWith(date + 'T')) return date;
-}
 
 function summaryLines(markdown) {
   const lines = markdown.split(/\r?\n/);
@@ -260,15 +257,16 @@ export class TopicDigest {
     const directories = this.service.directories;
     const list = token => directories.list(app, token);
     const parents = matchingFolders(await list(root.folderToken), TOPIC_FOLDER).map(driveToken);
-    const found = new Set();
+    const candidates = [];
     for (const parent of parents) {
       for (const folder of matchingFolders(await list(parent), TOPIC_DIGEST_FOLDER)) {
-        for (const file of await list(driveToken(folder))) if (digestFileDate(file) === date) found.add(file.url);
+        const token = driveToken(folder), files = await list(token);
+        assertDigestArchive(this.store, root, app, token, files);
+        candidates.push(...files);
       }
     }
     this.assertCurrent(scope);
-    if (found.size > 1) throw Object.assign(new ServiceError(409, startIssues.DIGEST_DOCUMENT_CONFLICT), {code:'DIGEST_DOCUMENT_CONFLICT'});
-    return [...found][0];
+    return uniqueDigestDocument(candidates, date);
   }
 
   assertSources(task) {
@@ -525,13 +523,9 @@ export class TopicDigest {
     const folder = await directories.folder(app, parent, TOPIC_DIGEST_FOLDER);
     this.assertCurrent(scope);
     const files = await this.documents.files(app, folder);
-    if (files.some(file => driveType(file) === 'folder' || ['docx', 'doc', 'wiki'].includes(driveType(file)) && !digestFileDate(file))) {
-      throw Object.assign(new Error('汇总目录与已有专题目录重名'), { code: 'DIGEST_FOLDER_CONFLICT' });
-    }
-    const matches = [...new Set(files.filter(file => digestFileDate(file) === date).map(file => file.url))];
-    if (matches.length > 1) throw Object.assign(new Error('存在多份同日汇总'), { code: 'DIGEST_DOCUMENT_CONFLICT' });
+    assertDigestArchive(this.store, root, app, folder, files);
     const title = titleFor(date);
-    let [url] = matches;
+    let url = uniqueDigestDocument(files, date);
     if (url && synthesis && !day.creating) {
       await this.requireSourceOwner(context, tasks);
       return { url, reused:true };
@@ -584,12 +578,7 @@ export class TopicDigest {
     const {app,scope} = context;
     await this.requireSourceOwner(context, [intent.destination]);
     let {url} = intent;
-    if (!url) {
-      const matches = [...new Set((await this.documents.files(app, intent.folder))
-        .filter(file => digestFileDate(file) === date).map(file => file.url))];
-      if (matches.length > 1) throw new ServiceError(409, '存在多份同日汇总，请先核对飞书目录');
-      [url] = matches;
-    }
+    if (!url) url = uniqueDigestDocument(await this.documents.files(app, intent.folder), date);
     if (!url) throw Object.assign(new Error('上次创建尚未确认，继续核对'), { code:'DIGEST_CREATE_UNCONFIRMED' });
     const {content} = await this.documents.read(app, url);
     const hashes = new Set([...content.matchAll(/<(h[1-6]|p)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g)]
