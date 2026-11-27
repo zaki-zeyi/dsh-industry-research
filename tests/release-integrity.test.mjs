@@ -13,7 +13,8 @@ for (const fault of ['stale-version', 'tampered-archive', 'wrong-directory']) {
       mkdirSync(resolve(root, 'scripts'));
       mkdirSync(resolve(root, 'artifacts/package'), { recursive: true });
       copyFileSync(new URL('../scripts/publish-git-plugin.mjs', import.meta.url), resolve(root, 'scripts/publish.mjs'));
-      writeFileSync(resolve(root, 'package.json'), JSON.stringify({ version: '1.2.3' }));
+      copyFileSync(new URL('../scripts/plugin-manifest.mjs', import.meta.url), resolve(root, 'scripts/plugin-manifest.mjs'));
+      writeFileSync(resolve(root, 'package.json'), JSON.stringify({ version: '1.2.3', dependencies: {} }));
       writeFileSync(resolve(root, 'artifacts/package/package.json'), JSON.stringify({ version: fault === 'wrong-directory' ? '0.1.1' : '1.2.3' }));
       const hash = createHash('sha256').update('verified').digest('hex');
       for (const file of ['package.tgz', 'package.zip']) writeFileSync(resolve(root, 'artifacts', file), fault === 'tampered-archive' ? 'changed' : 'verified');

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { npmCommand } from './npm-command.mjs';
 import { createDesktopZip } from './desktop-archive.mjs';
+import { installationManifest } from './plugin-manifest.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 function run(args) {
   const invocation = npmCommand(args);
@@ -21,18 +22,8 @@ try {
   cpSync(resolve(root, 'docs'), resolve(stage, 'docs'), { recursive: true, filter: path => !path.includes('/screenshots') });
   cpSync(resolve(root, 'docs/plugin-install.md'), resolve(stage, 'README.md'));
   const source = JSON.parse(readFileSync(resolve(root, 'package.json')));
-  // 开发与安装共用同一个清单，避免 release 改写 package.json 后版本/依赖更新必然冲突。
-  // 非生命周期 scripts 仅作为开发入口保留；UI 依赖属于 devDependencies，已由 Vite 打入 dist。
-  const manifest = source;
-  const dependencies = source.dependencies;
-  assertManifest(source);
-  cpSync(resolve(root, 'package.json'), resolve(stage, 'package.json'));
-  function assertManifest(manifest) {
-    for (const hook of ['preinstall', 'install', 'postinstall', 'prepare', 'prepack', 'postpack', 'prepublish', 'prepublishOnly', 'publish']) {
-      if (manifest.scripts?.[hook]) throw new Error(`发布包不得带生命周期脚本：${hook}`);
-    }
-    if (JSON.stringify([...manifest.bundledDependencies].sort()) !== JSON.stringify(Object.keys(dependencies).sort())) throw new Error('运行期依赖必须全部内置');
-  }
+  const manifest = installationManifest(source);
+  writeFileSync(resolve(stage, 'package.json'), JSON.stringify(manifest, null, 2) + '\n');
   // Copy the complete production dependency tree, including nested versions.
   function copyDependency(name, parentRoot, parentTarget = stage) {
     const req = createRequire(resolve(parentRoot, 'package.json'));
@@ -54,7 +45,7 @@ try {
     cpSync(packageRoot, target, { recursive: true, filter: path => path !== resolve(packageRoot, 'node_modules') });
     for (const child of Object.keys(info.dependencies ?? {})) copyDependency(child, packageRoot, target);
   }
-  for (const name of Object.keys(dependencies)) copyDependency(name, root);
+  for (const name of manifest.bundledDependencies) copyDependency(name, root);
   const result = JSON.parse(run(['pack', stage, '--json', '--pack-destination', resolve(root, 'artifacts')]));
   const packed = result[0];
   const archive = resolve(root, 'artifacts', packed.filename);

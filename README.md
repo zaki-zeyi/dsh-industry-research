@@ -1,5 +1,7 @@
 # dsh-industry-research · 行研工作台
 
+0.13.28：修复直接使用 GitHub 仓库地址安装后缺少运行依赖的问题。发布流程同时验证源码 Git 安装和预构建安装包。
+
 ## 产品需求文档（PRD）
 
 [《行研平台 PRD》（飞书）](https://zcnnosk3k1j9.feishu.cn/wiki/DClUwzIndiJ5i3kFWgmcECkQnYc) · 实现基线：修订版 4896
@@ -160,7 +162,7 @@ CI 在 [GitHub Actions](https://github.com/zaki-zeyi/dsh-industry-research/actio
 
 正式下载以 [GitHub Releases](https://github.com/zaki-zeyi/dsh-industry-research/releases) 为准。
 
-建议通过上面的「发现」入口安装，以便后续从 DSH 手动更新。若使用「添加插件」，请从 [官方索引](dsh-plugin-index.json) 取得 `source.commit`，填写 `https://github.com/zaki-zeyi/dsh-industry-research.git#<安装提交>`。不要填写浮动的 `#release`，或使用 `main` 的源码提交。网页安装发生在 DSH 服务端，服务端必须能够访问 GitHub。
+建议通过上面的「发现」入口安装，以便后续从 DSH 手动更新。若使用「添加插件」，也可从 [官方索引](dsh-plugin-index.json) 取得 `source.commit`，填写 `https://github.com/zaki-zeyi/dsh-industry-research.git#<安装提交>`。从 0.13.28 起，填写不带后缀的仓库地址也能安装，宿主会从 npm 源解析运行依赖。网页安装发生在 DSH 服务端。
 
 已安装用户进入「设置 → 版本与更新」，点击「检查更新」，下载校验完成后点击「安装已校验版本」；也可开启「空闲时自动更新」。安装含动态切换启动层的 0.13.15 或更新版本后，常规业务更新在当前 DSH 中直接生效。更早版本用户先通过 DSH 插件管理器更新一次。
 
