@@ -17,7 +17,7 @@ try {
   writeFileSync(resolve(directory, 'package.json'), JSON.stringify({ name: 'dsh-github-install-test', private: true, dependencies: {} }));
   // Match the desktop profile's linker policy; do not approve scripts or reuse its package store.
   writeFileSync(resolve(directory, 'pnpm-workspace.yaml'), 'packages:\n  - .\nnodeLinker: hoisted\nautoInstallPeers: false\n');
-  run(process.execPath, [pnpm, 'add', source, '--store-dir', resolve(directory, 'store')]);
+  run(process.execPath, [pnpm, 'add', source, '--ignore-scripts', '--store-dir', resolve(directory, 'store')]);
   const installed = resolve(directory, 'node_modules/dsh-industry-research');
   const manifest = JSON.parse(readFileSync(resolve(installed, 'package.json')));
   assert.equal(manifest.name, 'dsh-industry-research');

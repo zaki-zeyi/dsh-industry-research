@@ -1,6 +1,6 @@
 {
   "name": "dsh-industry-research",
-  "version": "0.13.27",
+  "version": "0.13.28",
   "private": true,
   "type": "module",
   "engines": {
@@ -35,13 +35,6 @@
     "ws": "8.22.0",
     "zod": "4.6.7"
   },
-  "bundledDependencies": [
-    "@larksuiteoapi/node-sdk",
-    "express",
-    "node-pty",
-    "ws",
-    "zod"
-  ],
   "devDependencies": {
     "@playwright/test": "1.61.1",
     "@xterm/addon-fit": "0.11.0",
@@ -86,5 +79,12 @@
     "docs"
   ],
   "main": "./plugin/index.mjs",
-  "description": "行研工作台：公司全量信息库、专题调研、日报周报、友商分析与宿主原生会话"
+  "description": "行研工作台：公司全量信息库、专题调研、日报周报、友商分析与宿主原生会话",
+  "bundledDependencies": [
+    "@larksuiteoapi/node-sdk",
+    "express",
+    "node-pty",
+    "ws",
+    "zod"
+  ]
 }
