@@ -75,6 +75,26 @@ function fixture({ changedDigest = false, changedArchive = false, busy = false, 
   return { service, manager, calls, request, requests, settings, events, archive, cacheDir: join(cacheRoot, randomUUID()) };
 }
 
+test('官方模式不会恢复旧版自动下载或排队的本地安装', async () => {
+  const f = fixture();
+  f.settings.set('plugin-update', { automatic: true, staged: { candidate: { version: nextVersion, publishedAt: '2026-11-20T00:00:00Z' } },
+    installRequested: { version: nextVersion } });
+  const updates = new PluginUpdates(f.service, f.manager, installedVersion,
+    { request: f.request, cacheDir: f.cacheDir, background: false });
+  updates.start();
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(updates.snapshot().eligible, true);
+    assert.equal(updates.snapshot().automatic, false);
+    assert.deepEqual(f.requests, []);
+    assert.deepEqual(f.calls, []);
+    assert.equal(updates.timer, undefined);
+    assert.equal(updates.firstCheck, undefined);
+    assert.equal(updates.idleInstallTimer, undefined);
+    assert.throws(() => updates.setAutomatic(true), /本地自动更新已停用/);
+  } finally { updates.close(); }
+});
+
 test('更新进度反映下载、等待健康检查和完成，并记录更新日志', async () => {
   const f = fixture();
   const updates = new PluginUpdates(f.service, f.manager, installedVersion,

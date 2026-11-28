@@ -40,6 +40,57 @@ test('detail update controls recheck after disable/enable and discard the previo
   disposers.splice(0).forEach(dispose => dispose());
 });
 
+test('workbench bridge accepts only its subscribed frame and keeps the host token private', async () => {
+  let loaded, receive;
+  const effects = [], slots = new Map(), requests = [], replies = [];
+  const frameOrigin = 'http://127.0.0.1:4099';
+  const frame = { postMessage: (message, origin) => replies.push({ message, origin }) };
+  const state = { runningVersion: '0.13.28', installedVersion: '0.13.28', candidateVersion: '0.13.29', eligible: true, actionToken: 'host-only' };
+  const React = {
+    createElement: (type, props, ...children) => ({ type, props, children }),
+    useState: value => [value?.state === 'starting' ? { state: 'ready', url: frameOrigin } : value],
+    useRef: value => ({ current: value }),
+    useEffect: callback => effects.push(callback),
+  };
+  runInNewContext(readFileSync(new URL('../plugin/client.js', import.meta.url), 'utf8'), {
+    window: { __ModuleLoader__: { load: value => { loaded = value; } }, location: { origin: 'dsh-app://app', protocol: 'dsh-app:' },
+      addEventListener: (_event, callback) => { receive = callback; }, removeEventListener() {} },
+    setTimeout: () => 1, clearTimeout() {},
+    fetch: async (url, options = {}) => {
+      if (options.method === 'POST') requests.push([url, options.headers['X-DSH-Update-Token']]);
+      return { ok: true, json: async () => state };
+    },
+  });
+  loaded.factory(() => React).apply({ slots: {
+    inject: (_name, callback) => callback(), register: (options, component) => slots.set(options.name, component),
+  } });
+  const panel = slots.get('main')({});
+  panel.children.find(node => node?.type === 'iframe').props.ref.current = { contentWindow: frame };
+  const cleanup = effects[1]();
+  const id = '12345678-1234-4234-8234-123456789abc';
+  const send = (action, version, overrides) => receive({ origin: frameOrigin, source: frame,
+    data: { type: 'industry-research:official-update', requestId: id, action, version }, ...overrides });
+  await send('watch', null, { source: {} });
+  await send('watch', null, { origin: 'http://127.0.0.1:1234' });
+  await send('install', '0.13.29');
+  assert.equal(replies.length, 0);
+  await send('watch');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(requests, [['/industry-research/official-update?action=check', 'host-only']]);
+  assert.equal(replies.at(-1).message.state.label, '更新到 0.13.29');
+  assert.equal(replies.at(-1).origin, frameOrigin);
+  assert.ok(replies.every(({ message }) => !('actionToken' in message.state)));
+  await send('install', '0.13.30');
+  assert.equal(requests.length, 1, 'a stale target is not installed');
+  await send('install', '0.13.29');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(requests.at(-1), ['/industry-research/official-update?action=install&version=0.13.29', 'host-only']);
+  await send('unwatch');
+  await send('install', '0.13.29');
+  assert.equal(requests.length, 2);
+  cleanup();
+});
+
 test('detail actions explain ineligible updates and keep install errors through status polling', async () => {
   let loaded;
   const effects = [], slots = new Map(), timers = [], actions = [];

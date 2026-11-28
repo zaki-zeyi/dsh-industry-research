@@ -23,7 +23,7 @@ function failureDetails(error, phase, durationMs) {
 }
 
 export class PluginUpdates {
-  constructor(service, manager, version, { request = fetch, now = Date.now, cacheDir, slotUpdater } = {}) {
+  constructor(service, manager, version, { request = fetch, now = Date.now, cacheDir, slotUpdater, background = true } = {}) {
     this.service = service;
     this.manager = manager;
     this.version = version;
@@ -31,6 +31,7 @@ export class PluginUpdates {
     this.now = now;
     this.cacheDir = cacheDir;
     this.slotUpdater = slotUpdater;
+    this.background = background;
     this.saved = service.store.setting(settingKey) ?? { automatic: false };
     this.candidate = newerVersion(this.saved.staged?.candidate?.version, version) &&
       this.saved.failedVersion !== this.saved.staged.candidate.version ? this.saved.staged.candidate : null;
@@ -147,7 +148,7 @@ export class PluginUpdates {
       installedVersion: this.version,
       bootstrapVersion: this.slotUpdater?.baseVersion ?? this.version,
       liveActivation: typeof this.slotUpdater?.activate === 'function',
-      automatic: this.saved.automatic,
+      automatic: this.background && this.saved.automatic,
       checkedAt: this.saved.checkedAt ?? null,
       candidateVersion: this.candidate?.version ?? null,
       readyAt: this.candidate ? new Date(Date.parse(this.candidate.publishedAt) + releaseAgeMs).toISOString() : null,
@@ -182,10 +183,11 @@ export class PluginUpdates {
 
   start() {
     void this.reconcile().then(() => this.refreshEligibility()).then(() => {
-      if (this.candidate) return this.download().then(() => {
+      if (this.background && this.candidate) return this.download().then(() => {
         if (this.saved.installRequested?.version === this.candidate?.version) this.armIdleInstall();
       });
     }).catch(() => { this.eligible = false; });
+    if (!this.background) return;
     this.timer = setInterval(() => {
       if (this.saved.pending && this.state !== 'installing') {
         if (!this.slotUpdater) void this.reconcile().catch(() => {});
@@ -225,6 +227,7 @@ export class PluginUpdates {
 
   setAutomatic(enabled) {
     if (typeof enabled !== 'boolean') throw new Error('自动更新设置无效');
+    if (enabled && !this.background) throw new Error('本地自动更新已停用，请使用 DSH 官方更新');
     if (enabled && this.eligible !== true) throw new Error('请先通过 DSH 插件管理器安装固定提交的正式版');
     this.saved = { ...this.saved, automatic: enabled };
     this.service.store.saveSetting(settingKey, this.saved);

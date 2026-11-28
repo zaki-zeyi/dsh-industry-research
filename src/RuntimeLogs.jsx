@@ -63,6 +63,15 @@ const labels = {
   'update.retry.requested':'已请求重新尝试',
   'update.settings.changed':'自动更新设置已更改',
   'update.completed':'更新完成',
+  'update.official.checking':'开始官方更新',
+  'update.official.removing':'正在切换旧版',
+  'update.official.installing':'正在安装新版',
+  'update.official.restoring':'正在恢复旧版',
+  'update.official.updated':'更新完成',
+  'update.official.failed':'官方更新失败',
+  'update.official.restored':'已恢复原版本',
+  'update.official.restart-required':'等待宿主重启',
+  'update.official.interrupted':'更新已中断',
 };
 const phaseLabels = { check:'版本检查', download:'下载', health:'健康检查', update:'版本切换', rollback:'回退' };
 const failureLabels = { RELEASE_MUTABLE:'发布未启用不可变保护', INTEGRITY_FAILED:'发布或安装包校验失败',
@@ -99,7 +108,7 @@ export function RuntimeLogs({ embedded = false, updateOnly = false }) {
     }catch(e){setError(e.message);}finally{setBusy(false);}
   }
   useEffect(()=>{void load();},[]);
-  return <section className={embedded ? 'platform-runtime-logs' : 'industry-content'}><div className="industry-heading"><div>{!embedded && <h1>平台日志</h1>}<p>{updateOnly?'查看版本检查、下载校验、健康检查和本地切换记录。':'查看应用切换、授权和通知的运行记录。'}保留最近 1000 条，不记录密钥或令牌。</p></div><button className="secondary" disabled={busy} onClick={()=>load()}>刷新日志</button></div>
+  return <section className={embedded ? 'platform-runtime-logs' : 'industry-content'}><div className="industry-heading"><div>{!embedded && <h1>平台日志</h1>}<p>{updateOnly?'查看插件更新、安装结果和历史更新记录。':'查看应用切换、授权和通知的运行记录。'}保留最近 1000 条，不记录密钥或令牌。</p></div><button className="secondary" disabled={busy} onClick={()=>load()}>刷新日志</button></div>
     {error&&<div className="industry-error" role="alert">{error}</div>}
     <div className="runtime-log-list">{items.map(row=><article className="runtime-log-row" key={row.seq}><div><time>{new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',dateStyle:'short',timeStyle:'medium'}).format(new Date(row.at))}</time><span>{row.level==='error'?'错误':row.level==='warn'?'提醒':'信息'}</span><strong>{labels[row.event] || row.event}</strong></div>{updateOnly?<UpdateLogDetails details={row.details}/>:<pre>{JSON.stringify(row.details,null,2)}</pre>}</article>)}</div>
     {!busy&&!items.length&&<p>{updateOnly?'暂无更新日志。检查更新后会记录在这里。':'暂无运行日志。后续操作会记录在这里。'}</p>}
