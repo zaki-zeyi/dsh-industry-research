@@ -14,6 +14,7 @@ window.__ModuleLoader__.load({
       const value = await response.json(); if (!updateStopped && epoch === updateEpoch) emitUpdate({ ...value, connectionError: '' }); return value;
     }
     async function updateAction(action, version) {
+      if (updateStopped || updateState.submitting || updateState.busy || updateState.checking) return;
       const epoch = updateEpoch;
       try {
         emitUpdate({ actionError: '', connectionError: '', submitting: true, pendingAction: action });
@@ -28,35 +29,40 @@ window.__ModuleLoader__.load({
       } catch (error) { if (!updateStopped && epoch === updateEpoch) emitUpdate({ actionError: error.message }); }
       finally { if (!updateStopped && epoch === updateEpoch) emitUpdate({ submitting: false, pendingAction: null }); }
     }
+    function startUpdatePolling() {
+      if (updateTimer || updateStopped) return;
+      const epoch = updateEpoch;
+      const poll = async () => {
+        try { await readUpdate(); } catch (error) { if (!updateStopped && epoch === updateEpoch) emitUpdate({ connectionError: error.message }); }
+        if (epoch !== updateEpoch) return;
+        if (!updateStopped && updateListeners.size) updateTimer = setTimeout(poll, 1500); else updateTimer = null;
+      };
+      updateTimer = setTimeout(poll, 0);
+      if (!updateChecking) { updateChecking = true; void updateAction('check'); }
+    }
     function useUpdates() {
       const state = React.useSyncExternalStore(callback => { updateListeners.add(callback); return () => updateListeners.delete(callback); }, () => updateState);
-      React.useEffect(() => {
-        if (updateTimer || updateStopped) return;
-        const epoch = updateEpoch;
-        const poll = async () => {
-          try { await readUpdate(); } catch (error) { if (!updateStopped && epoch === updateEpoch) emitUpdate({ connectionError: error.message }); }
-          if (epoch !== updateEpoch) return;
-          if (!updateStopped && updateListeners.size) updateTimer = setTimeout(poll, 1500); else updateTimer = null;
-        };
-        updateTimer = setTimeout(poll, 0);
-        if (!updateChecking) { updateChecking = true; void updateAction('check'); }
-      }, []);
+      React.useEffect(startUpdatePolling, []);
       return state;
+    }
+    function updateControls(state) {
+      const busy = Boolean(state.busy || state.checking || state.submitting);
+      const version = state.eligible ? state.candidateVersion : null;
+      return { busy, version, label: busy ? !state.busy && (state.checking || state.pendingAction === 'check') ? '正在检查…' : '正在更新…'
+        : version ? `更新到 ${version}` : '检查更新', error: state.actionError || state.connectionError || state.error || state.operation?.error,
+        unavailableReason: state.unavailableReason };
     }
     const updateButtonStyle = { border: '1px solid #d9dedb', borderRadius: 10, padding: '10px 16px', cursor: 'pointer', font: 'inherit' };
     const ours = subject => subject?.kind === 'bundle' && subject.pkg.name === 'dsh-industry-research';
     function UpdateActions({ subject }) { return ours(subject) ? h(OwnUpdateActions) : null; }
     function OwnUpdateActions() {
       const state = useUpdates();
-      const busy = state.busy || state.submitting;
-      const target = state.eligible ? state.candidateVersion : null;
-      const error = state.actionError || state.connectionError || state.error || state.operation?.error;
+      const { busy, version, label, error, unavailableReason } = updateControls(state);
       return h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }, 'aria-label': '行研工作台官方 Git 更新' },
         h('button', { type: 'button', style: { ...updateButtonStyle, background: '#111216', color: '#fff', opacity: busy ? 0.6 : 1 },
-          disabled: Boolean(busy), onClick: () => updateAction(target ? 'install' : 'check', target) },
-        busy ? state.pendingAction === 'check' && !state.busy ? '正在检查…' : '正在更新…' : target ? `更新到 ${target}` : '检查更新'),
-        target && h('button', { type: 'button', style: updateButtonStyle, disabled: Boolean(busy), onClick: () => updateAction('check') }, '重新检查'),
-        state.unavailableReason && h('span', { role: 'status', style: { maxWidth: 280, fontSize: 13 } }, state.unavailableReason),
+          disabled: busy, onClick: () => updateAction(version ? 'install' : 'check', version) }, label),
+        version && h('button', { type: 'button', style: updateButtonStyle, disabled: busy, onClick: () => updateAction('check') }, '重新检查'),
+        unavailableReason && h('span', { role: 'status', style: { maxWidth: 280, fontSize: 13 } }, unavailableReason),
         (error || state.operation) && h('span', { role: error ? 'alert' : 'status', style: { color: error ? '#b42318' : '#315b43', maxWidth: 280, fontSize: 13 } },
           error || phaseLabel[state.operation.state] || state.operation.state));
     }
@@ -70,22 +76,7 @@ window.__ModuleLoader__.load({
     function UpdateSection({ subject }) { return ours(subject) ? h(OwnUpdateSection) : null; }
     function OwnUpdateSection() {
       const state = useUpdates(), operation = state.operation;
-      const [local, setLocal] = React.useState(null), [localError, setLocalError] = React.useState(''), [localWorking, setLocalWorking] = React.useState(false);
-      async function localAction(action) {
-        setLocalWorking(true); setLocalError('');
-        try {
-          const read = await fetch('/industry-research/update', { cache: 'no-store' });
-          if (!read.ok) throw new Error('工作台更新服务正在连接');
-          const current = await read.json();
-          const response = action ? await fetch(`/industry-research/update?action=${action}`, { method: 'POST', headers: { 'X-DSH-Update-Token': current.actionToken } }) : null;
-          const next = response ? await response.json() : current;
-          if (response && !response.ok) throw new Error(next.error ?? '更新未完成');
-          setLocal(next);
-        } catch (error) { setLocalError(error.message); } finally { setLocalWorking(false); }
-      }
-      React.useEffect(() => { void localAction(); }, [state.runningVersion]);
-      const error = state.actionError || state.connectionError || state.error || operation?.error;
-      const target = state.eligible ? state.candidateVersion : null;
+      const { busy, version: target, error } = updateControls(state);
       return h('section', { 'aria-label': '行研工作台更新服务', style: { marginTop: 24, padding: 24, border: '1px solid #d9dedb', borderRadius: 12 } },
         h('h3', null, '行研工作台更新'),
         h('p', null, `宿主安装版本 ${state.installedVersion ?? '读取中'} · 工作台运行版本 ${state.runningVersion ?? '读取中'}`),
@@ -93,14 +84,7 @@ window.__ModuleLoader__.load({
         state.unavailableReason && h('p', { role: 'status' }, state.unavailableReason),
         operation && h('p', { role: 'status' }, `${phaseLabel[operation.state] ?? operation.state}${operation.version ? ` · ${operation.version}` : ''}`),
         error && h('div', { role: 'alert', style: { color: '#b42318' } }, error,
-          !state.busy && h('button', { style: { ...updateButtonStyle, marginLeft: 12 }, onClick: () => updateAction(target ? 'install' : 'check', target) }, target ? '重试更新' : '重新检查')),
-        h('details', { style: { marginTop: 16 } }, h('summary', null, '本地安装包更新'),
-          h('p', null, '保留工作台内的自动下载与本地切换。安装包完整下载并校验后，可在离线时安装。'),
-          local && h('p', null, local.packageReady ? `已缓存 ${local.candidateVersion}` : local.state === 'downloading' ? '正在下载安装包' : '尚无待安装的本地包'),
-          h('button', { style: updateButtonStyle, disabled: Boolean(state.busy || localWorking), onClick: () => localAction('check') }, '检查安装包'), ' ',
-          h('button', { style: updateButtonStyle, disabled: Boolean(state.busy || localWorking), onClick: () => localAction() }, '刷新下载状态'), ' ',
-          h('button', { style: updateButtonStyle, disabled: Boolean(!local?.packageReady || state.busy || localWorking), onClick: () => localAction('install') }, '安装已校验版本'),
-          localError && h('p', { role: 'alert', style: { color: '#b42318' } }, localError)),
+          !busy && h('button', { style: { ...updateButtonStyle, marginLeft: 12 }, onClick: () => updateAction(target ? 'install' : 'check', target) }, target ? '重试更新' : '重新检查')),
         operation?.events?.length > 0 && h('details', { style: { marginTop: 16 } }, h('summary', null, '本次更新记录'),
           h('ul', null, operation.events.map((event, index) => h('li', { key: index }, `${new Date(event.at).toLocaleString()} · ${phaseLabel[event.state] ?? event.state}${event.error ? ` · ${event.error}` : ''}`)))));
     }
@@ -145,12 +129,46 @@ window.__ModuleLoader__.load({
       }, [startupAttempt]);
       React.useEffect(() => {
         if (status.state !== 'ready') return;
-        let disposed = false;
+        let disposed = false, updateSubscription;
         const filePickers = new Map();
+        const stopUpdates = () => {
+          if (updateSubscription) updateListeners.delete(updateSubscription.send);
+          updateSubscription = null;
+        };
         const receive = async event => {
           if (event.origin !== status.url || event.source !== frame.current?.contentWindow) return;
           const message = event.data;
           if (message?.type === 'industry-research:update-started') { resumeSettings.current = true; return; }
+          if (message?.type === 'industry-research:official-update') {
+            const { requestId, action, version } = message;
+            if (typeof requestId !== 'string' || !/^[a-f0-9-]{36}$/.test(requestId)) return;
+            if (action === 'watch') {
+              if (updateSubscription?.requestId !== requestId) {
+                stopUpdates();
+                const send = () => {
+                  if (disposed || event.source !== frame.current?.contentWindow) return;
+                  const { installedVersion, runningVersion, checkedAt, operation } = updateState;
+                  // Keep the host credential and full operation record in the host.
+                  event.source.postMessage({ type: 'industry-research:official-update-state', requestId, state: {
+                    ...updateControls(updateState), installedVersion, runningVersion, checkedAt,
+                    operation: operation ? phaseLabel[operation.state] ?? operation.state : null,
+                  } }, status.url);
+                };
+                updateSubscription = { requestId, send };
+                updateListeners.add(send);
+                startUpdatePolling();
+              }
+              updateSubscription.send();
+            } else if (updateSubscription?.requestId === requestId) {
+              if (action === 'unwatch') stopUpdates();
+              if (action === 'check') void updateAction('check');
+              if (action === 'install' && version && version === updateControls(updateState).version) {
+                resumeSettings.current = true;
+                void updateAction('install', version);
+              }
+            }
+            return;
+          }
           if (['industry-research:pick-file','industry-research:cancel-file-picker'].includes(message?.type)) {
             if (typeof message.requestId !== 'string' || !/^[a-f0-9-]{36}$/.test(message.requestId)) return;
             if (message.type === 'industry-research:cancel-file-picker') { filePickers.get(message.requestId)?.({cancelled:true}); return; }
@@ -194,7 +212,7 @@ window.__ModuleLoader__.load({
           } catch (error) { disposeLease(lease); if (!disposed && turn === revision.current) { pending.current = null; reply({ ok: false, error: error.message }); } }
         };
         window.addEventListener('message', receive);
-        return () => { disposed = true; for (const finish of [...filePickers.values()]) finish({cancelled:true}); revision.current++; discardPending(); release(); window.removeEventListener('message', receive); };
+        return () => { disposed = true; stopUpdates(); for (const finish of [...filePickers.values()]) finish({cancelled:true}); revision.current++; discardPending(); release(); window.removeEventListener('message', receive); };
       }, [status.state, status.url]);
       React.useEffect(() => {
         if (!conversation) return;

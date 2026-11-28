@@ -46,8 +46,9 @@ export function apply(ctx, config = {}) {
   let updates, official;
   const updateReady = ready.then(() => {
     if (stopped || !runtime?.service) return;
+    // Reconcile previously staged slots, but do not resume the legacy automatic updater.
     updates = new PluginUpdates(runtime.service, () => ctx.get?.('pluginManager'), version,
-      { cacheDir: resolve(runtime.dataDir, 'updates'), slotUpdater: config.slotUpdater });
+      { cacheDir: resolve(runtime.dataDir, 'updates'), slotUpdater: config.slotUpdater, background: false });
     official = new OfficialGitUpdates(runtime.service, () => ctx.get?.('pluginManager'), version,
       { cacheDir: resolve(runtime.dataDir, 'updates') });
     ctx.on?.('plugin-manager/update-state', progress => official.progress(progress));

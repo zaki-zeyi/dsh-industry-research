@@ -1,114 +1,80 @@
 import { test, expect } from '@playwright/test';
+import { createServer } from 'node:http';
 
-test('设置把版本更新和平台日志放在同一入口', async ({ page }) => {
-  const actions = [];
-  let automatic = false;
-  await page.route('**/api/plugin-update', async route => {
-    const request = route.request();
-    if (request.method() === 'POST') {
-      const body = request.postDataJSON();
-      actions.push({ ...body, token: request.headers()['x-dsh-update-token'] });
-      if (body.action === 'automatic') automatic = body.enabled;
-    }
-    await route.fulfill({ status: request.method() === 'POST' && request.postDataJSON().action === 'install' ? 202 : 200,
-      json: { installedVersion: '0.13.11', candidateVersion: '0.13.12', state: 'available', automatic,
-        supported: true, eligible: true, packageReady: true, actionToken: 'test-token' } });
+const workbench = 'http://127.0.0.1:3099';
+const frame = 'iframe[title="行研工作台"]';
+
+const hostedPage = test.extend({ embed: async ({ page }, use) => {
+  let state;
+  const server = createServer((_request, response) => response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(`
+    <iframe title="行研工作台" style="width:100%;height:850px" src="${workbench}/?embed=dsh&amp;hostOrigin=${host}&amp;view=settings"></iframe>
+    <script>
+      window.actions = [];
+      let state = ${JSON.stringify(state)};
+      const frame = document.querySelector('iframe');
+      window.addEventListener('message', event => {
+        const {type, requestId, action, version} = event.data ?? {};
+        if (event.origin !== '${workbench}' || event.source !== frame.contentWindow || type !== 'industry-research:official-update') return;
+        window.actions.push({action, version});
+        if (action === 'install') state = {...state, operation: '等待宿主重启', error: 'DSH 已安装新版，当前宿主需要重启后生效', version: null, label: '检查更新'};
+        if (action !== 'unwatch') event.source.postMessage({type:'industry-research:official-update-state', requestId, state}, event.origin);
+      });
+    </script>`));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const host = `http://127.0.0.1:${server.address().port}`;
+  try {
+    await use(async value => {
+      state = value;
+      await page.goto(host);
+      return page.frameLocator(frame);
+    });
+  } finally { await new Promise(resolve => server.close(resolve)); }
+} });
+
+hostedPage('设置中通过宿主检查和安装完整插件，并显示重启结果', async ({ page, embed }) => {
+  await page.route('**/api/plugin-update', route => {
+    expect(route.request().method()).toBe('GET');
+    return route.continue();
   });
+  const workbench = await embed({ runningVersion: '0.13.27', installedVersion: '0.13.27', version: '0.13.28', label: '更新到 0.13.28' });
+  await expect(workbench.getByRole('tab', { name: '版本与更新' })).toHaveAttribute('aria-selected', 'true');
+  await expect(workbench.getByLabel('版本信息')).toContainText('0.13.27');
+  await expect(workbench.getByRole('checkbox', { name: '空闲时自动更新' })).toHaveCount(0);
+  await expect(workbench.getByRole('button', { name: '安装已校验版本' })).toHaveCount(0);
+  await workbench.getByRole('button', { name: '重新检查' }).click();
+  await workbench.getByRole('button', { name: '更新到 0.13.28' }).click();
+  await expect(workbench.getByText('等待宿主重启', { exact: true })).toBeVisible();
+  await expect(workbench.getByRole('alert')).toContainText('需要重启后生效');
+  expect((await page.evaluate(() => window.actions)).filter(({ action }) => action !== 'watch')).toEqual([
+    { action: 'check', version: undefined }, { action: 'install', version: '0.13.28' },
+  ]);
+  await workbench.getByRole('tab', { name: '平台日志' }).click();
+  await expect(workbench.getByRole('heading', { name: '平台日志' })).toBeVisible();
+  await expect(workbench.getByRole('tab', { name: '更新日志' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.actions.at(-1).action)).toBe('unwatch');
+});
+
+hostedPage('设置显示官方更新不可用原因，不提供安装按钮', async ({ embed }) => {
+  const workbench = await embed({ runningVersion: '0.13.27', installedVersion: '0.13.26', label: '检查更新', unavailableReason: '请从 DSH「插件 → 发现」安装固定 Git 提交的版本' });
+  await expect(workbench.getByLabel('版本信息')).toContainText('DSH 安装版本：0.13.26');
+  await expect(workbench.getByText('请从 DSH「插件 → 发现」安装固定 Git 提交的版本')).toBeVisible();
+  await expect(workbench.getByRole('button', { name: /^更新到/ })).toHaveCount(0);
+});
+
+test('独立打开工作台时仅显示版本与 DSH 更新说明，更新日志仍可查看', async ({ page }) => {
+  await page.route('**/api/runtime-logs?*', async route => route.fulfill({ json: { items: route.request().url().includes('kind=update') ? [
+    { seq: 1, at: '2026-11-25T07:00:00Z', event: 'update.official.updated', level: 'info', details: { version: '0.13.28', installedVersion: '0.13.28', operationId: 'update-123' } },
+  ] : [] } }));
   await page.goto('/');
   await expect(page.getByRole('button', { name: '平台日志', exact: true })).toHaveCount(0);
   await page.locator('.industry-top').getByRole('button', { name: '设置', exact: true }).click();
   await expect(page.getByRole('heading', { name: '设置', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('tab', { name: '版本与更新' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByLabel('版本信息')).toContainText('0.13.11');
-  await page.getByRole('button', { name: '检查更新' }).click();
-  await page.getByRole('checkbox', { name: '空闲时自动更新' }).click();
-  await expect(page.getByRole('checkbox', { name: '空闲时自动更新' })).toBeChecked();
-  await page.getByRole('button', { name: '安装已校验版本' }).click();
-  await expect.poll(() => actions.map(item => item.action)).toEqual(['check', 'automatic', 'install']);
-  expect(actions.every(item => item.token === 'test-token')).toBe(true);
-  await page.getByRole('tab', { name: '平台日志' }).click();
-  await expect(page.getByRole('heading', { name: '平台日志' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: '更新日志' })).toBeVisible();
-});
-
-test('三阶段进度显示下载错误、重试和独立更新日志', async ({ page }) => {
-  let failed = true;
-  const actions = [];
-  await page.route('**/api/plugin-update', async route => {
-    if (route.request().method() === 'POST') {
-      const body = route.request().postDataJSON();
-      actions.push(body.action);
-      if (body.action === 'retry') failed = false;
-    }
-    await route.fulfill({ status: actions.at(-1) === 'retry' ? 202 : 200, json: {
-      installedVersion: '0.13.12', candidateVersion: '0.13.13', automatic: false, eligible: true,
-      actionToken: 'test-token', state: failed ? 'download-failed' : 'available',
-      error: failed ? '安装包校验失败' : '', packageReady: !failed,
-      progress: { percent: failed ? 18 : 33, phases: [
-        { id: 'download', label: '下载阶段', status: failed ? 'error' : 'complete', percent: failed ? 55 : 100 },
-        { id: 'health', label: '健康检查阶段', status: 'waiting', percent: 0 },
-        { id: 'update', label: '更新阶段', status: 'waiting', percent: 0 },
-      ] },
-    } });
-  });
-  await page.route('**/api/runtime-logs?*', async route => route.fulfill({ json: { items: route.request().url().includes('kind=update') ? [
-    { seq: 1, at: '2026-11-25T07:00:00Z', event: 'update.download.failed', level: 'error', details: { version: '0.13.13', phase: 'download', percent: 55, bytesReceived: 550000, bytesTotal: 1000000, durationMs: 1200, code: 'INTEGRITY_FAILED', operationId: 'update-123' } },
-  ] : [] } }));
-  await page.goto('/');
-  await page.locator('.industry-top').getByRole('button', { name: '设置', exact: true }).click();
-  await expect(page.getByRole('progressbar', { name: '更新总进度' })).toHaveAttribute('aria-valuenow', '18');
-  await expect(page.getByRole('alert')).toContainText('安装包校验失败');
-  await page.getByRole('button', { name: '重试' }).click();
-  await expect(page.getByRole('progressbar', { name: '更新总进度' })).toHaveAttribute('aria-valuenow', '33');
-  await expect(page.getByRole('alert')).toHaveCount(0);
-  expect(actions).toEqual(['retry']);
+  await expect(page.getByText('请在 DSH 中打开行研工作台以更新插件。')).toBeVisible();
+  await expect(page.getByRole('button', { name: '检查更新', exact: true })).toHaveCount(0);
   await page.getByRole('tab', { name: '平台日志' }).click();
   await page.getByRole('tab', { name: '更新日志' }).click();
-  await expect(page.getByText('下载或校验失败')).toBeVisible();
-  await expect(page.getByText('55%')).toBeVisible();
-  await expect(page.getByText('发布或安装包校验失败')).toBeVisible();
+  await expect(page.getByText('更新完成', { exact: true })).toBeVisible();
   await expect(page.getByText('update-123')).toBeVisible();
-});
-
-test('已完成更新后的版本检查异常只出现在版本信息', async ({ page }) => {
-  await page.route('**/api/plugin-update', route => route.fulfill({ json: {
-    installedVersion: '0.13.13', state: 'check-failed', lastResult: 'updated',
-    error: 'fetch failed', automatic: true, eligible: true, actionToken: 'test-token',
-    progress: { percent: 100, phases: [
-      { id: 'download', label: '下载阶段', status: 'complete', percent: 100 },
-      { id: 'health', label: '健康检查阶段', status: 'complete', percent: 100 },
-      { id: 'update', label: '更新阶段', status: 'complete', percent: 100 },
-    ] },
-  } }));
-  await page.goto('/');
-  await page.locator('.industry-top').getByRole('button', { name: '设置', exact: true }).click();
-  await expect(page.getByLabel('版本信息')).toContainText('检查新版本暂时失败');
-  await expect(page.getByLabel('版本信息').getByRole('alert')).toContainText('fetch failed');
-  await expect(page.getByLabel('更新进度').getByRole('alert')).toHaveCount(0);
-  await expect(page.getByRole('progressbar', { name: '更新总进度' })).toHaveAttribute('aria-valuenow', '100');
-});
-
-test('热更新后重载工作台资源并回到设置，运行版本与启动层版本分别展示', async ({ page }) => {
-  let installed = false, installing = false;
-  await page.route('**/api/plugin-update', async route => {
-    if (route.request().method() === 'POST' && route.request().postDataJSON().action === 'install') {
-      installing = true; setTimeout(() => { installed = true; }, 500);
-    }
-    await route.fulfill({ json: { installedVersion: installed ? '0.13.16' : '0.13.15', bootstrapVersion: '0.13.15',
-      liveActivation: true, state: installed ? 'idle' : installing ? 'installing' : 'available',
-      candidateVersion: installed ? null : '0.13.16', lastResult: installed ? 'updated' : null,
-      eligible: true, supported: true, packageReady: true, actionToken: 'test-token' } });
-  });
-  await page.goto('/?view=settings#keep-task');
-  await expect(page.locator('.settings-version-number')).toHaveText('0.13.15');
-  const reloaded = page.waitForEvent('load');
-  await page.getByRole('button', { name: '安装已校验版本' }).click();
-  await reloaded;
-  await expect(page.locator('.settings-version-number')).toHaveText('0.13.16');
-  await expect(page.getByLabel('版本信息')).toContainText('启动层版本：0.13.15');
-  await expect(page.getByRole('tab', { name: '版本与更新' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page).toHaveURL(/view=settings#keep-task$/);
-  await expect(page.getByText(/重启 DSH/)).toHaveCount(0);
 });
 
 test('停留在公司资料页时也检测运行版本变化并重新加载资源', async ({ page }) => {
